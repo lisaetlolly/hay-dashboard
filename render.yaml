@@ -7,7 +7,3 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false   # 在 Render 控制台手动填写 Neon DSN
-    disk:
-      name: uploads
-      mountPath: /opt/render/project/src
-      sizeGB: 1
