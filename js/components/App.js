@@ -1,0 +1,166 @@
+// ── App.js ───────────────────────────────────────────────────
+// 根组件，注册所有页面组件，管理路由切换。
+// createApp(App).mount('#app') 保留在 dashboard.html 内联脚本（依赖 DOM #app 节点存在）。
+
+const App = defineComponent({
+  components: { OverviewPage, ProductsPage, ComparePage, ActionEffectPage, 'ai-page': AIPage, AdsPage, SettingsPage },
+  setup() {
+    const page        = ref('overview')
+    const timePreset  = ref('30d')
+    const startDate   = ref('2026-04-15')
+    const endDate     = ref('2026-04-21')
+    const lastUpdated = ref('')
+    const pageViewCount = ref(0)
+    const user = ref({ display_name: '管理员', role: 'admin' })
+
+    const navItems = [
+      { id: 'overview', label: '总览' },
+      { id: 'products', label: '单品视图' },
+      { id: 'compare',  label: '多品对比' },
+      { id: 'effect',   label: '效果分析' },
+      { id: 'ai',       label: 'AI 分析' },
+      { id: 'ads',      label: '投放面板' },
+    ]
+    const currentPageLabel = computed(
+      () => navItems.find(n => n.id === page.value)?.label || '设置'
+    )
+
+    const DATA_END = RAW.data_end
+    const LAUNCH_DATE = RAW.launch_date
+    const fmt = d => (typeof d === 'string' ? d : d.toISOString().slice(0, 10))
+    const sub = (base, n) => { const d = new Date(base); d.setDate(d.getDate() - n); return fmt(d) }
+
+    // 当前周期的天数（用于前后平移）
+    const periodDays = computed(() => {
+      if (!startDate.value || !endDate.value) return 7
+      const ms = new Date(endDate.value) - new Date(startDate.value)
+      return Math.round(ms / 86400000) + 1
+    })
+
+    const presets = [
+      { k:'7d', l:'7天' }, { k:'30d', l:'30天' },
+      { k:'day', l:'日' }, { k:'week', l:'周' }, { k:'month', l:'月' },
+      { k:'custom', l:'自定义' },
+    ]
+
+    const setPreset = (k) => {
+      timePreset.value = k
+      const today = new Date(DATA_END)
+      if (k === '7d') {
+        startDate.value = sub(today, 6); endDate.value = fmt(today)
+      } else if (k === '30d') {
+        startDate.value = sub(today, 29); endDate.value = fmt(today)
+      } else if (k === 'day') {
+        startDate.value = fmt(today); endDate.value = fmt(today)
+      } else if (k === 'week') {
+        const dow = today.getDay() || 7
+        const mon = new Date(today); mon.setDate(today.getDate() - dow + 1)
+        startDate.value = fmt(mon); endDate.value = fmt(today)
+      } else if (k === 'month') {
+        startDate.value = fmt(new Date(today.getFullYear(), today.getMonth(), 1))
+        endDate.value = fmt(today)
+      }
+      // custom: do nothing, let user pick
+    }
+
+    const shiftPeriod = (dir) => {
+      const days = periodDays.value
+      const s = new Date(startDate.value)
+      const e = new Date(endDate.value)
+      s.setDate(s.getDate() + dir * days)
+      e.setDate(e.getDate() + dir * days)
+      timePreset.value = 'custom'
+      startDate.value = fmt(s)
+      endDate.value = fmt(e)
+    }
+
+    const applyPreset = () => setPreset(timePreset.value)
+
+    onMounted(async () => {
+      applyPreset()
+      const h = await api('/api/health')
+      if (h) lastUpdated.value = h.loaded_at || h.latest_date || '—'
+      const pv = await api('/api/page-views/count', { page_path: '/' })
+      if (pv) pageViewCount.value = pv.count || 0
+    })
+
+    return {
+      page, timePreset, startDate, endDate, lastUpdated, pageViewCount,
+      user, navItems, currentPageLabel, presets, setPreset, shiftPeriod, periodDays,
+      onTimePreset: () => { if (timePreset.value !== 'custom') applyPreset() }
+    }
+  },
+  template: `
+<div style="display:flex;height:100vh;width:100vw;overflow:hidden;position:fixed;inset:0">
+  <div id="sidebar">
+    <div class="brand">HAY</div>
+    <div class="nav">
+      <div v-for="item in navItems" :key="item.id"
+           class="nav-item" :class="{active: page===item.id}"
+           @click="page=item.id">{{ item.label }}</div>
+      <div class="nav-sep"></div>
+      <div class="nav-item" :class="{active: page==='settings'}" @click="page='settings'">设置</div>
+    </div>
+    <div class="user-bar">
+      <div class="avatar">{{ (user.display_name||'U')[0] }}</div>
+      <div>
+        <div style="font-size:12px;font-weight:500">{{ user.display_name }}</div>
+        <div style="font-size:11px;color:var(--muted)">{{ user.role }}</div>
+      </div>
+    </div>
+  </div>
+  <div id="main">
+    <div id="topbar" style="flex-wrap:nowrap;overflow:hidden">
+      <div class="page-title" style="flex-shrink:0">{{ currentPageLabel }}</div>
+      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;flex-shrink:0">
+          <button v-for="p in presets" :key="p.k"
+                  @click="setPreset(p.k)"
+                  :style="{padding:'4px 10px',fontSize:'12px',border:'none',cursor:'pointer',
+                    background:timePreset===p.k?'var(--accent)':'transparent',
+                    color:timePreset===p.k?'#fff':'var(--muted)',
+                    borderRight:'1px solid var(--border)'}">{{ p.l }}</button>
+          <button @click="shiftPeriod(-1)"
+                  :disabled="!['day','7d','month'].includes(timePreset)"
+                  :style="{padding:'4px 8px',fontSize:'12px',border:'none',
+                    cursor:['day','7d','month'].includes(timePreset)?'pointer':'default',
+                    background:'transparent',
+                    color:['day','7d','month'].includes(timePreset)?'var(--muted)':'var(--border)'}"
+                  title="上一个周期">&lt;</button>
+          <button @click="shiftPeriod(1)"
+                  :disabled="!['day','7d','month'].includes(timePreset)"
+                  :style="{padding:'4px 8px',fontSize:'12px',border:'none',
+                    cursor:['day','7d','month'].includes(timePreset)?'pointer':'default',
+                    background:'transparent',
+                    color:['day','7d','month'].includes(timePreset)?'var(--muted)':'var(--border)'}"
+                  title="下一个周期">&gt;</button>
+        </div>
+        <span v-if="timePreset==='custom'" style="display:flex;align-items:center;gap:4px;
+              background:var(--surface);border:1px solid var(--accent);border-radius:6px;padding:3px 8px;flex-shrink:0">
+          <input type="date" v-model="startDate"
+                 style="border:none;outline:none;font-size:12px;background:transparent;color:var(--text);width:108px">
+          <span style="color:var(--muted)">—</span>
+          <input type="date" v-model="endDate"
+                 style="border:none;outline:none;font-size:12px;background:transparent;color:var(--text);width:108px">
+        </span>
+        <span v-else style="font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+          {{ timePreset==='day' ? startDate : startDate + ' ~ ' + endDate }}
+        </span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0">更新 {{ lastUpdated || '—' }}</div>
+      <div style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0">访问 {{ pageViewCount }}</div>
+    </div>
+    <div id="content">
+      <overview-page v-if="page==='overview'" :start="startDate" :end="endDate" />
+      <products-page v-else-if="page==='products'" :start="startDate" :end="endDate" />
+      <compare-page v-else-if="page==='compare'" :start="startDate" :end="endDate" />
+      <action-effect-page v-else-if="page==='effect'" />
+      <ai-page v-else-if="page==='ai'" :start="startDate" :end="endDate" />
+      <ads-page v-else-if="page==='ads'" :start="startDate" :end="endDate" />
+      <settings-page v-else-if="page==='settings'" />
+      <div v-else class="empty" style="padding:80px">{{ currentPageLabel }} — 开发中</div>
+    </div>
+  </div>
+</div>`
+})
+

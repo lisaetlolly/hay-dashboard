@@ -1,0 +1,30 @@
+# 原始底表数据（体积大，不入库）
+生意参谋商品/
+推广报表/
+数据库数据源/
+无限店铺流量/
+任务/
+
+# 底表 Excel/CSV
+*.xls
+*.xlsx
+*.csv
+
+# ETL 本地数据库
+etl/*.db
+etl/*.db-shm
+etl/*.db-wal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 环境变量
+.env
+.env.local
+
+# OS
+.DS_Store
