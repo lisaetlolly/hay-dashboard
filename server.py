@@ -1681,7 +1681,7 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
 @app.get("/")
 def serve_dashboard():
     path = os.path.join(DASHBOARD_DIR, "dashboard.html")
-    return FileResponse(path, media_type="text/html")
+    return FileResponse(path, media_type="text/html", headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
 
 @app.get("/favicon.ico")
 def favicon():

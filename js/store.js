@@ -148,11 +148,16 @@ function loadAppState() {
   const saved = readStore(APP_STORAGE_KEY, null)
   if (!saved) return
   const initial = createInitialAppState()
+  const savedTaskJson = JSON.stringify((saved && saved.tasksByPid) || {})
   APP_STATE.value = {
     ...initial,
     ...migrateState(saved),
     permissionGroups: initial.permissionGroups,
     users: initial.users,
+  }
+  // 若迁移修复了任务数据，回写服务器
+  if (savedTaskJson !== JSON.stringify(APP_STATE.value.tasksByPid || {})) {
+    pushStateToServer(APP_STATE.value)
   }
 }
 let _lastServerStateAt = null
@@ -166,8 +171,14 @@ async function syncStateFromServer() {
     if (_lastServerStateAt === updated_at) return
     _lastServerStateAt = updated_at
     const initial = createInitialAppState()
-    APP_STATE.value = { ...initial, ...migrateState(state), permissionGroups: initial.permissionGroups, users: initial.users }
+    const serverTaskJson = JSON.stringify((state && state.tasksByPid) || {})
+    const migrated = migrateState(state)
+    APP_STATE.value = { ...initial, ...migrated, permissionGroups: initial.permissionGroups, users: initial.users }
     writeStore(APP_STORAGE_KEY, APP_STATE.value)
+    // 若迁移修复了任务数据，立即回写服务器，防止下次同步再覆盖
+    if (serverTaskJson !== JSON.stringify(APP_STATE.value.tasksByPid || {})) {
+      pushStateToServer(APP_STATE.value)
+    }
   } catch {}
 }
 
