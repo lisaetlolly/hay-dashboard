@@ -80,6 +80,7 @@ function createInitialAppState() {
     selectedTaskPeriod: '',
     guangheTraffic: {},
     taskTemplates: defaultTaskTemplates(),
+    stateVersion: 3,
   }
 }
 // 旧数据迁移：统一周期格式 + 修正用户名
@@ -115,30 +116,33 @@ function migrateState(state) {
       }
     }
   }
-  // 始终以 RAW 任务为结构基础（保证 detail/category/owner 正确），叠加用户编辑
+  // 始终以 RAW 任务为结构基础（保证 detail/category/owner/status 正确），叠加用户编辑
   const rawByPid = (typeof RAW !== 'undefined' && RAW.tasks_by_pid) ? RAW.tasks_by_pid : {}
   if (!state.tasksByPid) state.tasksByPid = {}
+  // stateVersion<3 时强制用 RAW status（清除旧版错误默认值）
+  const forceRawStatus = !state.stateVersion || state.stateVersion < 3
   for (const [pid, rawList] of Object.entries(rawByPid)) {
     const saved = state.tasksByPid[pid] || []
     const savedByDetail = {}
     for (const t of saved) { if (t.detail) savedByDetail[t.detail] = t }
-    // 以 RAW 为基础重建任务列表，叠加用户改过的 status/owner/period_notes
     const merged = rawList.map(raw => {
       const sv = savedByDetail[raw.detail]
       if (!sv) return { ...raw }
+      // forceRawStatus: 用 RAW 的 status（服务器旧数据全是'待开始'默认值，不可信）
+      const status = forceRawStatus ? raw.status : (sv.status || raw.status)
       return {
         ...raw,
         id: sv.id || raw.id,
-        status: sv.status || raw.status,
+        status,
         owner: sv.owner || raw.owner,
-        period_notes: sv.period_notes || raw.period_notes || {},
+        period_notes: { ...(raw.period_notes || {}), ...(sv.period_notes || {}) },
       }
     })
-    // 保留用户自行新增的任务（detail 不在 RAW 中）
     const rawDetails = new Set(rawList.map(t => t.detail))
     const custom = saved.filter(t => t.detail && !rawDetails.has(t.detail))
     state.tasksByPid[pid] = [...merged, ...custom]
   }
+  state.stateVersion = 3
   return state
 }
 
