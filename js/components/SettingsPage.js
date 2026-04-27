@@ -14,6 +14,37 @@ const SettingsPage = defineComponent({
       get(_, prop) { return APP_STATE.value[prop] },
       set(_, prop, value) { APP_STATE.value[prop] = value; return true },
     })
+    // ── 用户列表：从 DB 拉真实账号（之前用 localStorage 5 个假账号 u_admin/u_ops，和 DB 8 个真账号 admin/xiaodong/... 完全脱节）
+    const dbUsers = Vue.ref([])
+    const usersLoading = Vue.ref(false)
+    const loadDbUsers = async () => {
+      usersLoading.value = true
+      try {
+        const res = await fetch('/api/users')
+        if (res.ok) {
+          const list = await res.json()
+          // 后端 user.id 是 INT；保留为字符串方便比对前端 currentUserId
+          dbUsers.value = list.map(u => ({
+            id: String(u.id),
+            username: u.username,
+            display_name: u.display_name,
+            role: u.role,
+            permissions: Array.isArray(u.permissions) ? u.permissions : [],
+          }))
+          // 把真实账号同步进 APP_STATE 让全站 me 计算用同一份
+          state.users = dbUsers.value
+          if (!state.currentUserId || !dbUsers.value.find(u => u.id === state.currentUserId)) {
+            // 默认选 admin 账号
+            const admin = dbUsers.value.find(u => u.username === 'admin') || dbUsers.value[0]
+            if (admin) state.currentUserId = admin.id
+          }
+          persistAppState()
+        }
+      } catch (e) { console.warn('[loadDbUsers]', e) }
+      usersLoading.value = false
+    }
+    Vue.onMounted(loadDbUsers)
+
     const me = Vue.computed(() => (state.users||[]).find(u=>u.id===state.currentUserId)||state.users?.[0])
     const users = Vue.computed(() => state.users||[])
     const metrics = Vue.computed(() => state.metricRegistry||[])
@@ -28,6 +59,8 @@ const SettingsPage = defineComponent({
       'metric.view':'查看指标','metric.create':'新增指标','metric.edit':'编辑指标','metric.delete':'删除指标',
       'user.view':'查看用户','user.create':'新增用户','user.edit':'编辑用户','user.delete':'删除用户',
       'permission.assign':'分配权限',
+      'event.create':'新增事件','event.edit':'编辑事件','event.delete':'删除事件',
+      'xhs.create':'新增小红书笔记','xhs.edit':'编辑小红书笔记','xhs.delete':'删除小红书笔记',
     }
     const expandedUserId = Vue.ref('')
     const toggleExpand = id => { expandedUserId.value = expandedUserId.value === id ? '' : id }
@@ -75,42 +108,101 @@ const SettingsPage = defineComponent({
           const res = await fetch('/api/users/register', { method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({ username: userModal.username.trim(), password: userModal.password.trim(),
               display_name: userModal.name.trim(), role: userModal.role }) })
-          if (!res.ok) { const d = await res.json().catch(()=>({})); return alert(d.detail || '注册失败') }
+          if (!res.ok) {
+            const d = await res.json().catch(()=>({}))
+            // 用户名已存在 → 提示但仍刷新列表（让用户看到已经存在的账号）
+            await loadDbUsers()
+            return alert(d.detail || '注册失败')
+          }
         } catch { return alert('注册失败，请检查网络') }
-        state.users.push({ id:makeId('user'), display_name:userModal.name.trim(), role:userModal.role, permissions:[...defaultPerms], username:userModal.username.trim() })
+        // 新建成功 → 重新拉真账号列表
+        await loadDbUsers()
+        userModal.show = false
+        return
       } else {
         const u = state.users.find(x => x.id === userModal.id)
-        if (u) {
+        if (u && /^\d+$/.test(u.id)) {
           const roleChanged = u.role !== userModal.role
-          u.display_name = userModal.name.trim()
-          u.role = userModal.role
-          u.username = userModal.username.trim()
-          if (roleChanged) u.permissions = [...defaultPerms]
-        }
-        if (userModal.password.trim()) {
-          const dbUsers = await fetch('/api/users').then(r=>r.json()).catch(()=>[])
-          const dbUser = dbUsers.find(x => x.display_name === userModal.name.trim() || x.username === userModal.username.trim())
-          if (dbUser) {
-            await fetch(`/api/users/${dbUser.id}/password`, { method:'PATCH', headers:{'Content-Type':'application/json'},
-              body: JSON.stringify({ password: userModal.password.trim() }) }).catch(()=>{})
+          // 真账号 → 调 PATCH /api/users/{id} 落 DB
+          try {
+            const res = await fetch(`/api/users/${u.id}`, {
+              method: 'PATCH', headers: {'Content-Type':'application/json'},
+              body: JSON.stringify({
+                display_name: userModal.name.trim(),
+                role: userModal.role,
+                username: userModal.username.trim(),
+              }),
+            })
+            if (!res.ok) {
+              const d = await res.json().catch(()=>({}))
+              return alert(d.detail || '保存失败')
+            }
+          } catch (e) { return alert('保存失败：' + e.message) }
+          // 改密码
+          if (userModal.password.trim()) {
+            await fetch(`/api/users/${u.id}/password`, {
+              method:'PATCH', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ password: userModal.password.trim() })
+            }).catch(()=>{})
+          }
+          // 角色变了，按新角色默认权限刷一下（DB 里的 permissions 也跟着变）
+          if (roleChanged) {
+            await fetch(`/api/users/${u.id}/permissions`, {
+              method:'PATCH', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ permissions: defaultPerms }),
+            }).catch(()=>{})
           }
         }
       }
-      persistAppState()
+      // 一律重新拉真账号列表，保证视图和 DB 一致
+      await loadDbUsers()
       userModal.show = false
     }
-    const deleteUser = u => {
+    const deleteUser = async (u) => {
       if (!can('user.delete')) return alert('无删除用户权限')
-      if (u.id===state.currentUserId) return alert('不能删除当前登录用户')
-      if (!confirm('确认删除？')) return
-      state.users=state.users.filter(x=>x.id!==u.id); persistAppState()
+      if (u.id === state.currentUserId) return alert('不能删除当前登录用户')
+      if (!confirm(`确认删除「${u.display_name}」？`)) return
+      // 真账号 → 调后端 DELETE
+      if (/^\d+$/.test(u.id)) {
+        try {
+          const res = await fetch(`/api/users/${u.id}`, { method: 'DELETE' })
+          if (!res.ok) {
+            const d = await res.json().catch(()=>({}))
+            return alert(d.detail || '删除失败（后端可能未实现 DELETE 接口，要去 Neon 跑 SQL 删）')
+          }
+        } catch (e) { return alert('删除失败：' + e.message) }
+      }
+      await loadDbUsers()
     }
-    const togglePerm = (u, code) => {
+    const togglePerm = async (u, code) => {
       if (!can('permission.assign')) return alert('无权限分配权限')
       if ((u.permissions||[]).includes('*')) return alert('管理员拥有全部权限')
-      const s=new Set(u.permissions||[])
-      s.has(code)?s.delete(code):s.add(code)
-      u.permissions=[...s]; persistAppState()
+      const s = new Set(u.permissions || [])
+      s.has(code) ? s.delete(code) : s.add(code)
+      const newPerms = [...s]
+      // 真账号（id 是数字字符串）→ 调 PATCH /api/users/{id}/permissions 落 DB
+      const isRealUser = u.id && /^\d+$/.test(u.id)
+      if (isRealUser) {
+        try {
+          const res = await fetch(`/api/users/${u.id}/permissions`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ permissions: newPerms }),
+          })
+          if (!res.ok) {
+            const err = await res.json().catch(()=>({detail:'保存失败'}))
+            return alert('保存失败：' + (err.detail || res.status))
+          }
+          u.permissions = newPerms
+          persistAppState()
+        } catch (e) {
+          alert('保存失败：' + e.message)
+        }
+      } else {
+        // 旧 localStorage 账号（u_admin 等）—— 现在不应该再出现，但留个兼容
+        u.permissions = newPerms
+        persistAppState()
+      }
     }
 
     // ── 指标 CRUD (Modal) ──────────────────────────────────────

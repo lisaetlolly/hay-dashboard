@@ -328,8 +328,9 @@ def load_syzt_product(conn):
         batch = []
         for row in rows:
             pid = str(row.get('商品ID', '')).strip()
-            if not pid or pid not in PRODUCT_IDS:
+            if not pid:
                 continue
+            # Option A：灌全店所有 PID（不再过滤 25 主链）
             stat_date = str(row.get('统计日期', ''))
             if not stat_date or stat_date == 'nan':
                 m = re.search(r'(\d{4}-\d{2}-\d{2})', fname)
@@ -412,8 +413,11 @@ def load_wxst_product(conn):
         batch = []
         for row in rs:
             pid = str(row.get('主体ID', '')).strip()
-            if not pid or pid not in PRODUCT_IDS:
+            if not pid:
                 continue
+            # Option A：灌全店所有 PID（不再过滤 25 主链）。
+            # 前端「优化页 25 SKU 视图」靠 OFFICIAL Set 过滤，不依赖 ETL 过滤；
+            # 总览页 / 对账需要全店真实数据。
             stat_date = str(row.get('日期', '')).strip()[:10]
             if not stat_date:
                 continue

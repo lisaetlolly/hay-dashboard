@@ -1878,7 +1878,9 @@ def get_users():
 
 
 class UserPermissionsUpdate(BaseModel):
-    permissions: dict
+    # 前端传 list（如 ["task.view_all","task.edit_own"]），存为 jsonb array
+    # 之前误标 dict，前端 PATCH 一直 422 导致权限保存到 DB 失败
+    permissions: list
 
 
 @app.patch("/api/users/{user_id}/permissions")
@@ -1896,15 +1898,19 @@ def update_user_permissions(user_id: int, body: UserPermissionsUpdate,
 
 
 class UserRoleUpdate(BaseModel):
-    role: str
+    role: Optional[str] = None
     display_name: Optional[str] = None
+    username: Optional[str] = None
 
 
 @app.patch("/api/users/{user_id}")
 def update_user(user_id: int, body: UserRoleUpdate):
-    fields = {'role': body.role}
-    if body.display_name is not None:
-        fields['display_name'] = body.display_name
+    fields = {}
+    if body.role is not None: fields['role'] = body.role
+    if body.display_name is not None: fields['display_name'] = body.display_name
+    if body.username is not None: fields['username'] = body.username
+    if not fields:
+        raise HTTPException(400, "no fields to update")
     set_clause = ", ".join(f"{k} = %s" for k in fields)
     with db() as conn:
         cur = conn.cursor()
@@ -1914,6 +1920,22 @@ def update_user(user_id: int, body: UserRoleUpdate):
         )
         conn.commit()
         return row(conn, "SELECT id, username, display_name, role, permissions FROM users WHERE id = %s", (user_id,))
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: int,
+                _user=Depends(require_permission('user.delete'))):
+    """删除用户。需要 user.delete 权限或 admin。"""
+    with db() as conn:
+        cur = conn.cursor()
+        # 先看看这个用户有没有评论 / 任务，避免数据残留 NULL 引用
+        cur.execute("SELECT username FROM users WHERE id = %s", (user_id,))
+        u = cur.fetchone()
+        if not u:
+            raise HTTPException(404, "user not found")
+        cur.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        conn.commit()
+        return {"ok": True, "deleted_username": u[0]}
 
 
 # ══════════════════════════════════════════════════

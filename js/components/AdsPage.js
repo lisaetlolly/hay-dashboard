@@ -771,18 +771,40 @@ const AdsPage = defineComponent({
       <div class="kpi-card"><div class="kpi-label">推广 CTR<span class="info-btn">?<span class="tooltip">加权 CTR = SUM(点击量) ÷ SUM(展现量) × 100%。和万象台后台口径一致。<br/>之前用算术均值（每个商品 CTR 平均）会让小曝光商品权重虚高，已修复。</span></span></div><div class="kpi-value">{{ adsCtr != null ? adsCtr.toFixed(2)+'%' : '—' }}</div><div class="kpi-footer"><span>加权（点击/曝光）</span></div></div>
     </div>
 
-    <div class="card" style="padding:16px">
-      <div class="card-header" style="margin-bottom:12px"><span class="card-title">投放趋势</span><span class="card-sub">当前周期按日（花费 / 成交额 / ROI）</span></div>
-      <interactive-trend-chart v-if="trendRows.length"
-        :series="[
-          { key:'spend', name:'花费', color:'#60a5fa', type:'bar',
-            values: trendRows.map(r => ({d:r.d, value:r.spend, label:fmtMoney(r.spend)})) },
-          { key:'gmv',   name:'成交额', color:'#a78bfa', type:'bar',
-            values: trendRows.map(r => ({d:r.d, value:r.gmv,   label:fmtMoney(r.gmv)})) },
-          { key:'roi',   name:'ROI', color:'#16a34a', type:'line',
-            values: trendRows.map(r => ({d:r.d, value:r.roi,   label:r.roi==null?'—':'×'+r.roi})) },
-        ]" :height="220" :normalize="true" />
-      <div v-else class="empty">当前周期暂无投放数据</div>
+    <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px">
+      <!-- 投放趋势：图表 -->
+      <div class="card" style="padding:16px">
+        <div class="card-header" style="margin-bottom:12px"><span class="card-title">投放趋势</span><span class="card-sub">花费 / 成交额 / ROI</span></div>
+        <interactive-trend-chart v-if="trendRows.length"
+          :series="[
+            { key:'spend', name:'花费', color:'#60a5fa', type:'bar',
+              values: trendRows.map(r => ({d:r.d, value:r.spend, label:fmtMoney(r.spend)})) },
+            { key:'gmv',   name:'成交额', color:'#a78bfa', type:'bar',
+              values: trendRows.map(r => ({d:r.d, value:r.gmv,   label:fmtMoney(r.gmv)})) },
+            { key:'roi',   name:'ROI', color:'#16a34a', type:'line',
+              values: trendRows.map(r => ({d:r.d, value:r.roi,   label:r.roi==null?'—':'×'+r.roi})) },
+          ]" :height="220" :normalize="true" />
+        <div v-else class="empty">当前周期暂无投放数据</div>
+      </div>
+
+      <!-- CTR 排行 -->
+      <div class="card" style="padding:14px 16px">
+        <div class="card-header" style="margin-bottom:8px">
+          <span class="card-title">CTR 排行</span>
+          <span class="info-btn" style="margin-left:6px">?<span class="tooltip" style="left:auto;right:0">加权 CTR = 点击 ÷ 展现，和万象台后台一致。</span></span>
+        </div>
+        <div v-if="ctrRankRows.length===0" class="empty">暂无 CTR 数据</div>
+        <div v-else style="display:flex;flex-direction:column;gap:3px">
+          <div style="display:grid;grid-template-columns:20px minmax(0,1fr) 50px;gap:6px;padding:0 2px 4px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
+            <div>#</div><div>商品</div><div style="text-align:right">CTR</div>
+          </div>
+          <div v-for="(r,i) in ctrRankRows" :key="r.pid" style="display:grid;grid-template-columns:20px minmax(0,1fr) 50px;gap:6px;align-items:center;padding:3px 2px;border-bottom:1px solid #f1f5f9">
+            <div :class="['rank-no',{top3:i<3}]" style="text-align:center;font-size:11px">{{ i+1 }}</div>
+            <div style="font-size:11px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="r.name">{{ r.name }}</div>
+            <div style="text-align:right;font-size:11px;font-weight:700;color:var(--accent)">{{ r.ctr }}%</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px">
@@ -905,28 +927,6 @@ const AdsPage = defineComponent({
       </div>
     </div>
 
-    <!-- CTR 排行 -->
-    <div class="card" style="padding:14px 16px">
-      <div class="card-header" style="margin-bottom:8px">
-        <span class="card-title">CTR 排行</span>
-        <span class="card-sub">万象台口径，当前周期均值</span>
-        <span class="info-btn" style="margin-left:8px">?<span class="tooltip" style="left:auto;right:0">万象台商品报表 ctr 字段均值（clicks÷impressions×100%），仅含有投放的商品，按当前时间段汇总取均值</span></span>
-      </div>
-      <div v-if="ctrRankRows.length===0" class="empty">当前周期暂无投放 CTR 数据</div>
-      <div v-else style="display:flex;flex-direction:column;gap:3px">
-        <div style="display:grid;grid-template-columns:22px minmax(0,2.4fr) 56px 100px;gap:8px;padding:0 4px 4px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
-          <span>#</span><span>商品</span><span style="text-align:right">CTR</span><span></span>
-        </div>
-        <div v-for="(r,i) in ctrRankRows" :key="r.pid" style="display:grid;grid-template-columns:22px minmax(0,2.4fr) 56px 100px;gap:8px;align-items:center;padding:3px 4px;border-bottom:1px solid #f1f5f9">
-          <div :class="['rank-no',{top3:i<3}]" style="text-align:center;font-size:11px">{{ i+1 }}</div>
-          <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="r.name">{{ r.name }}</div>
-          <div style="text-align:right;font-size:12px;font-weight:700;color:var(--accent)">{{ r.ctr }}%</div>
-          <div style="height:4px;background:#f3f4f6;border-radius:99px;overflow:hidden">
-            <div style="height:100%;background:var(--accent);border-radius:99px" :style="{width:(ctrRankRows[0]?r.ctr/ctrRankRows[0].ctr*100:0)+'%'}"></div>
-          </div>
-        </div>
-      </div>
-    </div>
   </template>
 
   <template v-else>
@@ -1018,42 +1018,35 @@ const AdsPage = defineComponent({
                 </div>
               </div>
             </div>
-            <!-- 任务清单表头 -->
-            <div style="display:grid;grid-template-columns:28px 90px 1fr 130px 110px minmax(160px,1.4fr) 70px;gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
-              <div style="padding:7px 6px;border-right:1px solid var(--border);text-align:center">
-                <span v-if="isAdmin" :title="'勾选批量分配'">☐</span>
-              </div>
+            <!-- 任务清单表头（5 列）-->
+            <div style="display:grid;grid-template-columns:100px minmax(0,1.6fr) 130px 110px minmax(0,1.4fr);gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务标签</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务名称</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">负责人</div>
-              <div style="padding:7px 12px;border-right:1px solid var(--border)">状态</div>
-              <div style="padding:7px 12px;border-right:1px solid var(--border)">备注（卡片可见）</div>
-              <div style="padding:7px 12px;text-align:center">操作</div>
+              <div style="padding:7px 12px;border-right:1px solid var(--border)">状态（点击改）</div>
+              <div style="padding:7px 12px">备注 / 操作</div>
             </div>
             <!-- 任务行列表 -->
             <div style="display:flex;flex-direction:column">
               <template v-for="(task, ti) in item.tasks" :key="task.id">
               <div
-                :style="{display:'grid',gridTemplateColumns:'28px 90px 1fr 130px 110px minmax(160px,1.4fr) 70px',gap:'0',alignItems:'stretch',
+                :style="{display:'grid',gridTemplateColumns:'100px minmax(0,1.6fr) 130px 110px minmax(0,1.4fr)',gap:'0',alignItems:'stretch',
                   borderBottom: ti < item.tasks.length-1 ? '1px solid var(--border)' : 'none',
                   background: expandedTaskId === task.id ? '#fff7ed' : (isTaskSelected(task.id) ? '#eff6ff' : (ti%2===0 ? '#fff' : '#fafaf9'))}">
-                <!-- 勾选框（admin 才有） -->
-                <div style="padding:9px 6px;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--border)">
-                  <input v-if="isAdmin" type="checkbox" :checked="isTaskSelected(task.id)" @change="toggleSelectTask(task.id)" style="cursor:pointer">
-                </div>
-                <!-- 任务标签 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border)">
+                <!-- 任务标签 + 勾选框（admin batch mode）-->
+                <div style="padding:9px 12px;display:flex;align-items:center;gap:6px;border-right:1px solid var(--border)">
+                  <input v-if="isAdmin" type="checkbox" :checked="isTaskSelected(task.id)" @change="toggleSelectTask(task.id)" style="cursor:pointer;flex-shrink:0">
                   <span style="font-size:11px;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:99px;background:#fff;white-space:nowrap">{{ task.category || '—' }}</span>
                 </div>
                 <!-- 任务名称 -->
                 <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
                   <div style="font-size:12px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.detail">{{ task.detail }}</div>
                 </div>
-                <!-- 负责人（拉宽到 130） -->
+                <!-- 负责人 -->
                 <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
                   <span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.owner">{{ task.owner || '—' }}</span>
                 </div>
-                <!-- 任务状态：可编辑就是下拉，不可编辑是文字 -->
+                <!-- 任务状态：可编辑下拉 -->
                 <div style="padding:9px 10px;display:flex;align-items:center;border-right:1px solid var(--border)">
                   <select v-if="editingTask && editingTask.id === task.id" v-model="editingTask.status"
                     style="font-size:11px;border:1px solid var(--accent);border-radius:6px;padding:3px 6px;background:#fff;width:100%">
@@ -1067,34 +1060,33 @@ const AdsPage = defineComponent({
                     <span v-if="canEditTask(task)" style="font-size:9px;color:var(--muted);margin-left:2px">✎</span>
                   </span>
                 </div>
-                <!-- 备注：可编辑下显示 input -->
-                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);gap:6px;overflow:hidden">
+                <!-- 备注 + 操作（合并一列）-->
+                <div style="padding:7px 8px;display:flex;align-items:center;gap:6px;overflow:hidden">
                   <input v-if="editingTask && editingTask.id === task.id" v-model="editingTask.note"
-                    placeholder="记录关键备注（卡片可见）"
-                    style="flex:1;font-size:11px;border:1px solid var(--accent);border-radius:6px;padding:4px 8px;outline:none">
+                    placeholder="备注（卡片可见）"
+                    style="flex:1;font-size:11px;border:1px solid var(--accent);border-radius:6px;padding:4px 8px;outline:none;min-width:0">
                   <div v-else @click="canEditTask(task) && startInlineEdit(task)"
-                    :style="{flex:'1',overflow:'hidden',cursor:canEditTask(task)?'pointer':'default'}"
+                    :style="{flex:'1',overflow:'hidden',cursor:canEditTask(task)?'pointer':'default',minWidth:'0'}"
                     :title="canEditTask(task) ? '点击编辑备注' : ''">
                     <div v-if="task.note" style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.note }}</div>
                     <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">{{ canEditTask(task) ? '点击添加备注' : '—' }}</div>
                   </div>
-                </div>
-                <!-- 操作：保存/取消 / 编辑 / 删除 / 评论展开 -->
-                <div style="padding:9px 6px;display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap">
-                  <template v-if="editingTask && editingTask.id === task.id">
-                    <button @click="saveInlineEdit" :disabled="editingTask.saving"
-                      style="font-size:10px;padding:3px 8px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:4px;cursor:pointer">{{ editingTask.saving ? '...' : '保存' }}</button>
-                    <button @click="cancelInlineEdit"
-                      style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">×</button>
-                  </template>
-                  <template v-else>
-                    <button v-if="isAdmin" @click="openFullEdit(task)" title="管理员全字段编辑"
-                      style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">编辑</button>
-                    <button @click="toggleTaskExpand(task.id)" :title="'展开评论 (' + (taskComments[task.id]||[]).length + ')'"
-                      style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">💬{{ (taskComments[task.id]||[]).length }}</button>
-                    <button v-if="canDelete" @click.stop="deleteTaskRow(task)" title="删除"
-                      style="font-size:10px;padding:3px 6px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626">×</button>
-                  </template>
+                  <div style="display:flex;gap:3px;flex-shrink:0">
+                    <template v-if="editingTask && editingTask.id === task.id">
+                      <button @click="saveInlineEdit" :disabled="editingTask.saving" title="保存"
+                        style="font-size:10px;padding:3px 8px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:4px;cursor:pointer">{{ editingTask.saving ? '...' : '✓' }}</button>
+                      <button @click="cancelInlineEdit" title="取消"
+                        style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">×</button>
+                    </template>
+                    <template v-else>
+                      <button @click="toggleTaskExpand(task.id)" :title="'评论 (' + (taskComments[task.id]||[]).length + ')'"
+                        style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">💬{{ (taskComments[task.id]||[]).length }}</button>
+                      <button v-if="isAdmin" @click="openFullEdit(task)" title="编辑全部字段"
+                        style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">编辑</button>
+                      <button v-if="canDelete" @click.stop="deleteTaskRow(task)" title="删除"
+                        style="font-size:10px;padding:3px 7px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626">×</button>
+                    </template>
+                  </div>
                 </div>
               </div>
               <!-- 展开的评论区 -->

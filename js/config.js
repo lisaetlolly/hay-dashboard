@@ -12,6 +12,7 @@ const DEFAULT_PERMISSION_GROUPS = [
   { key:'metric', label:'指标配置', perms:['metric.view','metric.create','metric.edit','metric.delete'] },
   { key:'user', label:'用户权限', perms:['user.view','user.create','user.edit','user.delete','permission.assign'] },
   { key:'event', label:'事件标注', perms:['event.create','event.edit','event.delete'] },
+  { key:'xhs',  label:'小红书笔记', perms:['xhs.create','xhs.edit','xhs.delete'] },
 ]
 
 // 渠道拆分比例（来自实际投放数据，如有变化在此处更新）
