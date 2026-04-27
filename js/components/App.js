@@ -66,11 +66,16 @@ const App = defineComponent({
 
     // 数据健康自检：DB 中 syzt（生意参谋）/ wxst（推广报表）行数判断
     const rawLoadError = typeof RAW_LOAD_ERROR !== 'undefined' ? RAW_LOAD_ERROR : null
+    const rawLoadMs    = typeof RAW_LOAD_MS    !== 'undefined' ? RAW_LOAD_MS    : null
     const dataHealth = computed(() => {
       const products = Object.values(RAW.products || {})
       if (!products.length) {
-        const apiMsg = rawLoadError ? `（API错误：${rawLoadError}）` : '（API无响应或数据库为空）'
-        return { ok:false, level:'error', msg:'数据库无任何商品数据，请上传 XLS / CSV 文件 ' + apiMsg }
+        let detail = ''
+        if (rawLoadError) detail = `（API错误：${rawLoadError}）`
+        else if (rawLoadMs) detail = `（API成功响应 ${rawLoadMs}ms，但数据库无数据 — 请运行 ETL 导入）`
+        else detail = '（API无响应或数据库为空）'
+        return { ok:false, level:'error',
+          msg:'数据库无任何商品数据 ' + detail + '。可访问 /api/diagnose 查看详细诊断' }
       }
       const hasSyzt = products.some(p => (p.pay||[]).some(v => v>0) || (p.vis||[]).some(v => v>0))
       const hasWxst = products.some(p => (p.spend||[]).some(v => v>0))

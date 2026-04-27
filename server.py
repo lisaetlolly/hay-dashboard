@@ -95,15 +95,19 @@ app.add_middleware(
 
 
 def _connect_with_retry():
-    # Neon serverless 冷启动 5-15s，30s 超时；连接错误重试一次
+    # Neon serverless 冷启动 5-15s，给 30s 超时；连接错误重试两次（共最多 3 次）
     import time
-    for attempt in range(2):
+    last_err = None
+    for attempt in range(3):
         try:
             return psycopg2.connect(NEON_DSN, connect_timeout=30)
-        except psycopg2.OperationalError:
-            if attempt == 0:
-                time.sleep(2); continue
+        except psycopg2.OperationalError as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(3); continue
             raise
+    if last_err:
+        raise last_err
 
 
 @contextmanager
@@ -274,11 +278,52 @@ def get_raw_data():
         from fastapi.responses import JSONResponse
         return JSONResponse(data)
     except Exception as e:
-        # DB unavailable — return empty shell; frontend falls back to baked-in data
+        import traceback; traceback.print_exc()
         from fastapi.responses import JSONResponse
-        return JSONResponse({'_error': str(e), 'products': {}, 'syzt': [], 'wxst': [],
+        return JSONResponse({'_error': f'DB连接失败: {e}', 'products': {}, 'syzt': [], 'wxst': [],
                              'pid_daily_spend': {}, 'wxst_audience': [], 'wxst_keyword': [],
                              'traffic': [], 'data_end': None, 'data_start': None})
+
+
+@app.get("/api/diagnose")
+def diagnose():
+    """诊断端点：检查 DB 连接 + 各表行数 + 数据日期范围。"""
+    import os, time
+    out = {
+        'env_database_url_set': bool(os.environ.get('DATABASE_URL')),
+        'dsn_host': NEON_DSN.split('@')[-1].split('/')[0] if '@' in NEON_DSN else 'invalid',
+        'tables': {},
+        'data_range': {},
+    }
+    t0 = time.time()
+    try:
+        with db() as conn:
+            out['db_connect_ms'] = int((time.time() - t0) * 1000)
+            cur = conn.cursor()
+            for tbl in ['dim_product', 'fact_syzt_product', 'fact_wxst_product',
+                        'fact_wxst_audience', 'fact_wxst_keyword',
+                        'fact_wxst_rq_product', 'fact_wxst_kw_product', 'fact_traffic']:
+                try:
+                    cur.execute(f"SELECT COUNT(*) FROM {tbl}")
+                    out['tables'][tbl] = cur.fetchone()[0]
+                except Exception as e:
+                    out['tables'][tbl] = f'ERROR: {e}'
+                    conn.rollback()
+            for tbl, dc in [('fact_syzt_product', 'pay_amount'),
+                            ('fact_wxst_product', 'spend')]:
+                try:
+                    cur.execute(f"SELECT MIN(stat_date), MAX(stat_date), SUM({dc}) FROM {tbl}")
+                    r = cur.fetchone()
+                    out['data_range'][tbl] = {'min_date': str(r[0]) if r[0] else None,
+                                              'max_date': str(r[1]) if r[1] else None,
+                                              f'sum_{dc}': float(r[2]) if r[2] else 0}
+                except Exception as e:
+                    out['data_range'][tbl] = f'ERROR: {e}'
+                    conn.rollback()
+    except Exception as e:
+        out['db_error'] = str(e)
+        out['db_connect_ms'] = int((time.time() - t0) * 1000)
+    return out
 
 
 # ── 默认日期范围（投放周期起始到今天）
