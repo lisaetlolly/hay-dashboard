@@ -175,12 +175,7 @@ const AdsPage = defineComponent({
     }
 
     const currentUser = computed(() => currentUserObj())
-    const canEditTask = (task) => {
-      const u = currentUser.value
-      if (!u) return false
-      if (u.role === 'admin' || (u.permissions || []).includes('*')) return true
-      return task.owner === u.display_name
-    }
+    const canEditTask = (task) => canEditOwnTask(currentUser.value, task)
 
     const teamFilters = ref({ owner:'', category:'', productKeyword:'', status:'' })
     const ownerOptions = computed(() => [...new Set(allTasks.value.map(t => t.owner).filter(Boolean))])
@@ -190,6 +185,10 @@ const AdsPage = defineComponent({
       const byPid = {}
       const period = activePeriod.value
       for (const t of allTasks.value) {
+        // Tasks with period_notes entries are period-scoped; only show in their periods.
+        // Tasks with no period_notes keys (legacy/raw tasks) show in all periods.
+        const periodKeys = Object.keys(t.period_notes || {})
+        if (period && periodKeys.length > 0 && !periodKeys.includes(period)) continue
         const product = RAW.products?.[t.pid]
         const productName = product?.name || RAW.short_names?.[t.pid] || t.pid
         if (teamFilters.value.owner && t.owner !== teamFilters.value.owner) continue
@@ -205,7 +204,7 @@ const AdsPage = defineComponent({
 
     const meetings = computed(() => {
       const byWeek = {}
-      for (const m of (RAW.meetings || [])) {
+      for (const m of (APP_STATE.value.meetings || [])) {
         const k = m.week_label || m.meeting_date
         if (!byWeek[k] || m.meeting_date > byWeek[k].meeting_date) byWeek[k] = m
       }
@@ -260,6 +259,15 @@ const AdsPage = defineComponent({
       const t = list?.find(x => x.id === taskId)
       if (t) { t.status = newStatus; persistAppState() }
     }
+    const saveInlineNote = (pid, taskId, value) => {
+      const list = APP_STATE.value.tasksByPid?.[pid]
+      const t = list?.find(x => x.id === taskId)
+      if (t) {
+        if (!t.period_notes) t.period_notes = {}
+        t.period_notes[activePeriod.value] = value
+        persistAppState()
+      }
+    }
     const userOptions = computed(() => APP_STATE.value.users || [])
 
     const channelCatData = computed(() => computeChannelCatTable(periodStart.value, periodEnd.value))
@@ -293,7 +301,7 @@ const AdsPage = defineComponent({
       teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,
       channelCatData,
-      taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, userOptions,
+      taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, saveInlineNote, userOptions,
     }
   },
   template: `
@@ -580,9 +588,13 @@ const AdsPage = defineComponent({
                 <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border)">
                   <span style="font-size:11px;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:99px;background:#fff;white-space:nowrap">{{ task.category || '—' }}</span>
                 </div>
-                <!-- 任务名称 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
-                  <div style="font-size:12px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.detail }}</div>
+                <!-- 任务名称（点击可编辑全部字段） -->
+                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden"
+                  :style="{cursor:canEditTask(task)?'pointer':'default'}"
+                  @click="canEditTask(task) && openEditTask(item, task)"
+                  :title="canEditTask(task)?'点击编辑任务':''">
+                  <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                    :style="{color:canEditTask(task)?'var(--accent)':'var(--text)'}">{{ task.detail }}</div>
                 </div>
                 <!-- 负责人 -->
                 <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
@@ -597,18 +609,17 @@ const AdsPage = defineComponent({
                     <option v-for="s in statusOptions" :key="s" :value="s" :style="{color:statusColor(s)}">{{ s||'—' }}</option>
                   </select>
                 </div>
-                <!-- 任务记录/备注（点击可编辑） -->
-                <div @click="openEditTask(item, task)"
-                  :style="{padding:'9px 12px',display:'flex',alignItems:'center',overflow:'hidden',
-                    cursor:canEditTask(task)?'pointer':'default',
-                    background:canEditTask(task)?'transparent':'inherit'}"
-                  :title="canEditTask(task)?'点击编辑':''">
-                  <div style="flex:1;min-width:0;overflow:hidden">
-                    <div v-if="task.note" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.note }}</div>
-                    <div v-else style="font-size:11px;font-style:italic"
-                      :style="{color:canEditTask(task)?'var(--accent)':'#d1d5db'}">
-                      {{ canEditTask(task) ? '点击添加记录…' : '暂无记录' }}</div>
-                  </div>
+                <!-- 任务记录/备注（内联直接编辑，无需弹窗） -->
+                <div style="padding:6px 8px;display:flex;align-items:center;overflow:hidden">
+                  <textarea v-if="canEditTask(task)"
+                    :value="task.note"
+                    rows="1"
+                    placeholder="填写本周期进展…"
+                    @blur="saveInlineNote(item.pid, task.id, $event.target.value)"
+                    @focus="$event.currentTarget.style.borderColor='var(--accent)'"
+                    style="width:100%;border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:11px;resize:none;background:#fff;outline:none;font-family:inherit;color:var(--text)"
+                  ></textarea>
+                  <div v-else style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:3px 2px">{{ task.note || '暂无记录' }}</div>
                 </div>
               </div>
             </div>

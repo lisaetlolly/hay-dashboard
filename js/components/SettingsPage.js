@@ -109,7 +109,9 @@ const SettingsPage = defineComponent({
     const saveMetricModal = () => {
       if (!metricModal.label.trim()) return alert('指标名称不能为空')
       if (metricModal.mode === 'add') {
-        state.metricRegistry.unshift({ id:makeId('metric'), key:metricModal.key.trim()||'new_metric', label:metricModal.label.trim(), module:metricModal.module, unit:metricModal.unit, note:metricModal.note })
+        const newKey = metricModal.key.trim() || 'new_metric'
+        if (state.metricRegistry.find(m => m.key === newKey)) return alert('指标 Key「' + newKey + '」已存在，请修改')
+        state.metricRegistry.unshift({ id:makeId('metric'), key:newKey, label:metricModal.label.trim(), module:metricModal.module, unit:metricModal.unit, note:metricModal.note })
       } else {
         const m = state.metricRegistry.find(x => x.id === metricModal.id)
         if (m) { m.label=metricModal.label.trim(); m.key=metricModal.key.trim(); m.module=metricModal.module; m.unit=metricModal.unit; m.note=metricModal.note }
@@ -374,7 +376,7 @@ const SettingsPage = defineComponent({
             </div>
             <div style="font-size:11px;color:var(--muted)">
               <span :style="{padding:'2px 8px',borderRadius:'99px',fontSize:'11px',background:u.role==='admin'?'#fef3c7':u.role==='ops'?'#dbeafe':'#f3f4f6',color:u.role==='admin'?'#92400e':u.role==='ops'?'#1e40af':'#52525b',fontWeight:'600'}">
-                {{ u.role==='admin'?'管理员':u.role==='ops'?'运营':'成员' }}
+                {{ u.role==='admin'?'管理员':u.role==='ops'?'运营':u.role==='viewer'?'只读':'成员' }}
               </span>
             </div>
             <div style="font-size:11px;color:var(--muted)">
