@@ -631,17 +631,17 @@ const AdsPage = defineComponent({
                   <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计：{{ taskPeriodDates.label }}</div>
                   <div style="display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:8px;overflow:hidden">
                     <template v-for="(m,mi) in [
-                      {label:'本月销售金额', val:fmtMoney(item.metrics.gmv), chg:item.metrics.gmv_chg},
-                      {label:'本月CTR',      val:item.metrics.ctr!=null?item.metrics.ctr+\`%\`:\`—\`, chg:item.metrics.ctr_chg},
-                      {label:'本月花费',     val:fmtMoney(item.metrics.spend), chg:item.metrics.spend_chg},
-                      {label:'本月加购量',   val:item.metrics.cart, chg:item.metrics.cart_chg},
-                      {label:'本月发布笔记量 (近7天)', val:item.metrics.xhs_notes, chg:item.metrics.xhs_notes_chg},
+                      {label:'销售金额', val:fmtMoney(item.metrics.gmv), chg:item.metrics.gmv_chg},
+                      {label:'CTR',      val:item.metrics.ctr!=null?item.metrics.ctr+\`%\`:\`—\`, chg:item.metrics.ctr_chg},
+                      {label:'花费',     val:fmtMoney(item.metrics.spend), chg:item.metrics.spend_chg},
+                      {label:'加购量',   val:item.metrics.cart, chg:item.metrics.cart_chg},
+                      {label:'发布笔记量 (近7天)', val:item.metrics.xhs_notes, chg:item.metrics.xhs_notes_chg},
                     ]" :key="mi">
                       <div :style="{padding:'8px 12px',background:'#fafaf9',borderRight:'1px solid var(--border)',borderBottom:'1px solid var(--border)'}">
                         <div style="font-size:10px;color:var(--muted);margin-bottom:3px">{{ m.label }}</div>
                         <div style="font-size:15px;font-weight:700">{{ m.val }}</div>
                         <div style="font-size:10px;margin-top:2px">
-                          <span style="color:var(--muted)">月环比 </span>
+                          <span style="color:var(--muted)">环比上周期 </span>
                           <span :style="{fontWeight:'600',color:m.chg==null?'var(--muted)':m.chg>=0?'#16a34a':'#dc2626'}">
                             {{ m.chg==null ? '—' : (m.chg>0?'↑':'↓')+Math.abs(m.chg)+'%' }}
                           </span>
@@ -650,12 +650,12 @@ const AdsPage = defineComponent({
                     </template>
                     <!-- 光合渠道流量（可内联录入） -->
                     <div style="padding:8px 12px;background:#fafaf9;border-bottom:1px solid var(--border)">
-                      <div style="font-size:10px;color:var(--muted);margin-bottom:3px">本月光合渠道流量</div>
+                      <div style="font-size:10px;color:var(--muted);margin-bottom:3px">光合渠道流量</div>
                       <input :value="item.metrics.guanghe ?? ''"
                         type="text" placeholder="点击录入"
                         @blur="saveGuanghe(item.pid, $event.target.value)"
                         style="width:100%;border:none;outline:none;background:transparent;font-size:15px;font-weight:700;color:var(--text);padding:0;cursor:text">
-                      <div style="font-size:10px;margin-top:2px;color:var(--muted)">月环比 —</div>
+                      <div style="font-size:10px;margin-top:2px;color:var(--muted)">环比上周期 —</div>
                     </div>
                   </div>
                 </div>
