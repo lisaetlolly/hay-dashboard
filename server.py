@@ -334,6 +334,116 @@ def default_range():
     return CAMPAIGN_START, date.today().isoformat()
 
 
+@app.post("/api/seed-legacy")
+@app.get("/api/seed-legacy")
+def seed_legacy():
+    """
+    一次性灌入旧 dashboard.html hardcoded 的历史数据（迁移到 Neon DB 之前的快照）。
+    幂等：先 DELETE 同日期范围内的旧记录再插入。
+    """
+    import json as _json
+    seed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etl', 'legacy_seed.json')
+    if not os.path.exists(seed_path):
+        return {"ok": False, "error": f"legacy_seed.json not found at {seed_path}"}
+
+    try:
+        with open(seed_path, 'r', encoding='utf-8') as f:
+            seed = _json.load(f)
+    except Exception as e:
+        return {"ok": False, "error": f"failed to load seed: {e}"}
+
+    products  = seed.get('products', {})
+    syzt_rows = seed.get('syzt', [])
+    wxst_rows = seed.get('wxst', [])
+    pid_daily = seed.get('pid_daily_spend', {})
+    cat_map   = seed.get('cat_map', {})
+
+    out = {"products": 0, "syzt": 0, "wxst": 0, "errors": []}
+
+    try:
+        with db() as conn:
+            cur = conn.cursor()
+
+            # 1) 先建表（schema.sql）
+            schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etl', 'schema.sql')
+            if os.path.exists(schema_path):
+                with open(schema_path, 'r', encoding='utf-8') as f:
+                    cur.execute(f.read())
+
+            # 2) dim_product
+            for pid, p in products.items():
+                title = p.get('name') or pid
+                cat_l1 = p.get('cat') or cat_map.get(pid) or ''
+                cur.execute("""
+                    INSERT INTO dim_product(product_id, spu_id, title, category_l1, category_l2, inventory)
+                    VALUES (%s, %s, %s, %s, '', 0)
+                    ON CONFLICT(product_id) DO UPDATE SET
+                        title=EXCLUDED.title, category_l1=EXCLUDED.category_l1
+                """, (pid, pid, title, cat_l1))
+                out["products"] += 1
+
+            # 3) fact_syzt_product (按 products[pid].dates/pay/vis/cart/collect/refund/new_buyers 重建)
+            for pid, p in products.items():
+                dates = p.get('dates', [])
+                pay = p.get('pay', []); vis = p.get('vis', []); cart = p.get('cart', [])
+                collect = p.get('collect', []); refund = p.get('refund', []); nb = p.get('new_buyers', [])
+                for i, d in enumerate(dates):
+                    pay_v = pay[i] if i < len(pay) else 0
+                    vis_v = vis[i] if i < len(vis) else 0
+                    cart_v = cart[i] if i < len(cart) else 0
+                    col_v = collect[i] if i < len(collect) else 0
+                    ref_v = refund[i] if i < len(refund) else 0
+                    nb_v = nb[i] if i < len(nb) else 0
+                    if not (pay_v or vis_v or cart_v or col_v or ref_v or nb_v):
+                        continue
+                    cur.execute("""
+                        INSERT INTO fact_syzt_product(stat_date, product_id, visitors, cart_users,
+                            collect_users, pay_amount, refund_amount, pay_new_buyers, source_file)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'legacy_seed')
+                        ON CONFLICT(stat_date, product_id) DO UPDATE SET
+                            visitors=EXCLUDED.visitors, cart_users=EXCLUDED.cart_users,
+                            collect_users=EXCLUDED.collect_users, pay_amount=EXCLUDED.pay_amount,
+                            refund_amount=EXCLUDED.refund_amount, pay_new_buyers=EXCLUDED.pay_new_buyers
+                    """, (d, pid, vis_v, cart_v, col_v, pay_v, ref_v, nb_v))
+                    out["syzt"] += 1
+
+            # 4) fact_wxst_product (从 pid_daily_spend 还原)
+            for pid, daily_map in pid_daily.items():
+                for d, vals in daily_map.items():
+                    spend = vals.get('spend', 0)
+                    ctr = vals.get('ctr', 0)
+                    roi = vals.get('roi', 0)
+                    if not (spend or ctr or roi):
+                        continue
+                    # 用 ctr * 假设的 imps 反推；这里没有 imps，给个占位（前端用 spend 为主）
+                    # 也可以用 wxst_rows 里查 imps
+                    cur.execute("""
+                        INSERT INTO fact_wxst_product(stat_date, product_id, spend, ctr, roi, impressions, source_file)
+                        VALUES (%s,%s,%s,%s,%s,0,'legacy_seed')
+                        ON CONFLICT(stat_date, product_id) DO UPDATE SET
+                            spend=EXCLUDED.spend, ctr=EXCLUDED.ctr, roi=EXCLUDED.roi
+                    """, (d, pid, spend, ctr, roi))
+                    out["wxst"] += 1
+
+            # 5) 用 wxst_rows 补 impressions
+            for r in wxst_rows:
+                d = r.get('d'); pid = r.get('pid')
+                imps = r.get('imps') or 0
+                if not d or not pid or not imps:
+                    continue
+                cur.execute("""
+                    UPDATE fact_wxst_product SET impressions=%s
+                    WHERE stat_date=%s AND product_id=%s
+                """, (imps, d, pid))
+
+            conn.commit()
+        _invalidate_raw_cache()
+        return {"ok": True, **out}
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return {"ok": False, "error": str(e), "partial": out}
+
+
 # ══════════════════════════════════════════════════
 # 商品维度
 # ══════════════════════════════════════════════════
