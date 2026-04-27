@@ -549,5 +549,146 @@ const SettingsPage = defineComponent({
     </div>
   </div>
 
+  <!-- 用户编辑 Modal -->
+  <div v-if="userModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="userModal.show=false">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+      <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ userModal.mode==='add'?'新增用户':'编辑用户' }}</div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">显示名</div>
+        <input v-model="userModal.name" placeholder="姓名" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:20px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">角色</div>
+        <select v-model="userModal.role" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+          <option value="admin">管理员</option><option value="ops">运营</option><option value="member">成员</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button @click="saveUserModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
+        <button @click="userModal.show=false" style="flex:1;background:#f4f4f5;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 指标编辑 Modal -->
+  <div v-if="metricModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="metricModal.show=false">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:400px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+      <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ metricModal.mode==='add'?'新增指标':'编辑指标' }}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">指标名称</div>
+          <input v-model="metricModal.label" placeholder="如：转化率" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Key</div>
+          <input v-model="metricModal.key" placeholder="如：conv_rate" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">模块</div>
+          <select v-model="metricModal.module" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+            <option value="overview">总览</option><option value="product">单品</option><option value="compare">对比</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">单位</div>
+          <select v-model="metricModal.unit" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+            <option value="number">数字</option><option value="money">金额</option><option value="percent">百分比</option><option value="uv">人数</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:20px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">备注</div>
+        <input v-model="metricModal.note" placeholder="可选备注" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button @click="saveMetricModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
+        <button @click="metricModal.show=false" style="flex:1;background:#f4f4f5;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 会议编辑 Modal -->
+  <div v-if="meetingModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="meetingModal.show=false">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:420px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+      <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ meetingModal.mode==='add'?'新增会议要点':'编辑会议要点' }}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">标题</div>
+          <input v-model="meetingModal.title" placeholder="如：4月运营周会" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">日期</div>
+          <input type="date" v-model="meetingModal.date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">周标签</div>
+          <input v-model="meetingModal.week" placeholder="如：第17周" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="margin-bottom:20px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">内容</div>
+        <textarea v-model="meetingModal.content" rows="4" placeholder="会议要点内容" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button @click="saveMeetingModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
+        <button @click="meetingModal.show=false" style="flex:1;background:#f4f4f5;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 商品编辑 Modal -->
+  <div v-if="productModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="productModal.show=false">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+      <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ productModal.mode==='add'?'新增自定义商品':'编辑商品' }}</div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">商品ID</div>
+        <input v-model="productModal.newPid" :placeholder="productModal.mode==='add'?'商品ID（必填）':'修改商品ID'"
+          :disabled="productModal.mode==='edit'&&!productModal.isCustom"
+          :style="{width:'100%',padding:'8px 10px',border:'1px solid var(--border)',borderRadius:'8px',fontSize:'12px',boxSizing:'border-box',background:productModal.mode==='edit'&&!productModal.isCustom?'#f4f4f5':'#fff'}">
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">商品名</div>
+        <input v-model="productModal.name" placeholder="商品名称" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:20px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">类目</div>
+        <select v-model="productModal.cat" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+          <option value="家具">家具</option><option value="配饰">配饰</option><option value="灯具">灯具</option><option value="其他">其他</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button @click="saveProductModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
+        <button @click="productModal.show=false" style="flex:1;background:#f4f4f5;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 运营动作编辑 Modal -->
+  <div v-if="actionModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="actionModal.show=false">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:400px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+      <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ actionModal.mode==='add'?'新增运营动作':'编辑运营动作' }}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">动作类型</div>
+          <select v-model="actionModal.action_type" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+            <option v-for="t in ACTION_TYPES" :key="t" :value="t">{{ t }}</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">执行日期</div>
+          <input type="date" v-model="actionModal.action_date" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="margin-bottom:20px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">备注</div>
+        <input v-model="actionModal.note" placeholder="执行说明" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button @click="saveActionModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
+        <button @click="actionModal.show=false" style="flex:1;background:#f4f4f5;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer">取消</button>
+      </div>
+    </div>
+  </div>
+
 </div>`
 })
