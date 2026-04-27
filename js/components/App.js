@@ -11,7 +11,44 @@ const App = defineComponent({
     const endDate     = ref('2026-04-21')
     const lastUpdated = ref('')
     const pageViewCount = ref(0)
-    const user = ref({ display_name: '管理员', role: 'admin' })
+    const user = ref({ display_name: '', role: '' })
+
+    // ── 登录 ──────────────────────────────────────────────────
+    const loggedIn     = ref(false)
+    const loginUsername = ref('')
+    const loginPassword = ref('')
+    const loginError   = ref('')
+    const loginLoading = ref(false)
+
+    const doLogin = async () => {
+      if (!loginUsername.value || !loginPassword.value) return (loginError.value = '请输入用户名和密码')
+      loginLoading.value = true; loginError.value = ''
+      try {
+        const res = await fetch('/api/users/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: loginUsername.value, password: loginPassword.value })
+        })
+        if (res.ok) {
+          const u = await res.json()
+          user.value = { display_name: u.display_name || u.username, role: u.role }
+          const matched = (APP_STATE.value.users || []).find(x => x.display_name === u.display_name)
+          if (matched) APP_STATE.value.currentUserId = matched.id
+          sessionStorage.setItem('hay_user', JSON.stringify({ display_name: user.value.display_name, role: user.value.role, userId: APP_STATE.value.currentUserId }))
+          loggedIn.value = true
+        } else {
+          const d = await res.json().catch(() => ({}))
+          loginError.value = d.detail || '用户名或密码错误'
+        }
+      } catch { loginError.value = '服务器连接失败，请检查网络' }
+      loginLoading.value = false
+    }
+
+    const logout = () => {
+      sessionStorage.removeItem('hay_user')
+      loggedIn.value = false
+      loginUsername.value = ''; loginPassword.value = ''; loginError.value = ''
+    }
 
     const navItems = [
       { id: 'overview', label: '总览' },
@@ -77,6 +114,8 @@ const App = defineComponent({
     const applyPreset = () => setPreset(timePreset.value)
 
     onMounted(async () => {
+      const savedSession = sessionStorage.getItem('hay_user')
+      if (savedSession) { try { const u = JSON.parse(savedSession); user.value = { display_name: u.display_name, role: u.role }; if (u.userId) APP_STATE.value.currentUserId = u.userId; loggedIn.value = true } catch (_) {} }
       applyPreset()
       const h = await api('/api/health')
       if (h) lastUpdated.value = h.loaded_at || h.latest_date || '—'
@@ -95,11 +134,35 @@ const App = defineComponent({
     return {
       page, timePreset, startDate, endDate, lastUpdated, pageViewCount,
       user, navItems, currentPageLabel, presets, setPreset, shiftPeriod, periodDays,
+      loggedIn, loginUsername, loginPassword, loginError, loginLoading, doLogin, logout,
       onTimePreset: () => { if (timePreset.value !== 'custom') applyPreset() }
     }
   },
   template: `
-<div style="display:flex;height:100vh;width:100vw;overflow:hidden;position:fixed;inset:0">
+<div style="height:100vh;width:100vw;overflow:hidden;position:fixed;inset:0">
+  <div v-if="!loggedIn" style="display:flex;align-items:center;justify-content:center;height:100%;background:var(--bg)">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;min-width:320px;box-shadow:0 4px 24px rgba(0,0,0,.08)">
+      <div style="font-size:26px;font-weight:700;letter-spacing:2px;margin-bottom:6px;color:var(--text)">HAY</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:28px">品牌数据中台 · 请登录</div>
+      <div style="margin-bottom:14px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:5px">用户名</div>
+        <input v-model="loginUsername" type="text" placeholder="请输入用户名" @keydown.enter="doLogin"
+               style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg);color:var(--text);outline:none">
+      </div>
+      <div style="margin-bottom:18px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:5px">密码</div>
+        <input v-model="loginPassword" type="password" placeholder="请输入密码" @keydown.enter="doLogin"
+               style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg);color:var(--text);outline:none">
+      </div>
+      <div v-if="loginError" style="color:#e55;font-size:12px;margin-bottom:12px">{{ loginError }}</div>
+      <button @click="doLogin" :disabled="loginLoading"
+              style="width:100%;padding:10px;background:var(--accent);color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-weight:500;opacity:1"
+              :style="{opacity:loginLoading?0.6:1}">
+        {{ loginLoading ? '登录中…' : '登录' }}
+      </button>
+    </div>
+  </div>
+  <div v-else style="display:flex;height:100%;width:100%">
   <div id="sidebar">
     <div class="brand">HAY</div>
     <div class="nav">
@@ -111,10 +174,12 @@ const App = defineComponent({
     </div>
     <div class="user-bar">
       <div class="avatar">{{ (user.display_name||'U')[0] }}</div>
-      <div>
+      <div style="flex:1;min-width:0">
         <div style="font-size:12px;font-weight:500">{{ user.display_name }}</div>
         <div style="font-size:11px;color:var(--muted)">{{ user.role }}</div>
       </div>
+      <button @click="logout" title="退出登录"
+              style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:2px 4px;flex-shrink:0" >⏻</button>
     </div>
   </div>
   <div id="main">
@@ -168,6 +233,7 @@ const App = defineComponent({
       <settings-page v-else-if="page==='settings'" />
       <div v-else class="empty" style="padding:80px">{{ currentPageLabel }} — 开发中</div>
     </div>
+  </div>
   </div>
 </div>`
 })
