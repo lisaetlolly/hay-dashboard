@@ -115,17 +115,29 @@ function migrateState(state) {
       }
     }
   }
-  // 将 RAW 中已有模板任务合并进保存状态（按 detail 去重，保留用户编辑）
+  // 始终以 RAW 任务为结构基础（保证 detail/category/owner 正确），叠加用户编辑
   const rawByPid = (typeof RAW !== 'undefined' && RAW.tasks_by_pid) ? RAW.tasks_by_pid : {}
   if (!state.tasksByPid) state.tasksByPid = {}
   for (const [pid, rawList] of Object.entries(rawByPid)) {
     const saved = state.tasksByPid[pid] || []
-    const savedDetails = new Set(saved.map(t => t.detail))
-    const missing = rawList.filter(t => !savedDetails.has(t.detail))
-    if (missing.length > 0)
-      state.tasksByPid[pid] = [...missing, ...saved]
-    else if (saved.length === 0)
-      state.tasksByPid[pid] = rawList.slice()
+    const savedByDetail = {}
+    for (const t of saved) { if (t.detail) savedByDetail[t.detail] = t }
+    // 以 RAW 为基础重建任务列表，叠加用户改过的 status/owner/period_notes
+    const merged = rawList.map(raw => {
+      const sv = savedByDetail[raw.detail]
+      if (!sv) return { ...raw }
+      return {
+        ...raw,
+        id: sv.id || raw.id,
+        status: sv.status || raw.status,
+        owner: sv.owner || raw.owner,
+        period_notes: sv.period_notes || raw.period_notes || {},
+      }
+    })
+    // 保留用户自行新增的任务（detail 不在 RAW 中）
+    const rawDetails = new Set(rawList.map(t => t.detail))
+    const custom = saved.filter(t => t.detail && !rawDetails.has(t.detail))
+    state.tasksByPid[pid] = [...merged, ...custom]
   }
   return state
 }
