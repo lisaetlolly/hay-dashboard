@@ -11,6 +11,24 @@ const AdsPage = defineComponent({
     const periodEnd = computed(() => props.end || RAW.data_end)
     const periodLabel = computed(() => periodStart.value===periodEnd.value ? periodStart.value : `${periodStart.value} ~ ${periodEnd.value}`)
 
+    // 将 "4.20-22" / "3.30-4.5" 等短格式解析为 {s,e} ISO 日期
+    const parseTaskPeriod = str => {
+      if (!str) return { s: null, e: null }
+      const pad = n => String(n).padStart(2, '0')
+      const fmt = (m, d) => `2026-${pad(m)}-${pad(d)}`
+      const cross = str.match(/^(\d+)\.(\d+)-(\d+)\.(\d+)$/)
+      if (cross) return { s: fmt(+cross[1], +cross[2]), e: fmt(+cross[3], +cross[4]) }
+      const same = str.match(/^(\d+)\.(\d+)-(\d+)$/)
+      if (same) return { s: fmt(+same[1], +same[2]), e: fmt(+same[1], +same[3]) }
+      return { s: null, e: null }
+    }
+    // 任务周期对应的实际日期范围（优先用任务周期，不可解析时退回顶栏日期）
+    const taskPeriodDates = computed(() => {
+      const p = parseTaskPeriod(activePeriod.value)
+      return { start: p.s || periodStart.value, end: p.e || periodEnd.value,
+               label: p.s && p.e ? `${p.s} ~ ${p.e}` : periodLabel.value }
+    })
+
     const audienceRatio = AUDIENCE_RATIO
     const keywordRatio = KEYWORD_RATIO
 
@@ -166,9 +184,10 @@ const AdsPage = defineComponent({
     }
 
     const allTasks = computed(() => {
-      const s = periodStart.value, e = periodEnd.value
+      // 使用任务周期对应的实际日期，而非顶栏日期
+      const s = taskPeriodDates.value.start, e = taskPeriodDates.value.end
       const period = activePeriod.value
-      // 上一等长周期（紧接在当前之前）用于环比
+      // 上一等长周期用于环比
       const days = Math.round((new Date(e) - new Date(s)) / 86400000) + 1
       const pe = new Date(s); pe.setDate(pe.getDate() - 1)
       const ps = new Date(pe); ps.setDate(ps.getDate() - days + 1)
@@ -181,7 +200,9 @@ const AdsPage = defineComponent({
       const pNoteS = prevNoteS.toISOString().slice(0,10), pNoteE = prevNoteE.toISOString().slice(0,10)
 
       return Object.entries(APP_STATE.value.tasksByPid || {}).flatMap(([pid, list]) => {
+        // 只显示 RAW 商品目录中存在的商品，过滤旧数据残留 PID
         const p = RAW.products?.[pid]
+        if (!p) return []
         let gmv=0, spend=0, cart=0, ctrSum=0, ctrN=0
         let pgmv=0, pspend=0, pcart=0, pctrSum=0, pctrN=0
         // 近 7 天 XHS 笔记
@@ -375,7 +396,7 @@ const AdsPage = defineComponent({
       adsCtr, ctrRankRows,
       channelCatData,
       taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, updateTaskOwner, saveInlineNote, saveGuanghe, userOptions,
-      taskTemplates, onTemplateSelect,
+      taskTemplates, onTemplateSelect, taskPeriodDates,
     }
   },
   template: `
@@ -607,7 +628,7 @@ const AdsPage = defineComponent({
                   </button>
                 </div>
                 <div>
-                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计：{{ periodLabel }}</div>
+                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计：{{ taskPeriodDates.label }}</div>
                   <div style="display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:8px;overflow:hidden">
                     <template v-for="(m,mi) in [
                       {label:'本月销售金额', val:fmtMoney(item.metrics.gmv), chg:item.metrics.gmv_chg},
@@ -651,7 +672,7 @@ const AdsPage = defineComponent({
             <!-- 任务行列表 -->
             <div style="display:flex;flex-direction:column">
               <div v-for="(task, ti) in item.tasks" :key="task.id"
-                :style="{display:'grid',gridTemplateColumns:'100px 1fr 110px 90px 1fr',gap:'0',alignItems:'stretch',
+                :style="{display:'grid',gridTemplateColumns:'100px 1fr 110px 90px 1fr',gap:'0',alignItems:'start',
                   borderBottom: ti < item.tasks.length-1 ? '1px solid var(--border)' : 'none',
                   background: ti%2===0 ? '#fff' : '#fafaf9'}">
                 <!-- 任务标签 -->
