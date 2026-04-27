@@ -54,7 +54,6 @@ const App = defineComponent({
       { id: 'overview', label: '总览' },
       { id: 'products', label: '单品视图' },
       { id: 'compare',  label: '多品对比' },
-      { id: 'effect',   label: '效果分析' },
       { id: 'ai',       label: 'AI 分析' },
       { id: 'ads',      label: '投放面板' },
     ]
@@ -227,7 +226,6 @@ const App = defineComponent({
       <overview-page v-if="page==='overview'" :start="startDate" :end="endDate" :granularity="timePreset" />
       <products-page v-else-if="page==='products'" :start="startDate" :end="endDate" />
       <compare-page v-else-if="page==='compare'" :start="startDate" :end="endDate" />
-      <action-effect-page v-else-if="page==='effect'" />
       <ai-page v-else-if="page==='ai'" :start="startDate" :end="endDate" />
       <ads-page v-else-if="page==='ads'" :start="startDate" :end="endDate" />
       <settings-page v-else-if="page==='settings'" />

@@ -46,6 +46,8 @@ function defaultUsers() {
     { id:'u_admin', display_name:'管理员', role:'admin', permissions:['*'] },
     { id:'u_ops', display_name:'晓东（运营）', role:'ops', permissions:['task.view_all','task.create','task.edit_all','meeting.view','meeting.create','meeting.edit','action.view','action.create','action.edit','metric.view'] },
     { id:'u_design', display_name:'豆豆（设计）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','action.view','meeting.view','metric.view'] },
+    { id:'u_content', display_name:'Jas team（内容）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','meeting.view','metric.view'] },
+    { id:'u_product', display_name:'刘婷（商品）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','meeting.view','metric.view'] },
   ]
 }
 function createInitialAppState() {

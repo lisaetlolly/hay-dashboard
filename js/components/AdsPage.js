@@ -134,45 +134,59 @@ const AdsPage = defineComponent({
       }))
     })
 
-    const allTasks = computed(() => Object.entries(APP_STATE.value.tasksByPid || {}).flatMap(([pid, list]) => {
-      const p = RAW.products?.[pid]
-      let gmv = 0, spend = 0, collect = 0, vis = 0
-      if (p) {
-        for (let i=0;i<p.dates.length;i++) {
-          const d = p.dates[i]
-          if (d >= periodStart.value && d <= periodEnd.value) {
-            gmv += p.pay?.[i] || 0; spend += p.spend?.[i] || 0
-            collect += (p.collect?.[i]||0)+(p.cart?.[i]||0); vis += p.vis?.[i] || 0
+    // 从日期区间推导任务周期标签，如 "2026-04-20"~"2026-04-22" → "4.20-22"
+    const derivePeriodLabel = (s, e) => {
+      if (!s) return ''
+      const sm = parseInt(s.slice(5,7)), sd = parseInt(s.slice(8))
+      const em = parseInt(e.slice(5,7)), ed = parseInt(e.slice(8))
+      if (s === e) return `${sm}.${sd}`
+      if (sm === em) return `${sm}.${sd}-${ed}`
+      return `${sm}.${sd}-${em}.${ed}`
+    }
+    const activePeriod = computed(() => derivePeriodLabel(periodStart.value, periodEnd.value))
+
+    const allTasks = computed(() => {
+      const s = periodStart.value, e = periodEnd.value
+      // 上一周期（等长，紧接在当前周期之前）用于环比
+      const days = Math.round((new Date(e) - new Date(s)) / 86400000) + 1
+      const pe = new Date(s); pe.setDate(pe.getDate() - 1)
+      const ps = new Date(pe); ps.setDate(ps.getDate() - days + 1)
+      const prevS = ps.toISOString().slice(0,10), prevE = pe.toISOString().slice(0,10)
+
+      return Object.entries(APP_STATE.value.tasksByPid || {}).flatMap(([pid, list]) => {
+        const p = RAW.products?.[pid]
+        let gmv=0, spend=0, cart=0, vis=0, ctrSum=0, ctrN=0
+        let pgmv=0, pcart=0
+        const xhsNotes = (RAW.xhs_notes || []).filter(n => n.pid===pid && n.date>=s && n.date<=e).length
+        if (p) {
+          for (let i=0; i<p.dates.length; i++) {
+            const d = p.dates[i]
+            if (d >= s && d <= e) {
+              gmv   += p.pay?.[i]   || 0
+              spend += p.spend?.[i] || 0
+              cart  += p.cart?.[i]  || 0
+              vis   += p.vis?.[i]   || 0
+              if ((p.ctr?.[i]||0) > 0) { ctrSum += p.ctr[i]*100; ctrN++ }
+            }
+            if (d >= prevS && d <= prevE) {
+              pgmv  += p.pay?.[i]  || 0
+              pcart += p.cart?.[i] || 0
+            }
           }
         }
-      }
-      return (list||[]).map(t => ({ ...t, pid, image: imgSrc(pid),
-        metrics: { gmv:+gmv.toFixed(2), spend:+spend.toFixed(2), collect:Math.round(collect),
-          visitors:Math.round(vis), roi: spend>0 ? +(gmv/spend).toFixed(2) : null }
-      }))
-    }))
-
-    const taskPeriods = computed(() => {
-      const raw = RAW.task_periods || []
-      const custom = APP_STATE.value.customPeriods || []
-      return [...new Set([...raw, ...custom])].sort()
+        const pct = (a, b) => b > 0 ? +((a-b)/b*100).toFixed(1) : null
+        return (list||[]).map(t => ({ ...t, pid, image: imgSrc(pid),
+          metrics: {
+            gmv: +gmv.toFixed(2), gmv_chg: pct(gmv, pgmv),
+            spend: +spend.toFixed(2),
+            cart: Math.round(cart), cart_chg: pct(cart, pcart),
+            ctr: ctrN > 0 ? +(ctrSum/ctrN).toFixed(2) : null,
+            roi: spend > 0 ? +(gmv/spend).toFixed(2) : null,
+            xhs_notes: xhsNotes,
+          }
+        }))
+      })
     })
-    const selectedPeriod = ref('')
-    const activePeriod = computed(() =>
-      selectedPeriod.value || taskPeriods.value[taskPeriods.value.length-1] || ''
-    )
-    const newPeriodInput = ref('')
-    const addPeriod = () => {
-      const p = newPeriodInput.value.trim()
-      if (!p) return
-      const existing = taskPeriods.value
-      if (!existing.includes(p)) {
-        APP_STATE.value.customPeriods = [...(APP_STATE.value.customPeriods || []), p]
-        persistAppState()
-      }
-      selectedPeriod.value = p
-      newPeriodInput.value = ''
-    }
 
     const currentUser = computed(() => currentUserObj())
     const canEditTask = (task) => canEditOwnTask(currentUser.value, task)
@@ -296,8 +310,7 @@ const AdsPage = defineComponent({
     return {
       activeTab, openChannel, periodLabel, audienceSpend, keywordSpend, videoSpend, videoGmv,
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
-      channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod,
-      newPeriodInput, addPeriod, canEditTask,
+      channelRows, trendRows, meetings, latestMeeting, taskGroups, activePeriod, canEditTask,
       teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,
       channelCatData,
@@ -487,17 +500,8 @@ const AdsPage = defineComponent({
       <div class="card" style="padding:14px 16px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <div style="font-size:13px;font-weight:700;color:var(--text);margin-right:4px">任务周期</div>
-          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-            <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod }}</span>
-            <select v-if="taskPeriods.length>1" :value="activePeriod" @change="selectedPeriod=$event.target.value"
-              style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;cursor:pointer;color:var(--muted)">
-              <option v-for="p in taskPeriods" :key="p" :value="p">{{ p }}</option>
-            </select>
-            <input v-model="newPeriodInput" placeholder="新时间段名称" @keydown.enter="addPeriod"
-              style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;width:120px;background:#fff">
-            <button @click="addPeriod"
-              style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer">+ 新增</button>
-          </div>
+          <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod || '请选择日期' }}</span>
+          <span style="font-size:11px;color:var(--muted)">与顶栏日期联动</span>
           <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
             <select v-model="teamFilters.owner" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
               <option value="">全部负责人</option>
@@ -548,23 +552,41 @@ const AdsPage = defineComponent({
                   </button>
                 </div>
                 <div>
-                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计时间：{{ periodLabel }}</div>
-                  <div style="display:flex;gap:24px;flex-wrap:wrap">
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">成交额</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ fmtMoney(item.metrics.gmv) }}</span>
+                  <div style="font-size:10px;color:var(--muted);margin-bottom:8px">数据统计：{{ periodLabel }}</div>
+                  <!-- 第一行 -->
+                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:8px">
+                    <div>
+                      <div style="font-size:10px;color:var(--muted)">销售金额</div>
+                      <div style="font-size:15px;font-weight:700">{{ fmtMoney(item.metrics.gmv) }}</div>
+                      <div :style="{fontSize:'10px',color:item.metrics.gmv_chg==null?'var(--muted)':item.metrics.gmv_chg>=0?'#16a34a':'#dc2626'}">
+                        {{ item.metrics.gmv_chg == null ? '—' : (item.metrics.gmv_chg > 0 ? '↑' : '↓') + Math.abs(item.metrics.gmv_chg) + '%' }}
+                      </div>
                     </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">花费</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ fmtMoney(item.metrics.spend) }}</span>
+                    <div>
+                      <div style="font-size:10px;color:var(--muted)">推广 CTR</div>
+                      <div style="font-size:15px;font-weight:700">{{ item.metrics.ctr != null ? item.metrics.ctr + '%' : '—' }}</div>
                     </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">ROI</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ item.metrics.roi == null ? '—' : item.metrics.roi }}</span>
+                    <div>
+                      <div style="font-size:10px;color:var(--muted)">投放花费</div>
+                      <div style="font-size:15px;font-weight:700">{{ fmtMoney(item.metrics.spend) }}</div>
                     </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">收藏加购</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ item.metrics.collect }}</span>
+                  </div>
+                  <!-- 第二行 -->
+                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+                    <div>
+                      <div style="font-size:10px;color:var(--muted)">加购量</div>
+                      <div style="font-size:15px;font-weight:700">{{ item.metrics.cart }}</div>
+                      <div :style="{fontSize:'10px',color:item.metrics.cart_chg==null?'var(--muted)':item.metrics.cart_chg>=0?'#16a34a':'#dc2626'}">
+                        {{ item.metrics.cart_chg == null ? '—' : (item.metrics.cart_chg > 0 ? '↑' : '↓') + Math.abs(item.metrics.cart_chg) + '%' }}
+                      </div>
+                    </div>
+                    <div>
+                      <div style="font-size:10px;color:var(--muted)">笔记量</div>
+                      <div style="font-size:15px;font-weight:700">{{ item.metrics.xhs_notes }}</div>
+                    </div>
+                    <div>
+                      <div style="font-size:10px;color:var(--muted)">ROI</div>
+                      <div style="font-size:15px;font-weight:700">{{ item.metrics.roi != null ? item.metrics.roi : '—' }}</div>
                     </div>
                   </div>
                 </div>
