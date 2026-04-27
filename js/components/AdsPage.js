@@ -260,15 +260,32 @@ const AdsPage = defineComponent({
     const latestMeeting = computed(() => meetings.value[0] || null)
     const toggleChannel = key => { openChannel.value[key] = !openChannel.value[key] }
 
-    const taskModal = ref({ show:false, mode:'edit', pid:'', id:'', detail:'', owner:'', category:'', status:'待开始', note:'' })
+    const taskTemplates = computed(() => {
+      const base = defaultTaskTemplates ? defaultTaskTemplates() : []
+      const saved = APP_STATE.value.taskTemplates || []
+      const seen = new Set(base.map(t => t.detail))
+      const custom = saved.filter(t => !seen.has(t.detail))
+      return [...base, ...custom]
+    })
+    const taskModal = ref({ show:false, mode:'edit', pid:'', id:'', detail:'', owner:'', category:'', status:'待开始', note:'', templateKey:'' })
+    const onTemplateSelect = (e) => {
+      const key = e.target.value
+      taskModal.value.templateKey = key
+      if (!key || key === '__custom__') return
+      const tpl = taskTemplates.value.find(t => t.detail === key)
+      if (!tpl) return
+      taskModal.value.detail = tpl.detail
+      taskModal.value.category = tpl.category
+      if (!taskModal.value.owner && tpl.defaultOwner) taskModal.value.owner = tpl.defaultOwner
+    }
     const openEditTask = (item, task) => {
       if (!canEditTask(task)) return
-      Object.assign(taskModal.value, { show:true, mode:'edit', pid:item.pid, id:task.id, detail:task.detail, owner:task.owner, category:task.category, status:task.status||'待开始', note:task.note||'' })
+      Object.assign(taskModal.value, { show:true, mode:'edit', pid:item.pid, id:task.id, detail:task.detail, owner:task.owner, category:task.category, status:task.status||'待开始', note:task.note||'', templateKey:'' })
     }
     const openAddTask = (item) => {
       const u = currentUser.value
       if (!u) return
-      Object.assign(taskModal.value, { show:true, mode:'add', pid:item.pid, id:'', detail:'', owner: u.role==='admin'?'':(u.display_name||''), category:'', status:'待开始', note:'' })
+      Object.assign(taskModal.value, { show:true, mode:'add', pid:item.pid, id:'', detail:'', owner: u.role==='admin'?'':(u.display_name||''), category:'', status:'待开始', note:'', templateKey:'' })
     }
     const saveTaskModal = () => {
       const { pid, id, mode, detail, owner, category, status, note } = taskModal.value
@@ -276,6 +293,12 @@ const AdsPage = defineComponent({
       if (!APP_STATE.value.tasksByPid) APP_STATE.value.tasksByPid = {}
       if (!APP_STATE.value.tasksByPid[pid]) APP_STATE.value.tasksByPid[pid] = []
       const list = APP_STATE.value.tasksByPid[pid]
+      // 如果是全新自定义任务，保存到模板库
+      const knownDetails = new Set((APP_STATE.value.taskTemplates || []).concat(defaultTaskTemplates ? defaultTaskTemplates() : []).map(t => t.detail))
+      if (!knownDetails.has(detail.trim())) {
+        if (!APP_STATE.value.taskTemplates) APP_STATE.value.taskTemplates = []
+        APP_STATE.value.taskTemplates.push({ category: category || '', detail: detail.trim(), defaultOwner: owner || '' })
+      }
       if (mode === 'add') {
         const newTask = { id: makeId('task'), detail: detail.trim(), owner, category, status, period_notes: {} }
         newTask.period_notes[activePeriod.value] = note
@@ -355,6 +378,7 @@ const AdsPage = defineComponent({
       adsCtr, ctrRankRows,
       channelCatData,
       taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, updateTaskOwner, saveInlineNote, saveGuanghe, userOptions,
+      taskTemplates, onTemplateSelect,
     }
   },
   template: `
@@ -384,21 +408,6 @@ const AdsPage = defineComponent({
       <div class="kpi-card"><div class="kpi-label">短视频<span class="info-btn">?<span class="tooltip">内容报表「短视频」类型花费，与搜推报表独立统计，不叠加在人群/关键词中。来源：推广报表→内容报表。</span></span></div><div class="kpi-value">{{ fmtMoney(videoSpend) }}</div><div class="kpi-footer"><span>内容报表口径</span></div></div>
       <div class="kpi-card"><div class="kpi-label">类目拆分额<span class="info-btn">?<span class="tooltip">商品报表口径的各品类投放花费，直接来自商品级数据累加，不经渠道比例换算，用于类目计划 vs 实际对比。</span></span></div><div class="kpi-value">¥{{ totalProductSpendWan }}万</div><div class="kpi-footer"><span>商品报表口径</span></div></div>
       <div class="kpi-card"><div class="kpi-label">推广 CTR<span class="info-btn">?<span class="tooltip">万象台商品报表 CTR 字段均值（点击量 ÷ 展现量 × 100%）。仅统计有曝光的商品，按商品数取算术均值。</span></span></div><div class="kpi-value">{{ adsCtr != null ? adsCtr.toFixed(2)+'%' : '—' }}</div><div class="kpi-footer"><span>万象台均值</span></div></div>
-    </div>
-
-    <div class="card" style="padding:16px">
-      <div class="card-header" style="margin-bottom:12px"><span class="card-title">投放趋势</span><span class="card-sub">当前周期按日</span></div>
-      <div style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow:auto">
-        <div style="display:grid;grid-template-columns:84px repeat(3,1fr);gap:10px;padding:0 4px 6px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
-          <div>日期</div><div style="text-align:right">花费</div><div style="text-align:right">成交额</div><div style="text-align:right">ROI / 收藏加购</div>
-        </div>
-        <div v-for="row in trendRows" :key="row.d" style="display:grid;grid-template-columns:84px repeat(3,1fr);gap:10px;padding:6px 4px;border-bottom:1px solid #f1f5f9;font-size:11px;align-items:center">
-          <div style="color:var(--muted)">{{ row.d.slice(5) }}</div>
-          <div style="text-align:right;font-weight:600">{{ fmtMoney(row.spend) }}</div>
-          <div style="text-align:right;font-weight:600">{{ fmtMoney(row.gmv) }}</div>
-          <div style="text-align:right;color:var(--muted)">{{ row.roi == null ? '—' : 'ROI ' + row.roi }} / {{ row.collect }}</div>
-        </div>
-      </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -718,8 +727,18 @@ const AdsPage = defineComponent({
 
   <!-- 任务编辑 Modal -->
   <div v-if="taskModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="taskModal.show=false">
-    <div style="background:#fff;border-radius:14px;padding:24px;width:420px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:440px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
       <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ taskModal.mode==='add' ? '新增任务' : '编辑任务' }}</div>
+      <!-- 新增模式：先选模板 -->
+      <div v-if="taskModal.mode==='add'" style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">选择任务模板（可选）</div>
+        <select :value="taskModal.templateKey" @change="onTemplateSelect"
+          style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff;box-sizing:border-box;color:var(--text)">
+          <option value="">— 从模板选择 —</option>
+          <option v-for="tpl in taskTemplates" :key="tpl.detail" :value="tpl.detail">【{{ tpl.category }}】{{ tpl.detail }}</option>
+          <option value="__custom__">+ 自定义任务（新建）</option>
+        </select>
+      </div>
       <div style="margin-bottom:12px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务名称 <span style="color:#e55">*</span></div>
         <input v-model="taskModal.detail" placeholder="任务描述" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">

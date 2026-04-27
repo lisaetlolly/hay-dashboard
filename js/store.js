@@ -50,6 +50,19 @@ function defaultUsers() {
     { id:'u_product', display_name:'刘婷（商品）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','meeting.view','metric.view'] },
   ]
 }
+function defaultTaskTemplates() {
+  return [
+    { category:'标题优化', detail:'结合小红书/淘宝热搜词，优化链接标题', defaultOwner:'Jas team（内容）' },
+    { category:'评价与问大家', detail:'梳理每个链接中差评（如有），分类问题', defaultOwner:'Jas team（内容）' },
+    { category:'评价与问大家', detail:'针对共性问题，制作3条带图/视频好评进行覆盖', defaultOwner:'Jas team（内容）' },
+    { category:'评价与问大家', detail:'优化问大家回复', defaultOwner:'Jas team（内容）' },
+    { category:'淘内内容宣发', detail:'光合内容制作、上线', defaultOwner:'Jas team（内容）' },
+    { category:'详情页优化', detail:'迭代初版详情页', defaultOwner:'豆豆（设计）' },
+    { category:'竞品分析', detail:'竞品动作关注、价格策略调整', defaultOwner:'刘婷（商品）' },
+    { category:'妈妈计划迭代', detail:'确认推广金额及提出素材需求', defaultOwner:'晓东（运营）' },
+    { category:'售卖复盘', detail:'对流量、收藏加购情况做分析', defaultOwner:'晓东（运营）' },
+  ]
+}
 function createInitialAppState() {
   return {
     currentUserId:'u_admin',
@@ -66,6 +79,7 @@ function createInitialAppState() {
     manualDailyData: {},
     selectedTaskPeriod: '',
     guangheTraffic: {},
+    taskTemplates: defaultTaskTemplates(),
   }
 }
 // 旧数据迁移：统一周期格式 + 修正用户名
@@ -74,6 +88,7 @@ const PERIOD_RENAMES = {
   '4月6日～4月12日':'4.6-12','4月13日～4月19日':'4.13-19',
   '4月20日～4月22日':'4.20-22','4月20日～22日':'4.20-22',
 }
+const STATUS_VALS = new Set(['待开始','进行中','已完成','待完成'])
 function migrateState(state) {
   if (!state) return state
   // 迁移 customPeriods
@@ -86,12 +101,31 @@ function migrateState(state) {
         if (t.owner === 'Jas（内容）') t.owner = 'Jas team（内容）'
         if (t.period_notes) {
           const n = {}
-          for (const [k, v] of Object.entries(t.period_notes))
-            n[PERIOD_RENAMES[k] || k] = v
+          for (const [k, v] of Object.entries(t.period_notes)) {
+            const rk = PERIOD_RENAMES[k] || k
+            if (STATUS_VALS.has(v)) {
+              // 纯状态值存在了备注里 → 移到 status 字段
+              if (!t.status || t.status === '待开始') t.status = v === '待完成' ? '待开始' : v
+            } else {
+              n[rk] = v
+            }
+          }
           t.period_notes = n
         }
       }
     }
+  }
+  // 将 RAW 中已有模板任务合并进保存状态（按 detail 去重，保留用户编辑）
+  const rawByPid = (typeof RAW !== 'undefined' && RAW.tasks_by_pid) ? RAW.tasks_by_pid : {}
+  if (!state.tasksByPid) state.tasksByPid = {}
+  for (const [pid, rawList] of Object.entries(rawByPid)) {
+    const saved = state.tasksByPid[pid] || []
+    const savedDetails = new Set(saved.map(t => t.detail))
+    const missing = rawList.filter(t => !savedDetails.has(t.detail))
+    if (missing.length > 0)
+      state.tasksByPid[pid] = [...missing, ...saved]
+    else if (saved.length === 0)
+      state.tasksByPid[pid] = rawList.slice()
   }
   return state
 }
@@ -106,6 +140,7 @@ function loadAppState() {
     ...initial,
     ...migrateState(saved),
     permissionGroups: initial.permissionGroups,
+    users: initial.users,
   }
 }
 let _lastServerStateAt = null
@@ -119,7 +154,7 @@ async function syncStateFromServer() {
     if (_lastServerStateAt === updated_at) return
     _lastServerStateAt = updated_at
     const initial = createInitialAppState()
-    APP_STATE.value = { ...initial, ...migrateState(state), permissionGroups: initial.permissionGroups }
+    APP_STATE.value = { ...initial, ...migrateState(state), permissionGroups: initial.permissionGroups, users: initial.users }
     writeStore(APP_STORAGE_KEY, APP_STATE.value)
   } catch {}
 }

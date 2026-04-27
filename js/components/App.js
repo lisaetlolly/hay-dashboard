@@ -81,7 +81,9 @@ const App = defineComponent({
 
     const setPreset = (k) => {
       timePreset.value = k
-      const today = new Date(DATA_END)
+      // Use data_end as ceiling so presets stay within data range
+      const dataEnd = new Date(DATA_END)
+      const today = new Date() > dataEnd ? dataEnd : new Date()
       if (k === '7d') {
         startDate.value = sub(today, 6); endDate.value = fmt(today)
       } else if (k === '30d') {
