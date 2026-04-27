@@ -55,13 +55,16 @@ def create_tables():
             """)
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'")
-            cur.execute("SELECT COUNT(*) FROM users")
-            if cur.fetchone()[0] == 0:
-                pw = hashlib.sha256(b"hay2026").hexdigest()
-                cur.execute(
-                    "INSERT INTO users (username, password_hash, display_name, role, permissions) VALUES (%s,%s,%s,%s,'{}') ON CONFLICT DO NOTHING",
-                    ("admin", pw, "管理员", "admin")
-                )
+            pw = hashlib.sha256(b"hay2026").hexdigest()
+            cur.execute(
+                """INSERT INTO users (username, password_hash, display_name, role, permissions)
+                   VALUES (%s,%s,%s,%s,'{}')
+                   ON CONFLICT (username) DO UPDATE
+                   SET password_hash = EXCLUDED.password_hash,
+                       role = EXCLUDED.role,
+                       display_name = EXCLUDED.display_name""",
+                ("admin", pw, "管理员", "admin")
+            )
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS page_views (
                     id               SERIAL PRIMARY KEY,
