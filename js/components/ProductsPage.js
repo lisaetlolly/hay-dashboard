@@ -180,16 +180,8 @@ const ProductsPage = defineComponent({
     const guideKeys = ['gmv','vis','cart_rate','conv_rate','ad_roi','fav_cart','new_buyers','refund','ad_ctr','pv','dwell_time','bounce_rate','fav_cart_users','search_vis','xhs_inter']
     const guideItems = guideKeys.map(k => ({ key:k, label:METRIC_TIPS[k]?.label||k, tip:METRIC_TIPS[k]?.tip||'' }))
 
-    // 与投放面板联动的任务周期标签
-    const activePeriod = computed(() => {
-      const sv = s.value, ev = e.value
-      if (!sv) return ''
-      const sm = parseInt(sv.slice(5,7)), sd = parseInt(sv.slice(8))
-      const em = parseInt(ev.slice(5,7)), ed = parseInt(ev.slice(8))
-      if (sv === ev) return `${sm}.${sd}`
-      if (sm === em) return `${sm}.${sd}-${ed}`
-      return `${sm}.${sd}-${em}.${ed}`
-    })
+    // 与投放面板共用同一个任务周期（存储在 APP_STATE）
+    const activePeriod = computed(() => APP_STATE.value.selectedTaskPeriod || '')
 
     return { filterCat, filterXhs, searchQ, sortBy, displayMode, periodLabel, sortOpts, products, summaryMetrics, chartMetricGroups, selectedChartMetrics, toggleChartMetric, isChartMetricSelected, filteredSummaryMetrics, fmt, fchg, chgCls, imgSrc, miniChart, productChartSeries, getCardTab, setCardTab, showMetricGuide, guideItems, activePeriod }
   },

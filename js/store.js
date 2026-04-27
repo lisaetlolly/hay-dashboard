@@ -64,6 +64,7 @@ function createInitialAppState() {
     productOverrides: {},
     imageOverrides: {},
     manualDailyData: {},
+    selectedTaskPeriod: '',
   }
 }
 // APP_STATE 初始化在 dashboard.html 内联脚本中（需要 RAW 和 ref 均已就绪后执行）

@@ -134,16 +134,28 @@ const AdsPage = defineComponent({
       }))
     })
 
-    // 从日期区间推导任务周期标签，如 "2026-04-20"~"2026-04-22" → "4.20-22"
-    const derivePeriodLabel = (s, e) => {
-      if (!s) return ''
-      const sm = parseInt(s.slice(5,7)), sd = parseInt(s.slice(8))
-      const em = parseInt(e.slice(5,7)), ed = parseInt(e.slice(8))
-      if (s === e) return `${sm}.${sd}`
-      if (sm === em) return `${sm}.${sd}-${ed}`
-      return `${sm}.${sd}-${em}.${ed}`
+    const taskPeriods = computed(() => {
+      const base = RAW.task_periods || []
+      const custom = APP_STATE.value.customPeriods || []
+      return [...new Set([...base, ...custom])].sort()
+    })
+    const activePeriod = computed(() =>
+      APP_STATE.value.selectedTaskPeriod || taskPeriods.value[taskPeriods.value.length - 1] || ''
+    )
+    const setTaskPeriod = (p) => {
+      APP_STATE.value.selectedTaskPeriod = p
+      persistAppState()
     }
-    const activePeriod = computed(() => derivePeriodLabel(periodStart.value, periodEnd.value))
+    const newPeriodInput = ref('')
+    const addPeriod = () => {
+      const p = newPeriodInput.value.trim()
+      if (!p) return
+      if (!taskPeriods.value.includes(p)) {
+        APP_STATE.value.customPeriods = [...(APP_STATE.value.customPeriods || []), p]
+      }
+      setTaskPeriod(p)
+      newPeriodInput.value = ''
+    }
 
     const allTasks = computed(() => {
       const s = periodStart.value, e = periodEnd.value
@@ -310,7 +322,8 @@ const AdsPage = defineComponent({
     return {
       activeTab, openChannel, periodLabel, audienceSpend, keywordSpend, videoSpend, videoGmv,
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
-      channelRows, trendRows, meetings, latestMeeting, taskGroups, activePeriod, canEditTask,
+      channelRows, trendRows, meetings, latestMeeting, taskGroups,
+      taskPeriods, activePeriod, setTaskPeriod, newPeriodInput, addPeriod, canEditTask,
       teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,
       channelCatData,
@@ -500,8 +513,17 @@ const AdsPage = defineComponent({
       <div class="card" style="padding:14px 16px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <div style="font-size:13px;font-weight:700;color:var(--text);margin-right:4px">任务周期</div>
-          <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod || '请选择日期' }}</span>
-          <span style="font-size:11px;color:var(--muted)">与顶栏日期联动</span>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod }}</span>
+            <select v-if="taskPeriods.length>1" :value="activePeriod" @change="setTaskPeriod($event.target.value)"
+              style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;cursor:pointer;color:var(--muted)">
+              <option v-for="p in taskPeriods" :key="p" :value="p">{{ p }}</option>
+            </select>
+            <input v-model="newPeriodInput" placeholder="新周期名称（如 4.23-25）" @keydown.enter="addPeriod"
+              style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;width:150px;background:#fff">
+            <button @click="addPeriod"
+              style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer">+ 新增</button>
+          </div>
           <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
             <select v-model="teamFilters.owner" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
               <option value="">全部负责人</option>
