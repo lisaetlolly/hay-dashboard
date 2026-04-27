@@ -80,6 +80,14 @@ const App = defineComponent({
       applyPreset()
       const h = await api('/api/health')
       if (h) lastUpdated.value = h.loaded_at || h.latest_date || '—'
+      // 记录本次访问
+      try {
+        await fetch('/api/page-views', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ page_path: '/' })
+        })
+      } catch (_) {}
       const pv = await api('/api/page-views/count', { page_path: '/' })
       if (pv) pageViewCount.value = pv.count || 0
     })
@@ -110,7 +118,7 @@ const App = defineComponent({
     </div>
   </div>
   <div id="main">
-    <div id="topbar" style="flex-wrap:nowrap;overflow:hidden">
+    <div id="topbar" style="flex-wrap:nowrap">
       <div class="page-title" style="flex-shrink:0">{{ currentPageLabel }}</div>
       <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
         <div style="display:flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;flex-shrink:0">
