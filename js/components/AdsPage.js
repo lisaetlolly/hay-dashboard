@@ -38,7 +38,7 @@ const AdsPage = defineComponent({
     const imgSrc = pid => (APP_STATE.value.imageOverrides || {})[pid] || RAW.img_map?.[pid] || ''
 
     const productStats = computed(() => {
-      return Object.values(RAW.products).map(p => {
+      return Object.values(RAW.products || {}).map(p => {
         let spend=0, collect=0
         for (let i=0;i<p.dates.length;i++) {
           const d=p.dates[i]

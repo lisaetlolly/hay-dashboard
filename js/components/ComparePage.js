@@ -7,7 +7,7 @@ const ComparePage = defineComponent({
   props: ['start', 'end'],
   setup(props) {
     const metric = ref('cart_rate')
-    const selectedPids = ref(RAW.official_pids ? RAW.official_pids.slice(0, 8) : Object.values(RAW.products).filter(p => OFFICIAL.has(p.pid)).slice(0, 8).map(p => p.pid))
+    const selectedPids = ref(RAW.official_pids ? RAW.official_pids.slice(0, 8) : Object.values(RAW.products || {}).filter(p => OFFICIAL.has(p.pid)).slice(0, 8).map(p => p.pid))
     const selectedCats = ref(['配饰','家具','灯具'])
     const hoverKey = ref('')
 
@@ -32,7 +32,7 @@ const ComparePage = defineComponent({
     const palette = ['#3b82f6','#10b981','#f43f5e','#8b5cf6','#f59e0b','#06b6d4','#ef4444','#22c55e','#a855f7','#f97316','#14b8a6','#ec4899']
     const categories = ['配饰','家具','灯具','其他']
 
-    const productOptions = computed(() => Object.values(RAW.products)
+    const productOptions = computed(() => Object.values(RAW.products || {})
       .filter(p => OFFICIAL.has(p.pid))
       .map((p, i) => ({ id:p.pid, label:p.name, cat:p.cat, color:palette[i % palette.length] }))
       .sort((a,b) => a.cat.localeCompare(b.cat) || a.label.localeCompare(b.label))
@@ -72,7 +72,7 @@ const ComparePage = defineComponent({
       const cur = currentRange.value
       const launch = launchRange.value
       return selectedPids.value.map(pid => {
-        const p = RAW.products[pid]
+        const p = (RAW.products || {})[pid]
         const opt = productOptions.value.find(x => x.id === pid)
         if (!p || !opt) return null
         const build = (s, e) => p.dates.map((d, i) => d >= s && d <= e ? ({ d, ...dayMetricRow(p, i) }) : null).filter(Boolean)
@@ -85,7 +85,7 @@ const ComparePage = defineComponent({
     const catSeries = computed(() => {
       const { s, e } = currentRange.value
       const catMap = Object.fromEntries(selectedCats.value.map(cat => [cat, {}]))
-      for (const p of Object.values(RAW.products)) {
+      for (const p of Object.values(RAW.products || {})) {
         if (!selectedCats.value.includes(p.cat)) continue
         for (let i = 0; i < p.dates.length; i++) {
           const d = p.dates[i]

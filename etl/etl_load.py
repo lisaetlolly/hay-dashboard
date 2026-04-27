@@ -67,9 +67,23 @@ def _load_product_ids():
             html = open(html_path, encoding='utf-8').read()
             try:
                 start = html.index('const RAW = ')
-                end   = html.index('const OFFICIAL = new Set(RAW.official_pids)')
-                raw   = json.loads(html[start + len('const RAW = '):end].strip())
-                ids   = set(raw.get('cat_map', {}).keys())
+                # 端标记：const RAW 整体写在一行 JSON 里，行末为 "}"，下一行是空行/注释/函数
+                # 用 "\nasync function _loadRawFromAPI" 作为切断点（重构后引入）
+                # 兼容旧格式：fallback 到 "\nconst OFFICIAL"
+                end_markers = [
+                    '\nasync function _loadRawFromAPI',
+                    '\nconst OFFICIAL',
+                ]
+                end = -1
+                for m in end_markers:
+                    idx = html.find(m, start)
+                    if idx > 0:
+                        end = idx; break
+                if end < 0:
+                    raise ValueError('未找到 RAW 结束标记')
+                raw_body = html[start + len('const RAW = '):end].strip().rstrip(';')
+                raw = json.loads(raw_body)
+                ids = set(raw.get('cat_map', {}).keys())
                 print(f"  [dashboard.html] 加载 {len(ids)} 个商品ID")
                 return ids
             except Exception as e2:
@@ -245,7 +259,7 @@ def load_syzt_product(conn):
     if not os.path.isdir(d):
         print("  [SKIP] 生意参谋商品 dir not found")
         return
-    files = sorted(glob.glob(os.path.join(d, '*.xls')))
+    files = sorted(glob.glob(os.path.join(d, '*.xls')) + glob.glob(os.path.join(d, '*.xlsx')))
     cur = conn.cursor()
     total = 0
     for fpath in files:
@@ -534,7 +548,7 @@ def load_traffic(conn):
     if not os.path.isdir(d):
         print("  [SKIP] 无限店铺流量 dir not found")
         return
-    files = sorted(glob.glob(os.path.join(d, '*.xls')))
+    files = sorted(glob.glob(os.path.join(d, '*.xls')) + glob.glob(os.path.join(d, '*.xlsx')))
     cur = conn.cursor()
     total = 0
 

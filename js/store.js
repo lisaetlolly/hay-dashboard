@@ -231,7 +231,7 @@ function getEffectiveProducts() {
   const overrides = APP_STATE.value.productOverrides || {}
   const custom = APP_STATE.value.customProducts || []
   const manualData = APP_STATE.value.manualDailyData || {}
-  const base = Object.values(RAW.products)
+  const base = Object.values(RAW.products || {})
     .filter(p => !hidden.has(p.pid))
     .map(p => {
       const ov = overrides[p.pid] || {}

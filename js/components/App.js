@@ -63,6 +63,18 @@ const App = defineComponent({
 
     const DATA_END = RAW.data_end
     const LAUNCH_DATE = RAW.launch_date
+
+    // 数据健康自检：DB 中 syzt（生意参谋）/ wxst（推广报表）行数判断
+    const dataHealth = computed(() => {
+      const products = Object.values(RAW.products || {})
+      if (!products.length) return { ok:false, level:'error', msg:'数据库无任何商品数据，请上传 XLS / CSV 文件' }
+      const hasSyzt = products.some(p => (p.pay||[]).some(v => v>0) || (p.vis||[]).some(v => v>0))
+      const hasWxst = products.some(p => (p.spend||[]).some(v => v>0))
+      if (!hasSyzt && hasWxst) return { ok:false, level:'warn', msg:'生意参谋数据缺失（GMV/UV 为 0）— 请重新上传 .xls 商品报表' }
+      if (hasSyzt && !hasWxst) return { ok:false, level:'warn', msg:'推广报表数据缺失（投放花费为 0）— 请上传推广 CSV 报表' }
+      if (!hasSyzt && !hasWxst) return { ok:false, level:'error', msg:'生意参谋 + 推广报表均缺失，所有指标都会显示为 0' }
+      return { ok:true, level:'ok', msg:'' }
+    })
     const fmt = d => (typeof d === 'string' ? d : d.toISOString().slice(0, 10))
     const sub = (base, n) => { const d = new Date(base); d.setDate(d.getDate() - n); return fmt(d) }
 
@@ -135,6 +147,7 @@ const App = defineComponent({
       page, timePreset, startDate, endDate, lastUpdated, pageViewCount,
       user, navItems, currentPageLabel, presets, setPreset, shiftPeriod, periodDays,
       loggedIn, loginUsername, loginPassword, loginError, loginLoading, doLogin, logout,
+      dataHealth,
       onTimePreset: () => { if (timePreset.value !== 'custom') applyPreset() }
     }
   },
@@ -224,6 +237,13 @@ const App = defineComponent({
       <div style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0">访问 {{ pageViewCount }}</div>
     </div>
     <div id="content">
+      <div v-if="!dataHealth.ok"
+           :style="{padding:'10px 14px',borderRadius:'8px',fontSize:'12px',marginBottom:'4px',
+             border:'1px solid '+(dataHealth.level==='error'?'#fecaca':'#fed7aa'),
+             background:(dataHealth.level==='error'?'#fef2f2':'#fff7ed'),
+             color:(dataHealth.level==='error'?'#b91c1c':'#c2410c')}">
+        <strong>⚠ 数据警告：</strong> {{ dataHealth.msg }}
+      </div>
       <overview-page v-if="page==='overview'" :start="startDate" :end="endDate" :granularity="timePreset" />
       <products-page v-else-if="page==='products'" :start="startDate" :end="endDate" />
       <compare-page v-else-if="page==='compare'" :start="startDate" :end="endDate" />

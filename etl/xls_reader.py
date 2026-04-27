@@ -295,20 +295,74 @@ def _parse_biff8(stream):
     return result
 
 
+def _read_html_table(data):
+    """生意参谋 / 淘宝 经常导出 HTML 表格但扩展名 .xls；用 html.parser 解析。"""
+    from html.parser import HTMLParser
+    text = None
+    for enc in ('utf-8', 'gb18030', 'gbk', 'utf-16', 'latin-1'):
+        try:
+            text = data.decode(enc)
+            break
+        except Exception:
+            continue
+    if not text:
+        return []
+    head = text.lstrip()[:200].lower()
+    if not (head.startswith('<') or '<table' in head or '<html' in head):
+        return []
+
+    class T(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.rows, self.cur, self.cell, self.in_cell = [], None, [], False
+        def handle_starttag(self, tag, attrs):
+            if tag == 'tr':
+                self.cur = []
+            elif tag in ('td', 'th'):
+                self.in_cell = True; self.cell = []
+            elif tag == 'br' and self.in_cell:
+                self.cell.append(' ')
+        def handle_endtag(self, tag):
+            if tag in ('td', 'th') and self.in_cell:
+                self.in_cell = False
+                if self.cur is not None:
+                    self.cur.append(''.join(self.cell).strip())
+            elif tag == 'tr' and self.cur is not None:
+                if any(c for c in self.cur):
+                    self.rows.append(self.cur)
+                self.cur = None
+        def handle_data(self, d):
+            if self.in_cell:
+                self.cell.append(d)
+    p = T()
+    try:
+        p.feed(text)
+    except Exception:
+        pass
+    return p.rows
+
+
 def read_xls_stdlib(path):
     """
     主入口：读取 .xls 文件，返回 (headers, list_of_dicts)
-    headers: 列名列表
-    rows: 每行是 {列名: 值} 的字典
+    支持三种格式：BIFF8 (真二进制 xls)、HTML 表格（伪 xls，淘系常用）、纯文本占位
     """
     with open(path, 'rb') as f:
         data = f.read()
 
-    stream = _extract_workbook_stream(data)
-    if stream is None:
-        return [], []
+    all_rows = []
+    # 1) 优先尝试 OLE2/BIFF8
+    try:
+        stream = _extract_workbook_stream(data)
+        if stream is not None:
+            all_rows = _parse_biff8(stream) or []
+    except Exception:
+        all_rows = []
 
-    all_rows = _parse_biff8(stream)
+    # 2) BIFF 解析失败 → 尝试 HTML 表格（生意参谋常见伪 xls）
+    if not all_rows:
+        all_rows = _read_html_table(data)
+
     if not all_rows:
         return [], []
 

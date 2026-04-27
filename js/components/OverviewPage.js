@@ -60,7 +60,7 @@ const OverviewPage = defineComponent({
     })
 
     const localRank = (metric, s, e) => {
-      const rows = Object.values(RAW.products).map(p => {
+      const rows = Object.values(RAW.products || {}).map(p => {
         let gmv=0, vis=0
         for (let i=0;i<p.dates.length;i++) {
           const d=p.dates[i]
@@ -135,7 +135,7 @@ const OverviewPage = defineComponent({
       if (!s || !e) return []
       const gran = trendGranularity.value
       const dayMap = {}
-      for (const p of Object.values(RAW.products)) {
+      for (const p of Object.values(RAW.products || {})) {
         for (let i=0;i<p.dates.length;i++) {
           const d = p.dates[i]
           if (d<s || d>e) continue
