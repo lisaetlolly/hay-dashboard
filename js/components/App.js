@@ -65,9 +65,13 @@ const App = defineComponent({
     const LAUNCH_DATE = RAW.launch_date
 
     // 数据健康自检：DB 中 syzt（生意参谋）/ wxst（推广报表）行数判断
+    const rawLoadError = typeof RAW_LOAD_ERROR !== 'undefined' ? RAW_LOAD_ERROR : null
     const dataHealth = computed(() => {
       const products = Object.values(RAW.products || {})
-      if (!products.length) return { ok:false, level:'error', msg:'数据库无任何商品数据，请上传 XLS / CSV 文件' }
+      if (!products.length) {
+        const apiMsg = rawLoadError ? `（API错误：${rawLoadError}）` : '（API无响应或数据库为空）'
+        return { ok:false, level:'error', msg:'数据库无任何商品数据，请上传 XLS / CSV 文件 ' + apiMsg }
+      }
       const hasSyzt = products.some(p => (p.pay||[]).some(v => v>0) || (p.vis||[]).some(v => v>0))
       const hasWxst = products.some(p => (p.spend||[]).some(v => v>0))
       if (!hasSyzt && hasWxst) return { ok:false, level:'warn', msg:'生意参谋数据缺失（GMV/UV 为 0）— 请重新上传 .xls 商品报表' }
@@ -238,11 +242,15 @@ const App = defineComponent({
     </div>
     <div id="content">
       <div v-if="!dataHealth.ok"
-           :style="{padding:'10px 14px',borderRadius:'8px',fontSize:'12px',marginBottom:'4px',
+           :style="{padding:'10px 14px',borderRadius:'8px',fontSize:'12px',marginBottom:'4px',display:'flex',alignItems:'center',gap:'10px',
              border:'1px solid '+(dataHealth.level==='error'?'#fecaca':'#fed7aa'),
              background:(dataHealth.level==='error'?'#fef2f2':'#fff7ed'),
              color:(dataHealth.level==='error'?'#b91c1c':'#c2410c')}">
-        <strong>⚠ 数据警告：</strong> {{ dataHealth.msg }}
+        <span style="flex:1"><strong>⚠ 数据警告：</strong> {{ dataHealth.msg }}</span>
+        <button @click="()=>window.location.reload()"
+                :style="{background:dataHealth.level==='error'?'#b91c1c':'#c2410c',color:'#fff',border:'none',borderRadius:'4px',padding:'3px 10px',fontSize:'11px',cursor:'pointer',whiteSpace:'nowrap'}">
+          刷新重试
+        </button>
       </div>
       <overview-page v-if="page==='overview'" :start="startDate" :end="endDate" :granularity="timePreset" />
       <products-page v-else-if="page==='products'" :start="startDate" :end="endDate" />
