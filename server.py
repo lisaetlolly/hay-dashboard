@@ -65,6 +65,12 @@ def create_tables():
                        display_name = EXCLUDED.display_name""",
                 ("admin", pw, "管理员", "admin")
             )
+            for uname, dname, role in [("xiaodong", "晓东（运营）", "ops"), ("doudou", "豆豆（设计）", "member")]:
+                cur.execute(
+                    """INSERT INTO users (username, password_hash, display_name, role, permissions)
+                       VALUES (%s,%s,%s,%s,'{}') ON CONFLICT (username) DO NOTHING""",
+                    (uname, pw, dname, role)
+                )
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS page_views (
                     id               SERIAL PRIMARY KEY,
@@ -771,6 +777,18 @@ class UserRoleUpdate(BaseModel):
     role: str
     display_name: Optional[str] = None
 
+
+class UserPasswordUpdate(BaseModel):
+    password: str
+
+@app.patch("/api/users/{user_id}/password")
+def update_user_password(user_id: int, body: UserPasswordUpdate):
+    pw_hash = hashlib.sha256(body.password.encode()).hexdigest()
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (pw_hash, user_id))
+        conn.commit()
+        return {"ok": True}
 
 @app.patch("/api/users/{user_id}")
 def update_user(user_id: int, body: UserRoleUpdate):

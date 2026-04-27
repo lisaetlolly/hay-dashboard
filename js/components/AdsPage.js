@@ -17,7 +17,7 @@ const AdsPage = defineComponent({
     const fmtMoney = v => v>=10000 ? '¥'+(v/10000).toFixed(1)+'万' : '¥'+Number(v).toFixed(0)
     const fmtDelta = v => v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + '%'
     const statusColor = s=>s==='已完成'?'#16a34a':s==='进行中'?'#d97706':'#a1a1aa'
-    const imgSrc = pid => RAW.img_map?.[pid] || ''
+    const imgSrc = pid => (APP_STATE.value.imageOverrides || {})[pid] || RAW.img_map?.[pid] || ''
 
     const productStats = computed(() => {
       return Object.values(RAW.products).map(p => {
