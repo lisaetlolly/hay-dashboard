@@ -4,7 +4,7 @@
 const OverviewPage = defineComponent({
   name: 'OverviewPage',
   components: { InteractiveTrendChart },
-  props: ['start', 'end'],
+  props: ['start', 'end', 'granularity'],
   setup(props) {
     const kpi       = ref({})
     const planData  = ref({ items:[], total_actual:0 })
@@ -100,7 +100,7 @@ const OverviewPage = defineComponent({
       prevPeriod.value = prev
       kpi.value      = all.kpi
       planData.value = all.plan
-      meetings.value = all.meetings.slice(0, 6)
+      meetings.value = (APP_STATE.value.meetings || []).slice(0, 6)
       channelCatData.value = computeChannelCatTable(s, e)
       loadRank()
     }

@@ -111,7 +111,7 @@ const ProductsPage = defineComponent({
         if (d>=prev.s && d<=prev.e) { ppay += p.pay[i]||0; pvis += p.vis[i]||0 }
       }
       const xhsList = (RAW.xhs_notes||[]).filter(n=>n.pid===p.pid&&n.date>=s&&n.date<=e)
-      const allTasks = (RAW.tasks_by_pid?.[p.pid]||[])
+      const allTasks = (APP_STATE.value.tasksByPid?.[p.pid]||[])
       const pct = (a,b)=>b>0?+((a-b)/b*100).toFixed(1):null
       return {
         gmv:+pay.toFixed(2), vis:Math.round(vis),
@@ -200,7 +200,7 @@ const ProductsPage = defineComponent({
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
       <input v-model="searchQ" placeholder="搜索商品名 / ID" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;outline:none;width:150px;background:var(--surface)">
       <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
-        <button v-for="c in ['全部','配饰','家具','灯具']" :key="c" @click="filterCat=c" :style="{padding:'5px 10px',fontSize:'12px',border:'none',cursor:'pointer',background:filterCat===c?'var(--accent)':'transparent',color:filterCat===c?'#fff':'var(--muted)'}">{{ c }}</button>
+        <button v-for="c in ['全部','配饰','家具','灯具','其他']" :key="c" @click="filterCat=c" :style="{padding:'5px 10px',fontSize:'12px',border:'none',cursor:'pointer',background:filterCat===c?'var(--accent)':'transparent',color:filterCat===c?'#fff':'var(--muted)'}">{{ c }}</button>
       </div>
       <button @click="filterXhs=!filterXhs" :style="{padding:'5px 10px',fontSize:'12px',borderRadius:'6px',cursor:'pointer',border:filterXhs?'1.5px solid #ff2442':'1px solid var(--border)',background:filterXhs?'#fff0f2':'transparent',color:filterXhs?'#ff2442':'var(--muted)'}">有小红书笔记</button>
       <select v-model="sortBy" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;outline:none;background:var(--surface)"><option v-for="o in sortOpts" :key="o.k" :value="o.k">{{ o.l }}</option></select>

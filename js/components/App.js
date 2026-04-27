@@ -194,18 +194,18 @@ const App = defineComponent({
                     color:timePreset===p.k?'#fff':'var(--muted)',
                     borderRight:'1px solid var(--border)'}">{{ p.l }}</button>
           <button @click="shiftPeriod(-1)"
-                  :disabled="!['day','7d','month'].includes(timePreset)"
+                  :disabled="!['day','7d','week','month'].includes(timePreset)"
                   :style="{padding:'4px 8px',fontSize:'12px',border:'none',
-                    cursor:['day','7d','month'].includes(timePreset)?'pointer':'default',
+                    cursor:['day','7d','week','month'].includes(timePreset)?'pointer':'default',
                     background:'transparent',
-                    color:['day','7d','month'].includes(timePreset)?'var(--muted)':'var(--border)'}"
+                    color:['day','7d','week','month'].includes(timePreset)?'var(--muted)':'var(--border)'}"
                   title="上一个周期">&lt;</button>
           <button @click="shiftPeriod(1)"
-                  :disabled="!['day','7d','month'].includes(timePreset)"
+                  :disabled="!['day','7d','week','month'].includes(timePreset)"
                   :style="{padding:'4px 8px',fontSize:'12px',border:'none',
-                    cursor:['day','7d','month'].includes(timePreset)?'pointer':'default',
+                    cursor:['day','7d','week','month'].includes(timePreset)?'pointer':'default',
                     background:'transparent',
-                    color:['day','7d','month'].includes(timePreset)?'var(--muted)':'var(--border)'}"
+                    color:['day','7d','week','month'].includes(timePreset)?'var(--muted)':'var(--border)'}"
                   title="下一个周期">&gt;</button>
         </div>
         <span v-if="timePreset==='custom'" style="display:flex;align-items:center;gap:4px;
@@ -224,7 +224,7 @@ const App = defineComponent({
       <div style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0">访问 {{ pageViewCount }}</div>
     </div>
     <div id="content">
-      <overview-page v-if="page==='overview'" :start="startDate" :end="endDate" />
+      <overview-page v-if="page==='overview'" :start="startDate" :end="endDate" :granularity="timePreset" />
       <products-page v-else-if="page==='products'" :start="startDate" :end="endDate" />
       <compare-page v-else-if="page==='compare'" :start="startDate" :end="endDate" />
       <action-effect-page v-else-if="page==='effect'" />

@@ -148,7 +148,7 @@ const ActionEffectPage = defineComponent({
       Object.assign(taskModal, { show:true, mode:'add', id:'', action_type:'主图更新', action_date:new Date().toISOString().slice(0,10), pid:'', pids_str:'', title:'', owner:me.value?.display_name||'', status:'待开始', note:'' })
     }
     const openEditTask = a => {
-      if (!can('action.edit') && !(can('action.edit_own') && a.owner===me.value?.display_name)) return alert('无编辑动作权限')
+      if (!can('action.edit')) return alert('无编辑动作权限')
       Object.assign(taskModal, { show:true, mode:'edit', id:a.id, action_type:a.action_type||'其他', action_date:a.action_date||'', pid:a.pid||'', pids_str:(a.pids||[]).filter(x=>x!=='*').join(','), title:a.title||'', owner:a.owner||'', status:a.status||'待开始', note:a.note||a.content||'' })
     }
     const saveTaskModal = () => {
@@ -171,7 +171,7 @@ const ActionEffectPage = defineComponent({
       persistAppState()
     }
     const updateTaskStatus = (a, newStatus) => {
-      if (!can('action.edit') && !(can('action.edit_own') && a.owner===me.value?.display_name)) return alert('无编辑权限')
+      if (!can('action.edit')) return alert('无编辑权限')
       a.status = newStatus
       persistAppState()
     }

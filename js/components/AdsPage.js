@@ -11,8 +11,8 @@ const AdsPage = defineComponent({
     const periodEnd = computed(() => props.end || RAW.data_end)
     const periodLabel = computed(() => periodStart.value===periodEnd.value ? periodStart.value : `${periodStart.value} ~ ${periodEnd.value}`)
 
-    const audienceRatio = 25499.58 / (25499.58 + 9384.97)
-    const keywordRatio = 9384.97 / (25499.58 + 9384.97)
+    const audienceRatio = AUDIENCE_RATIO
+    const keywordRatio = KEYWORD_RATIO
 
     const fmtMoney = v => v>=10000 ? '¥'+(v/10000).toFixed(1)+'万' : '¥'+Number(v).toFixed(0)
     const fmtDelta = v => v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + '%'
@@ -489,7 +489,7 @@ const AdsPage = defineComponent({
           <div style="font-size:13px;font-weight:700;color:var(--text);margin-right:4px">任务周期</div>
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod }}</span>
-            <select v-if="taskPeriods.length>1" v-model="selectedPeriod"
+            <select v-if="taskPeriods.length>1" :value="activePeriod" @change="selectedPeriod=$event.target.value"
               style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;cursor:pointer;color:var(--muted)">
               <option v-for="p in taskPeriods" :key="p" :value="p">{{ p }}</option>
             </select>

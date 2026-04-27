@@ -8,11 +8,12 @@ const SettingsPage = defineComponent({
     return false
   },
   setup() {
-    const state = APP_STATE.value
-    console.log('[Settings] state keys:', Object.keys(state))
-    console.log('[Settings] permissionGroups:', JSON.stringify(state.permissionGroups))
-    console.log('[Settings] users sample:', JSON.stringify((state.users||[]).slice(0,1)))
-    console.log('[Settings] actions sample:', JSON.stringify((state.actions||[]).slice(0,1)))
+    // Proxy ensures all state.X accesses always go through APP_STATE.value,
+    // so the component stays in sync after syncStateFromServer replaces the object.
+    const state = new Proxy({}, {
+      get(_, prop) { return APP_STATE.value[prop] },
+      set(_, prop, value) { APP_STATE.value[prop] = value; return true },
+    })
     const me = Vue.computed(() => (state.users||[]).find(u=>u.id===state.currentUserId)||state.users?.[0])
     const users = Vue.computed(() => state.users||[])
     const metrics = Vue.computed(() => state.metricRegistry||[])
