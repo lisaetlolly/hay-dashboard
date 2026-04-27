@@ -5,10 +5,10 @@
 
 function computeKPI(s, e) {
   let pay=0, vis=0, cart=0, ctr_sum=0, ctr_n=0, fav_cart=0
-  for (const r of filterRows(RAW.syzt, s, e)) {
+  for (const r of filterRows(RAW.syzt || [], s, e)) {
     pay += r.pay; vis += r.vis; cart += r.cart
   }
-  for (const r of filterRows(RAW.wxst, s, e)) {
+  for (const r of filterRows(RAW.wxst || [], s, e)) {
     if (r.imps > 0) { ctr_sum += r.ctr; ctr_n++ }
   }
   for (const p of Object.values(RAW.products || {})) {
@@ -32,14 +32,16 @@ const RELATED_SUFFIX_RE = /（关联\d*）|（非主链）|（旧）/
 // 这样即使主链本期无数据，关联商品也能找到主链并合并
 function buildGlobalNameToMain() {
   const nameToMain = {}
+  const prods = RAW.products || {}
+  const shortNames = RAW.short_names || {}
   // 先遍历所有 products
-  for (const pid in RAW.products) {
-    const name = (RAW.products[pid].name || '').trim()
+  for (const pid in prods) {
+    const name = (prods[pid].name || '').trim()
     if (name && !RELATED_SUFFIX_RE.test(name)) nameToMain[name] = pid
   }
   // 再补充 short_names（不覆盖 products 里已有的）
-  for (const pid in RAW.short_names) {
-    const name = (RAW.short_names[pid] || '').trim()
+  for (const pid in shortNames) {
+    const name = (shortNames[pid] || '').trim()
     if (name && !RELATED_SUFFIX_RE.test(name) && !(name in nameToMain)) nameToMain[name] = pid
   }
   return nameToMain
@@ -78,19 +80,19 @@ function computeRanking(s, e, metric, officialOnly) {
 
   if (metric === 'ctr') {
     const sumC={}, cntC={}, sumP={}, cntP={}
-    for (const r of filterRows(RAW.wxst, s, e)) {
+    for (const r of filterRows(RAW.wxst || [], s, e)) {
       if (r.imps > 0) { sumC[r.pid]=(sumC[r.pid]||0)+r.ctr; cntC[r.pid]=(cntC[r.pid]||0)+1 }
     }
-    for (const r of filterRows(RAW.wxst, prev.s, prev.e)) {
+    for (const r of filterRows(RAW.wxst || [], prev.s, prev.e)) {
       if (r.imps > 0) { sumP[r.pid]=(sumP[r.pid]||0)+r.ctr; cntP[r.pid]=(cntP[r.pid]||0)+1 }
     }
     for (const pid in sumC) curMap[pid] = sumC[pid]/cntC[pid]*100
     for (const pid in sumP) prvMap[pid] = sumP[pid]/cntP[pid]*100
   } else {
     const field = metric === 'gmv' ? 'pay' : 'vis'
-    for (const r of filterRows(RAW.syzt, s, e))
+    for (const r of filterRows(RAW.syzt || [], s, e))
       curMap[r.pid] = (curMap[r.pid] || 0) + r[field]
-    for (const r of filterRows(RAW.syzt, prev.s, prev.e))
+    for (const r of filterRows(RAW.syzt || [], prev.s, prev.e))
       prvMap[r.pid] = (prvMap[r.pid] || 0) + r[field]
   }
 
@@ -115,8 +117,8 @@ function computeRanking(s, e, metric, officialOnly) {
   const mx = curSorted[0]?.[1] || 1
   const curList = curSorted.slice(0, 10).map(([pid,v], i) => ({
     rank: i+1, spu_id: pid,
-    title: RAW.products?.[pid]?.name || RAW.short_names[pid] || pid,
-    category_l1: RAW.cat_map[pid] || '',
+    title: RAW.products?.[pid]?.name || RAW.short_names?.[pid] || pid,
+    category_l1: RAW.cat_map?.[pid] || '',
     value: f2(v), prev_value: f2(prvMap[pid]||0),
     change_pct: pct(v, prvMap[pid]||0),
     bar_pct: +((v/mx)*100).toFixed(1),
@@ -128,7 +130,7 @@ function computeRanking(s, e, metric, officialOnly) {
   const prvOfficial = prvSorted.filter(([pid]) => OFFICIAL.has(pid)).slice(0,10)
   const prvList = prvOfficial.map(([pid,v],i) => ({
     rank: i+1, spu_id: pid,
-    title: RAW.products?.[pid]?.name || RAW.short_names[pid] || pid,
+    title: RAW.products?.[pid]?.name || RAW.short_names?.[pid] || pid,
     value: f2(v), unofficial: false,
   }))
 
@@ -146,12 +148,12 @@ function computePlan() {
       for (const [d, v] of Object.entries(dailyMap)) {
         if (d >= s && d <= e) spend += (v.spend || 0)
       }
-      const cat = RAW.cat_map[pid] || '其他'
+      const cat = RAW.cat_map?.[pid] || '其他'
       catSpend[cat] = (catSpend[cat] || 0) + spend
     }
   } else {
-  for (const r of filterRows(RAW.wxst, s, e)) {
-    const cat = RAW.cat_map[r.pid] || '其他'
+  for (const r of filterRows(RAW.wxst || [], s, e)) {
+    const cat = RAW.cat_map?.[r.pid] || '其他'
       catSpend[cat] = (catSpend[cat] || 0) + (r.spend || 0)
     }
   }
@@ -159,14 +161,14 @@ function computePlan() {
   const items = ['家具','配饰','灯具','其他'].map(cat => {
     const actual = catSpend[cat]||0
     const ap = +((actual/total)*100).toFixed(1)
-    const pp = RAW.plan_pct[cat]||0
+    const pp = RAW.plan_pct?.[cat] || 0
     const diff = +((ap-pp).toFixed(1))
     return {
       category:cat, plan_pct:pp, actual_pct:ap,
       actual_spend:+actual.toFixed(2),
-      daily_budget:RAW.daily_budget[cat]||0,
+      daily_budget: RAW.daily_budget?.[cat] || 0,
       diff, status:Math.abs(diff)>=10?'danger':Math.abs(diff)>=5?'warning':'normal',
-      details:RAW.plan_detail.filter(d=>d.category===cat),
+      details: (RAW.plan_detail || []).filter(d=>d.category===cat),
       _open:false,
     }
   })
@@ -247,8 +249,9 @@ function _computeChannelCatTable(s, e) {
     }
   }
   const pidSpend = {}
+  const prodMap = RAW.products || {}
   for (const pid in rawSpend) {
-    const p = RAW.products[pid]
+    const p = prodMap[pid]
     if (!p) continue
     pidSpend[pid] = { pid, name: p.name, cat: p.cat, spend: +rawSpend[pid].toFixed(2), plan_pct: (typeof PLAN_LOOKUP !== "undefined" ? PLAN_LOOKUP[pid] : 0) || 0 }
   }
@@ -267,7 +270,7 @@ function _computeChannelCatTable(s, e) {
   const audienceRows = catOrder.map(cat => {
     const actual = catTotals[cat] || 0
     const actual_pct = +((actual / grandTotal) * 100).toFixed(1)
-    const plan_pct = RAW.plan_pct[cat] || 0
+    const plan_pct = RAW.plan_pct?.[cat] || 0
     const diff = +(actual_pct - plan_pct).toFixed(1)
     const products = pidList.filter(p => (p.cat || '其他') === cat)
     return Vue.reactive({

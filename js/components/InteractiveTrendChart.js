@@ -3,7 +3,7 @@
 
 const InteractiveTrendChart = defineComponent({
   name: 'InteractiveTrendChart',
-  props: ['series', 'height', 'normalize', 'activeKeyProp'],
+  props: ['series', 'height', 'normalize', 'activeKeyProp', 'events'],
   setup(props) {
     const activeKey = ref('')
     const tooltip = ref(null)
@@ -12,6 +12,34 @@ const InteractiveTrendChart = defineComponent({
     const pad = { L: 16, R: 12, T: 18, B: 24 }
 
     const labels = computed(() => [...new Set((props.series||[]).flatMap(s => (s.values||[]).map(v => v.d)))].sort())
+
+    // 事件标注：start/end 落在 labels 范围内的才显示
+    const eventLayout = computed(() => {
+      const ls = labels.value
+      if (!ls.length || !props.events?.length) return []
+      const xOf = d => {
+        const i = ls.indexOf(d)
+        if (i >= 0) return pad.L + (i / Math.max(ls.length - 1, 1)) * (W.value - pad.L - pad.R)
+        // 不在 labels 中：按字符串比较找最近边界
+        if (d < ls[0]) return pad.L
+        if (d > ls[ls.length - 1]) return W.value - pad.R
+        let near = 0
+        for (let k = 0; k < ls.length; k++) if (ls[k] <= d) near = k
+        return pad.L + (near / Math.max(ls.length - 1, 1)) * (W.value - pad.L - pad.R)
+      }
+      const overlapsRange = (s, e) => {
+        // e 可能为空（未结束）→ 视为延伸到最后
+        const eEff = e || ls[ls.length - 1]
+        return !(eEff < ls[0] || s > ls[ls.length - 1])
+      }
+      return (props.events || []).filter(ev => ev && ev.start_date && overlapsRange(ev.start_date, ev.end_date))
+        .map(ev => {
+          const x1 = xOf(ev.start_date)
+          const isRange = !!ev.end_date && ev.end_date !== ev.start_date
+          const x2 = isRange ? xOf(ev.end_date) : x1
+          return { ...ev, x1, x2, isRange }
+        })
+    })
     const plotted = computed(() => {
       const ls = labels.value
       const baseVals = (props.series||[]).flatMap(s => (s.values||[]).map(v => v.value).filter(v => v != null))
@@ -91,7 +119,7 @@ const InteractiveTrendChart = defineComponent({
         color: series.color,
       }
     }
-    return { W, H, pad, labels, plotted, gridYs, tickStep, tickLabels, barWidth, pathD, gapBridgeD, isIsolated, activeKey, mergedActiveKey, tooltip, isDim, onLegend, onLeave, onPoint }
+    return { W, H, pad, labels, plotted, gridYs, tickStep, tickLabels, barWidth, pathD, gapBridgeD, isIsolated, activeKey, mergedActiveKey, tooltip, isDim, onLegend, onLeave, onPoint, eventLayout }
   },
   template: `
 <div style="width:100%">
@@ -105,6 +133,15 @@ const InteractiveTrendChart = defineComponent({
   <div style="position:relative;width:100%;overflow:hidden">
     <svg :viewBox="'0 0 ' + W + ' ' + H" style="width:100%;display:block;overflow:visible">
       <line v-for="y in gridYs" :key="y" :x1="pad.L" :y1="y" :x2="W-pad.R" :y2="y" stroke="#edf2f7" stroke-width="1"/>
+      <!-- 事件标注：背景层（时间段=阴影矩形，单点=虚线）-->
+      <g v-for="(ev,ei) in eventLayout" :key="'ev'+ei">
+        <rect v-if="ev.isRange" :x="ev.x1" :y="pad.T" :width="Math.max(2, ev.x2-ev.x1)" :height="H-pad.T-pad.B"
+          :fill="ev.color || '#f59e0b'" opacity="0.08"/>
+        <line v-if="ev.isRange" :x1="ev.x1" :y1="pad.T" :x2="ev.x1" :y2="H-pad.B" :stroke="ev.color || '#f59e0b'" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.55"/>
+        <line v-if="ev.isRange" :x1="ev.x2" :y1="pad.T" :x2="ev.x2" :y2="H-pad.B" :stroke="ev.color || '#f59e0b'" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.55"/>
+        <line v-if="!ev.isRange" :x1="ev.x1" :y1="pad.T" :x2="ev.x1" :y2="H-pad.B" :stroke="ev.color || '#f59e0b'" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.65"/>
+        <text :x="ev.x1+3" :y="pad.T+9" :fill="ev.color || '#d97706'" font-size="9" font-weight="700">{{ ev.title }}</text>
+      </g>
       <g v-for="(s,sidx) in plotted" :key="s.key" @mouseenter="onLegend(s.key)" @mouseleave="onLeave" style="cursor:pointer">
         <template v-if="s.type==='bar'">
           <template v-for="p in s.points" :key="s.key + p.d"><rect v-if="p.y != null" :x="p.x - barWidth/2 + sidx*(barWidth/Math.max(plotted.length,1))" :y="p.y" :width="Math.max(4, barWidth/Math.max(plotted.length,1)-1)" :height="Math.max(2, H-pad.B-p.y)"

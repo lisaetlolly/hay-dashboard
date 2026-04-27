@@ -80,7 +80,11 @@ function createInitialAppState() {
     selectedTaskPeriod: '',
     guangheTraffic: {},
     taskTemplates: defaultTaskTemplates(),
-    stateVersion: 3,
+    // events: 单品视图大促/活动等事件标注
+    // 结构：{ id, pid, title, category, start_date, end_date(可空), color, note }
+    // end_date 为空 = 单点事件；非空 = 时间段事件
+    events: [],
+    stateVersion: 4,
   }
 }
 // 旧数据迁移：统一周期格式 + 修正用户名
@@ -143,7 +147,9 @@ function migrateState(state) {
     const custom = saved.filter(t => t.detail && !rawDetails.has(t.detail))
     state.tasksByPid[pid] = [...merged, ...custom]
   }
-  state.stateVersion = 3
+  // v3 → v4: 引入 events 数组
+  if (!Array.isArray(state.events)) state.events = []
+  state.stateVersion = 4
   return state
 }
 
@@ -197,9 +203,19 @@ async function pushStateToServer(stateSnapshot) {
   } catch {}
 }
 
+// debounced push：用户连续编辑时合并请求，最后一次为准（避免乱序覆盖）
+let _pushTimer = null
+function debouncedPush() {
+  if (_pushTimer) clearTimeout(_pushTimer)
+  _pushTimer = setTimeout(() => {
+    _pushTimer = null
+    pushStateToServer(APP_STATE.value)
+  }, 400)
+}
+
 function persistAppState() {
   writeStore(APP_STORAGE_KEY, APP_STATE.value)
-  pushStateToServer(APP_STATE.value)
+  debouncedPush()
 }
 
 function startStateSync(intervalMs = 15000) {

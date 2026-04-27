@@ -132,16 +132,71 @@ const ProductsPage = defineComponent({
       }
     }
 
+    // 事件标注（大促/活动/上新等）—— 按 pid 过滤，'*' 表示全局事件
+    const eventsForPid = pid => {
+      const all = APP_STATE.value.events || []
+      return all.filter(ev => ev && (ev.pid === pid || ev.pid === '*'))
+        .sort((a,b) => (a.start_date||'').localeCompare(b.start_date||''))
+    }
+
     const products = computed(() => {
       const sv=s.value, ev=e.value
       return getEffectiveProducts()
         .filter(p => OFFICIAL.has(p.pid))
         .filter(p => filterCat.value==='全部' || p.cat===filterCat.value)
         .filter(p => !searchQ.value || p.name.toLowerCase().includes(searchQ.value.toLowerCase()) || p.pid.includes(searchQ.value))
-        .map(p => ({ ...p, ...agg(p, sv, ev) }))
+        .map(p => ({ ...p, ...agg(p, sv, ev), events: eventsForPid(p.pid) }))
         .filter(p => !filterXhs.value || p.xhs_notes > 0)
         .sort((a,b) => (b[sortBy.value]||0) - (a[sortBy.value]||0))
     })
+
+    // 事件 CRUD
+    const EVENT_CATEGORIES = [
+      { k:'promo',    l:'大促',   color:'#dc2626' },
+      { k:'activity', l:'活动',   color:'#f59e0b' },
+      { k:'launch',   l:'上新',   color:'#10b981' },
+      { k:'marketing',l:'营销',   color:'#8b5cf6' },
+      { k:'other',    l:'其他',   color:'#64748b' },
+    ]
+    const colorOfCategory = c => (EVENT_CATEGORIES.find(x=>x.k===c)?.color) || '#64748b'
+    const labelOfCategory = c => (EVENT_CATEGORIES.find(x=>x.k===c)?.l) || '其他'
+    const eventModal = ref({ show:false, mode:'add', id:'', pid:'', title:'', category:'promo', start_date:'', end_date:'', note:'' })
+    const openAddEvent = (pid) => {
+      const today = new Date().toISOString().slice(0,10)
+      Object.assign(eventModal.value, { show:true, mode:'add', id:'', pid, title:'', category:'promo', start_date: today, end_date:'', note:'' })
+    }
+    const openEditEvent = (pid, ev) => {
+      Object.assign(eventModal.value, { show:true, mode:'edit', id:ev.id, pid, title:ev.title||'', category:ev.category||'other', start_date:ev.start_date||'', end_date:ev.end_date||'', note:ev.note||'' })
+    }
+    const closeEventModal = () => { eventModal.value.show = false }
+    const saveEvent = () => {
+      const m = eventModal.value
+      if (!m.title.trim())     return alert('请填写事件名称')
+      if (!m.start_date)       return alert('请选择开始日期')
+      if (m.end_date && m.end_date < m.start_date) return alert('结束日期不能早于开始日期')
+      if (!APP_STATE.value.events) APP_STATE.value.events = []
+      const list = APP_STATE.value.events
+      const payload = {
+        id: m.mode==='edit' ? m.id : ('evt_' + Math.random().toString(36).slice(2,10)),
+        pid: m.pid, title: m.title.trim(), category: m.category,
+        start_date: m.start_date, end_date: m.end_date || '',
+        color: colorOfCategory(m.category), note: m.note.trim(),
+      }
+      if (m.mode === 'edit') {
+        const idx = list.findIndex(x => x.id === m.id)
+        if (idx >= 0) list[idx] = payload; else list.push(payload)
+      } else {
+        list.push(payload)
+      }
+      persistAppState()
+      closeEventModal()
+    }
+    const deleteEvent = (id) => {
+      if (!confirm('确认删除此事件？')) return
+      const list = APP_STATE.value.events || []
+      const idx = list.findIndex(x => x.id === id)
+      if (idx >= 0) { list.splice(idx, 1); persistAppState() }
+    }
 
     const toggleChartMetric = key => {
       selectedChartMetrics.value = selectedChartMetrics.value.includes(key)
@@ -183,7 +238,8 @@ const ProductsPage = defineComponent({
     // 与投放面板共用同一个任务周期（存储在 APP_STATE）
     const activePeriod = computed(() => APP_STATE.value.selectedTaskPeriod || '')
 
-    return { filterCat, filterXhs, searchQ, sortBy, displayMode, periodLabel, sortOpts, products, summaryMetrics, chartMetricGroups, selectedChartMetrics, toggleChartMetric, isChartMetricSelected, filteredSummaryMetrics, fmt, fchg, chgCls, imgSrc, miniChart, productChartSeries, getCardTab, setCardTab, showMetricGuide, guideItems, activePeriod }
+    return { filterCat, filterXhs, searchQ, sortBy, displayMode, periodLabel, sortOpts, products, summaryMetrics, chartMetricGroups, selectedChartMetrics, toggleChartMetric, isChartMetricSelected, filteredSummaryMetrics, fmt, fchg, chgCls, imgSrc, miniChart, productChartSeries, getCardTab, setCardTab, showMetricGuide, guideItems, activePeriod,
+      EVENT_CATEGORIES, labelOfCategory, colorOfCategory, eventModal, openAddEvent, openEditEvent, closeEventModal, saveEvent, deleteEvent }
   },
   template: `
 <div style="display:flex;flex-direction:column;height:100%;gap:0">
@@ -238,6 +294,7 @@ const ProductsPage = defineComponent({
             <span style="font-size:10px;color:var(--muted);padding:2px 6px;border:1px solid var(--border);border-radius:99px">{{ p.cat }}</span>
             <span v-if="p.xhs_notes>0" @click="setCardTab(p.pid, getCardTab(p.pid)==='xhs'?'daily':'xhs')" :style="{fontSize:'10px',color:'#ff2442',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='xhs'?'#ff2442':'#ffccd5',background:getCardTab(p.pid)==='xhs'?'#ff2442':'#fff0f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='xhs'?'#fff':'#ff2442'}">小红书 {{ p.xhs_notes }}</span>
             <span v-if="p.allTasks.length>0" @click="setCardTab(p.pid, getCardTab(p.pid)==='tasks'?'daily':'tasks')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='tasks'?'#d97706':'#fde68a',background:getCardTab(p.pid)==='tasks'?'#d97706':'#fffbeb',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='tasks'?'#fff':'#d97706'}">任务 {{ p.allTasks.length }}</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='events'?'daily':'events')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='events'?'#7c3aed':'#ddd6fe',background:getCardTab(p.pid)==='events'?'#7c3aed':'#f5f3ff',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='events'?'#fff':'#7c3aed'}">事件 {{ p.events.length }}</span>
           </div>
           <div :style="{display:'grid',gridTemplateColumns:'repeat('+Math.min(filteredSummaryMetrics.length,5)+',minmax(72px,1fr))',gap:'10px',marginBottom:'10px'}">
             <div v-for="m in filteredSummaryMetrics" :key="m.k">
@@ -245,12 +302,13 @@ const ProductsPage = defineComponent({
               <div style="font-size:14px;font-weight:700">{{ fmt(p[m.k],m.fmt) }}</div>
             </div>
           </div>
-          <interactive-trend-chart :series="productChartSeries(p.daily)" :height="210" :normalize="true" />
+          <interactive-trend-chart :series="productChartSeries(p.daily)" :height="210" :normalize="true" :events="p.events" />
         </div>
         <div style="min-width:0">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-            <div style="font-size:12px;font-weight:700">{{ getCardTab(p.pid)==='xhs'?'小红书笔记':getCardTab(p.pid)==='tasks'?'本期任务':'日数据' }}</div>
+            <div style="font-size:12px;font-weight:700">{{ getCardTab(p.pid)==='xhs'?'小红书笔记':getCardTab(p.pid)==='tasks'?'本期任务':getCardTab(p.pid)==='events'?'事件标注':'日数据' }}</div>
             <span v-if="getCardTab(p.pid)!=='daily'" @click="setCardTab(p.pid,'daily')" style="font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">返回日数据</span>
+            <button v-if="getCardTab(p.pid)==='events'" @click="openAddEvent(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #7c3aed;background:#7c3aed;color:#fff;border-radius:6px;cursor:pointer">+ 新增事件</button>
           </div>
           <template v-if="getCardTab(p.pid)==='xhs'">
             <div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto">
@@ -259,6 +317,31 @@ const ProductsPage = defineComponent({
                 <div style="display:flex;gap:8px;color:var(--muted)">
                   <span>{{ note.date }}</span><span>{{ note.author }}</span>
                   <span>互动 {{ note.inter }}</span><span>浏览 {{ note.views }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+          <template v-else-if="getCardTab(p.pid)==='events'">
+            <div v-if="!p.events.length" style="font-size:11px;color:var(--muted);padding:14px 8px;text-align:center;border:1px dashed var(--border);border-radius:8px">
+              暂无事件，点击右上角「+ 新增事件」添加
+            </div>
+            <div v-else style="display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto">
+              <div v-for="ev in p.events" :key="ev.id"
+                :style="{padding:'8px 10px',border:'1px solid '+ (ev.color||'#7c3aed')+'33',background:(ev.color||'#7c3aed')+'08',borderLeft:'3px solid '+(ev.color||'#7c3aed'),borderRadius:'8px',fontSize:'11px'}">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+                  <span :style="{fontSize:'9px',padding:'1px 6px',background:ev.color||'#7c3aed',color:'#fff',borderRadius:'99px',fontWeight:'700'}">{{ labelOfCategory(ev.category) }}</span>
+                  <span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ ev.title }}</span>
+                  <span v-if="ev.pid==='*'" style="font-size:9px;color:var(--muted);border:1px solid var(--border);border-radius:99px;padding:0 5px">全局</span>
+                </div>
+                <div style="color:var(--muted);font-size:10px;margin-bottom:3px">
+                  <span>{{ ev.start_date }}</span>
+                  <span v-if="ev.end_date && ev.end_date !== ev.start_date"> ~ {{ ev.end_date }}</span>
+                  <span v-else-if="!ev.end_date"> · 单点 / 进行中</span>
+                </div>
+                <div v-if="ev.note" style="color:var(--text);font-size:10px;background:#fff;border-radius:4px;padding:3px 5px;margin-bottom:4px">{{ ev.note }}</div>
+                <div style="display:flex;gap:6px">
+                  <button @click="openEditEvent(p.pid, ev)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">编辑</button>
+                  <button @click="deleteEvent(ev.id)" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626">删除</button>
                 </div>
               </div>
             </div>
@@ -308,7 +391,7 @@ const ProductsPage = defineComponent({
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
         <div v-for="m in summaryMetrics.slice(0,6)" :key="m.k"><div style="font-size:10px;color:var(--muted)">{{ m.l }}</div><div style="font-size:13px;font-weight:700">{{ fmt(p[m.k],m.fmt) }}</div></div>
       </div>
-      <interactive-trend-chart :series="productChartSeries(p.daily)" :height="210" :normalize="true" />
+      <interactive-trend-chart :series="productChartSeries(p.daily)" :height="210" :normalize="true" :events="p.events" />
     </div>
   </div>
 
@@ -320,6 +403,48 @@ const ProductsPage = defineComponent({
       <div v-for="p in products" :key="p.pid" style="display:grid;grid-template-columns:minmax(220px,1.6fr) repeat(15,minmax(70px,.6fr)) 180px;gap:0;padding:12px;border-bottom:1px solid #f4f4f5;align-items:center;font-size:12px">
         <div style="display:flex;align-items:center;gap:10px;min-width:0"><div style="width:44px;height:44px;border:1px solid var(--border);border-radius:10px;background:#fafaf9;display:flex;align-items:center;justify-content:center"><img v-if="imgSrc(p.pid)" :src="imgSrc(p.pid)" style="max-width:38px;max-height:38px;object-fit:contain"></div><div style="min-width:0"><div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.name }}</div><div style="font-size:10px;color:var(--muted)">{{ p.cat }}</div></div></div>
         <div>{{ fmt(p.gmv,'money') }}</div><div>{{ fmt(p.vis,'num') }}</div><div>{{ fmt(p.cart_rate,'pct') }}</div><div>{{ fmt(p.conv_rate,'pct') }}</div><div>{{ fmt(p.ad_roi,'x') }}</div><div>{{ fmt(p.fav_cart,'num') }}</div><div>{{ fmt(p.new_buyers,'num') }}</div><div>{{ fmt(p.refund,'money') }}</div><div>{{ fmt(p.ad_spend,'money') }}</div><div>{{ fmt(p.ad_ctr,'pct') }}</div><div>{{ fmt(p.pv,'num') }}</div><div>{{ fmt(p.dwell_time,'sec') }}</div><div>{{ fmt(p.bounce_rate,'pct') }}</div><div>{{ fmt(p.fav_cart_users,'num') }}</div><div>{{ fmt(p.search_vis,'num') }}</div><interactive-trend-chart :series="miniChart(p.daily)" :height="70" :normalize="true" />
+      </div>
+    </div>
+  </div>
+
+  <!-- 事件 新增/编辑 弹窗 -->
+  <div v-if="eventModal.show" @click.self="closeEventModal"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:420px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">{{ eventModal.mode==='edit' ? '编辑事件' : '新增事件' }}</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">事件名称 *</div>
+          <input v-model="eventModal.title" placeholder="如：618 大促 / 五一活动" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">事件类型</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button v-for="c in EVENT_CATEGORIES" :key="c.k" @click="eventModal.category=c.k" type="button"
+              :style="{padding:'4px 10px',fontSize:'11px',borderRadius:'99px',cursor:'pointer',border:'1px solid '+(eventModal.category===c.k?c.color:'var(--border)'),background:eventModal.category===c.k?c.color+'18':'transparent',color:eventModal.category===c.k?c.color:'var(--muted)',fontWeight:eventModal.category===c.k?'700':'500'}">{{ c.l }}</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期 *</div>
+            <input v-model="eventModal.start_date" type="date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">结束日期（可空）</div>
+            <input v-model="eventModal.end_date" type="date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-top:-4px;line-height:1.5">
+          留空 = 单点事件或进行中（图表上显示为虚线）；填写则显示为时间段（阴影区域）
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">备注（可空）</div>
+          <textarea v-model="eventModal.note" rows="2" placeholder="补充说明" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;resize:vertical;box-sizing:border-box;font-family:inherit"></textarea>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeEventModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveEvent" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">保存</button>
       </div>
     </div>
   </div>
