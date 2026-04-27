@@ -120,7 +120,8 @@ function migrateState(state) {
   const rawByPid = (typeof RAW !== 'undefined' && RAW.tasks_by_pid) ? RAW.tasks_by_pid : {}
   if (!state.tasksByPid) state.tasksByPid = {}
   // stateVersion<3 时强制用 RAW status（清除旧版错误默认值）
-  const forceRawStatus = !state.stateVersion || state.stateVersion < 3
+  // stateVersion<3：服务器旧数据 status/owner 不可信，强制使用 RAW 值
+  const forceFromRaw = !state.stateVersion || state.stateVersion < 3
   for (const [pid, rawList] of Object.entries(rawByPid)) {
     const saved = state.tasksByPid[pid] || []
     const savedByDetail = {}
@@ -128,13 +129,13 @@ function migrateState(state) {
     const merged = rawList.map(raw => {
       const sv = savedByDetail[raw.detail]
       if (!sv) return { ...raw }
-      // forceRawStatus: 用 RAW 的 status（服务器旧数据全是'待开始'默认值，不可信）
-      const status = forceRawStatus ? raw.status : (sv.status || raw.status)
+      const status = forceFromRaw ? raw.status : (sv.status || raw.status)
+      const owner  = forceFromRaw ? raw.owner  : (sv.owner  || raw.owner)
       return {
         ...raw,
         id: sv.id || raw.id,
         status,
-        owner: sv.owner || raw.owner,
+        owner,
         period_notes: { ...(raw.period_notes || {}), ...(sv.period_notes || {}) },
       }
     })
