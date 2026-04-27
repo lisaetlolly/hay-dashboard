@@ -161,12 +161,13 @@ const ProductsPage = defineComponent({
     const currentUser = computed(() => currentUserObj())
     const canEvent = code => hasPermission(currentUser.value, code)
 
+    // 标签颜色精简：3 类色系（暖/冷/灰），不和任务状态色（绿/橙/灰）打架。
     const EVENT_CATEGORIES = [
-      { k:'promo',    l:'大促',   color:'#dc2626' },
-      { k:'activity', l:'活动',   color:'#f59e0b' },
-      { k:'launch',   l:'上新',   color:'#10b981' },
-      { k:'marketing',l:'营销',   color:'#8b5cf6' },
-      { k:'other',    l:'其他',   color:'#64748b' },
+      { k:'promo',    l:'大促',   color:'#dc2626' },  // 暖（红）
+      { k:'activity', l:'活动',   color:'#dc2626' },  // 暖（红，与大促同色系，仅文字区分）
+      { k:'launch',   l:'上新',   color:'#0ea5e9' },  // 冷（蓝）
+      { k:'marketing',l:'营销',   color:'#0ea5e9' },  // 冷（蓝）
+      { k:'other',    l:'其他',   color:'#64748b' },  // 灰
     ]
     const colorOfCategory = c => (EVENT_CATEGORIES.find(x=>x.k===c)?.color) || '#64748b'
     const labelOfCategory = c => (EVENT_CATEGORIES.find(x=>x.k===c)?.l) || '其他'
@@ -211,6 +212,85 @@ const ProductsPage = defineComponent({
       if (idx >= 0) { list.splice(idx, 1); persistAppState() }
     }
 
+    // ── 任务 新增（POST /api/tasks，刷新本地 tasksByPid）──
+    const TASK_CATEGORIES = ['标题优化','评价与问大家','淘内内容宣发','详情页优化','竞品分析','妈妈计划迭代','售卖复盘','其他']
+    const TASK_OWNERS     = ['Jas team（内容）','豆豆（设计）','刘婷（商品）','晓东（运营）','婉婷（主管）']
+    const taskModal = ref({ show:false, pid:'', detail:'', category:'标题优化', owner:'Jas team（内容）', status:'待开始', priority:'中', execution_note:'', saving:false })
+    const openAddTask = (pid) => {
+      if (!canEvent('task.create')) return alert('无权限新增任务')
+      Object.assign(taskModal.value, { show:true, pid, detail:'', category:'标题优化', owner:'Jas team（内容）', status:'待开始', priority:'中', execution_note:'', saving:false })
+    }
+    const closeTaskModal = () => { taskModal.value.show = false }
+    const saveTask = async () => {
+      const m = taskModal.value
+      if (!m.detail.trim()) return alert('请填写任务名称')
+      m.saving = true
+      try {
+        const period = activePeriod.value || ''
+        const body = {
+          product_id: m.pid, detail: m.detail.trim(),
+          owner: m.owner, status: m.status, priority: m.priority,
+          category: m.category, time_range_label: period,
+          execution_note: m.execution_note.trim() || null,
+        }
+        const res = await fetch('/api/tasks', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'网络错误'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        const newTask = await res.json()
+        // 同步到 APP_STATE，免得用户等 RAW 重拉
+        if (!APP_STATE.value.tasksByPid) APP_STATE.value.tasksByPid = {}
+        const list = APP_STATE.value.tasksByPid[m.pid] || []
+        list.push({
+          id: newTask.id, detail: newTask.detail, owner: newTask.owner,
+          status: newTask.status, priority: newTask.priority,
+          category: newTask.category, period_notes: {},
+          time_range_label: newTask.time_range_label,
+          execution_note: newTask.execution_note || '',
+        })
+        APP_STATE.value.tasksByPid[m.pid] = list
+        persistAppState()
+        closeTaskModal()
+      } catch (e) {
+        alert('新增失败：' + e.message)
+        m.saving = false
+      }
+    }
+
+    // ── 小红书笔记 新增（暂存 APP_STATE.events 不合适，单独存 customXhsNotes，与 RAW.xhs_notes 合并）──
+    const XHS_FIELDS = ['title','link','date','author','likes','collect','comments','views']
+    const xhsModal = ref({ show:false, pid:'', title:'', link:'', date:'', author:'', likes:0, collect:0, comments:0, views:0, saving:false })
+    const openAddXhs = (pid) => {
+      if (!canEvent('xhs.create')) return alert('无权限新增笔记')
+      const today = new Date().toISOString().slice(0,10)
+      Object.assign(xhsModal.value, { show:true, pid, title:'', link:'', date: today, author:'', likes:0, collect:0, comments:0, views:0, saving:false })
+    }
+    const closeXhsModal = () => { xhsModal.value.show = false }
+    const saveXhs = () => {
+      const m = xhsModal.value
+      if (!m.title.trim()) return alert('请填写笔记标题')
+      if (!m.link.trim())  return alert('请填写笔记链接')
+      const note = {
+        pid: m.pid, title: m.title.trim(), link: m.link.trim(),
+        date: m.date, author: m.author.trim() || '—',
+        likes: +m.likes||0, collect: +m.collect||0, comments: +m.comments||0,
+        inter: (+m.likes||0)+(+m.collect||0)+(+m.comments||0),
+        views: +m.views||0,
+      }
+      // 保存到 APP_STATE.customXhsNotes（前端暂存，下版本接 API 落库）
+      if (!APP_STATE.value.customXhsNotes) APP_STATE.value.customXhsNotes = []
+      APP_STATE.value.customXhsNotes.push(note)
+      // 把 RAW.xhs_notes 也补一份，下次 reload 之前界面里看得到
+      if (!Array.isArray(RAW.xhs_notes)) RAW.xhs_notes = []
+      RAW.xhs_notes.push(note)
+      persistAppState()
+      closeXhsModal()
+    }
+
     const toggleChartMetric = key => {
       selectedChartMetrics.value = selectedChartMetrics.value.includes(key)
         ? (selectedChartMetrics.value.length > 1 ? selectedChartMetrics.value.filter(x => x !== key) : selectedChartMetrics.value)
@@ -248,11 +328,33 @@ const ProductsPage = defineComponent({
     const guideKeys = ['gmv','vis','cart_rate','conv_rate','ad_roi','fav_cart','new_buyers','refund','ad_ctr','pv','dwell_time','bounce_rate','fav_cart_users','search_vis','xhs_inter']
     const guideItems = guideKeys.map(k => ({ key:k, label:METRIC_TIPS[k]?.label||k, tip:METRIC_TIPS[k]?.tip||'' }))
 
-    // 与投放面板共用同一个任务周期（存储在 APP_STATE）
-    const activePeriod = computed(() => APP_STATE.value.selectedTaskPeriod || '')
+    // 与投放面板共用同一个任务周期。优先用 APP_STATE 选中的，
+    // 没选 / 选了已废弃周期 → 退回 API task_period.is_current=true 的周期。
+    const apiCurrentPeriod = ref('')
+    const apiKnownPeriods = ref([])
+    ;(async () => {
+      try {
+        const res = await fetch('/api/task-periods')
+        if (res.ok) {
+          const list = await res.json()
+          apiKnownPeriods.value = list.map(p => p.label)
+          const cur = list.find(p => p.is_current)
+          if (cur) apiCurrentPeriod.value = cur.label
+          else if (list.length) apiCurrentPeriod.value = list[0].label  // 接口已按 start_date DESC，最新优先
+        }
+      } catch {}
+    })()
+    const activePeriod = computed(() => {
+      const sel = APP_STATE.value.selectedTaskPeriod
+      if (sel && apiKnownPeriods.value.includes(sel)) return sel
+      return apiCurrentPeriod.value || sel || ''
+    })
 
     return { filterCat, filterXhs, searchQ, sortBy, displayMode, periodLabel, sortOpts, products, summaryMetrics, chartMetricGroups, selectedChartMetrics, toggleChartMetric, isChartMetricSelected, filteredSummaryMetrics, fmt, fchg, chgCls, imgSrc, miniChart, productChartSeries, getCardTab, setCardTab, showMetricGuide, guideItems, activePeriod,
-      EVENT_CATEGORIES, labelOfCategory, colorOfCategory, eventModal, openAddEvent, openEditEvent, closeEventModal, saveEvent, deleteEvent, canEvent }
+      EVENT_CATEGORIES, labelOfCategory, colorOfCategory, eventModal, openAddEvent, openEditEvent, closeEventModal, saveEvent, deleteEvent, canEvent,
+      TASK_CATEGORIES, TASK_OWNERS, taskModal, openAddTask, closeTaskModal, saveTask,
+      xhsModal, openAddXhs, closeXhsModal, saveXhs,
+    }
   },
   template: `
 <div style="display:flex;flex-direction:column;height:100%;gap:0">
@@ -310,9 +412,9 @@ const ProductsPage = defineComponent({
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
             <div style="font-size:15px;font-weight:700">{{ p.name }}</div>
             <span style="font-size:10px;color:var(--muted);padding:2px 6px;border:1px solid var(--border);border-radius:99px">{{ p.cat }}</span>
-            <span v-if="p.xhs_notes>0" @click="setCardTab(p.pid, getCardTab(p.pid)==='xhs'?'daily':'xhs')" :style="{fontSize:'10px',color:'#ff2442',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='xhs'?'#ff2442':'#ffccd5',background:getCardTab(p.pid)==='xhs'?'#ff2442':'#fff0f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='xhs'?'#fff':'#ff2442'}">小红书 {{ p.xhs_notes }}</span>
-            <span v-if="p.allTasks.length>0" @click="setCardTab(p.pid, getCardTab(p.pid)==='tasks'?'daily':'tasks')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='tasks'?'#d97706':'#fde68a',background:getCardTab(p.pid)==='tasks'?'#d97706':'#fffbeb',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='tasks'?'#fff':'#d97706'}">任务 {{ p.allTasks.length }}</span>
-            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='events'?'daily':'events')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='events'?'#7c3aed':'#ddd6fe',background:getCardTab(p.pid)==='events'?'#7c3aed':'#f5f3ff',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='events'?'#fff':'#7c3aed'}">事件 {{ p.events.length }}</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='xhs'?'daily':'xhs')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='xhs'?'#ff2442':'#ffccd5',background:getCardTab(p.pid)==='xhs'?'#ff2442':'#fff0f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='xhs'?'#fff':'#ff2442'}">小红书 {{ p.xhs_notes }}</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='tasks'?'daily':'tasks')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='tasks'?'#d97706':'#fde68a',background:getCardTab(p.pid)==='tasks'?'#d97706':'#fffbeb',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='tasks'?'#fff':'#d97706'}">任务 {{ p.allTasks.length }}</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='events'?'daily':'events')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='events'?'#dc2626':'#fecaca',background:getCardTab(p.pid)==='events'?'#dc2626':'#fef2f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='events'?'#fff':'#dc2626'}">事件 {{ p.events.length }}</span>
           </div>
           <div :style="{display:'grid',gridTemplateColumns:'repeat('+Math.min(filteredSummaryMetrics.length,5)+',minmax(72px,1fr))',gap:'10px',marginBottom:'10px'}">
             <div v-for="m in filteredSummaryMetrics" :key="m.k">
@@ -326,10 +428,15 @@ const ProductsPage = defineComponent({
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <div style="font-size:12px;font-weight:700">{{ getCardTab(p.pid)==='xhs'?'小红书笔记':getCardTab(p.pid)==='tasks'?'本期任务':getCardTab(p.pid)==='events'?'事件标注':'日数据' }}</div>
             <span v-if="getCardTab(p.pid)!=='daily'" @click="setCardTab(p.pid,'daily')" style="font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">返回日数据</span>
-            <button v-if="getCardTab(p.pid)==='events' && canEvent('event.create')" @click="openAddEvent(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #7c3aed;background:#7c3aed;color:#fff;border-radius:6px;cursor:pointer">+ 新增事件</button>
+            <button v-if="getCardTab(p.pid)==='events' && canEvent('event.create')" @click="openAddEvent(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #dc2626;background:#dc2626;color:#fff;border-radius:6px;cursor:pointer">+ 新增事件</button>
+            <button v-if="getCardTab(p.pid)==='tasks' && canEvent('task.create')" @click="openAddTask(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer">+ 新增任务</button>
+            <button v-if="getCardTab(p.pid)==='xhs' && canEvent('xhs.create')" @click="openAddXhs(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #ff2442;background:#ff2442;color:#fff;border-radius:6px;cursor:pointer">+ 新增笔记</button>
           </div>
           <template v-if="getCardTab(p.pid)==='xhs'">
-            <div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto">
+            <div v-if="!p.xhsList.length" style="font-size:11px;color:var(--muted);padding:14px 8px;text-align:center;border:1px dashed var(--border);border-radius:8px">
+              暂无笔记，点击右上角「+ 新增笔记」添加
+            </div>
+            <div v-else style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto">
               <div v-for="note in p.xhsList" :key="note.link" style="padding:6px 0;border-bottom:1px solid #f4f4f5;font-size:11px">
                 <div style="font-weight:600;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a :href="note.link" target="_blank" style="color:var(--text);text-decoration:none">{{ note.title }}</a></div>
                 <div style="display:flex;gap:8px;color:var(--muted)">
@@ -366,7 +473,10 @@ const ProductsPage = defineComponent({
           </template>
           <template v-else-if="getCardTab(p.pid)==='tasks'">
             <div style="font-size:10px;color:var(--muted);margin-bottom:6px">周期：{{ activePeriod || '全部' }}</div>
-            <div style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto">
+            <div v-if="!p.allTasks.length" style="font-size:11px;color:var(--muted);padding:14px 8px;text-align:center;border:1px dashed var(--border);border-radius:8px">
+              暂无任务，点击右上角「+ 新增任务」添加
+            </div>
+            <div v-else style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto">
               <div v-for="task in p.allTasks"
                    :key="task.id" style="padding:6px 0;border-bottom:1px solid #f4f4f5;font-size:11px">
                 <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap">
@@ -463,6 +573,98 @@ const ProductsPage = defineComponent({
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeEventModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
         <button @click="saveEvent" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 任务 新增弹窗 -->
+  <div v-if="taskModal.show" @click.self="closeTaskModal"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:440px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新增任务</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称 *</div>
+          <input v-model="taskModal.detail" placeholder="如：优化主图、写小红书种草稿" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">分类</div>
+            <select v-model="taskModal.category" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option v-for="c in TASK_CATEGORIES" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人</div>
+            <select v-model="taskModal.owner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option v-for="o in TASK_OWNERS" :key="o" :value="o">{{ o }}</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">状态</div>
+            <select v-model="taskModal.status" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option>待开始</option><option>进行中</option><option>已完成</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">优先级</div>
+            <select v-model="taskModal.priority" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option>高</option><option>中</option><option>低</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">备注（可空）</div>
+          <textarea v-model="taskModal.execution_note" rows="2" placeholder="执行说明、风险、依赖" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;resize:vertical;box-sizing:border-box;font-family:inherit"></textarea>
+        </div>
+        <div style="font-size:10px;color:var(--muted)">周期会自动写入：{{ activePeriod || '当前周期' }}</div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeTaskModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveTask" :disabled="taskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ taskModal.saving ? '...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 笔记 新增弹窗（暂存前端，下版本接 API） -->
+  <div v-if="xhsModal.show" @click.self="closeXhsModal"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:460px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新增小红书笔记</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">笔记标题 *</div>
+          <input v-model="xhsModal.title" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">链接 *</div>
+          <input v-model="xhsModal.link" placeholder="https://www.xiaohongshu.com/..." style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">日期</div>
+            <input v-model="xhsModal.date" type="date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">作者</div>
+            <input v-model="xhsModal.author" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+          <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">点赞</div><input v-model.number="xhsModal.likes" type="number" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box"></div>
+          <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">收藏</div><input v-model.number="xhsModal.collect" type="number" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box"></div>
+          <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">评论</div><input v-model.number="xhsModal.comments" type="number" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box"></div>
+          <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">浏览</div><input v-model.number="xhsModal.views" type="number" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box"></div>
+        </div>
+        <div style="font-size:10px;color:#d97706;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;line-height:1.5">
+          ⚠️ 当前是前端暂存（刷新页面会丢失），下个版本接后端 API 落库 + 同步给所有人
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeXhsModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveXhs" style="padding:6px 14px;font-size:12px;border:1px solid #ff2442;background:#ff2442;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">保存</button>
       </div>
     </div>
   </div>

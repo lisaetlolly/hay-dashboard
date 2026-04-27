@@ -301,7 +301,10 @@ const AdsPage = defineComponent({
         if (!filteredTasks.length) continue
         out.push({
           pid: g.product_id,
-          name: g.product_name,
+          // 名字兜底：API 没拿到 dim_product 的话用前端 short_names（覆盖如 Cotton Bag 564552361178 这种非主链但有任务的 PID）
+          name: g.product_name && g.product_name !== g.product_id
+                ? g.product_name
+                : (RAW.short_names?.[g.product_id] || g.product_id),
           image: imgSrc(g.product_id),
           tasks: filteredTasks.map(t => ({
             id: t.id, detail: t.detail, owner: t.owner || '',
@@ -632,22 +635,22 @@ const AdsPage = defineComponent({
     </div>
 
     <!-- CTR 排行 -->
-    <div class="card" style="padding:16px">
-      <div class="card-header" style="margin-bottom:12px">
+    <div class="card" style="padding:14px 16px">
+      <div class="card-header" style="margin-bottom:8px">
         <span class="card-title">CTR 排行</span>
         <span class="card-sub">万象台口径，当前周期均值</span>
         <span class="info-btn" style="margin-left:8px">?<span class="tooltip" style="left:auto;right:0">万象台商品报表 ctr 字段均值（clicks÷impressions×100%），仅含有投放的商品，按当前时间段汇总取均值</span></span>
       </div>
       <div v-if="ctrRankRows.length===0" class="empty">当前周期暂无投放 CTR 数据</div>
-      <div v-else style="display:flex;flex-direction:column;gap:6px">
-        <div style="display:grid;grid-template-columns:24px 1fr 70px 1fr;gap:8px;padding:0 4px 6px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
+      <div v-else style="display:flex;flex-direction:column;gap:3px">
+        <div style="display:grid;grid-template-columns:22px minmax(0,2.4fr) 56px 100px;gap:8px;padding:0 4px 4px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
           <span>#</span><span>商品</span><span style="text-align:right">CTR</span><span></span>
         </div>
-        <div v-for="(r,i) in ctrRankRows" :key="r.pid" style="display:grid;grid-template-columns:24px 1fr 70px 1fr;gap:8px;align-items:center;padding:5px 4px;border-bottom:1px solid #f1f5f9">
-          <div :class="['rank-no',{top3:i<3}]" style="text-align:center">{{ i+1 }}</div>
+        <div v-for="(r,i) in ctrRankRows" :key="r.pid" style="display:grid;grid-template-columns:22px minmax(0,2.4fr) 56px 100px;gap:8px;align-items:center;padding:3px 4px;border-bottom:1px solid #f1f5f9">
+          <div :class="['rank-no',{top3:i<3}]" style="text-align:center;font-size:11px">{{ i+1 }}</div>
           <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="r.name">{{ r.name }}</div>
           <div style="text-align:right;font-size:12px;font-weight:700;color:var(--accent)">{{ r.ctr }}%</div>
-          <div style="height:6px;background:#f3f4f6;border-radius:99px;overflow:hidden">
+          <div style="height:4px;background:#f3f4f6;border-radius:99px;overflow:hidden">
             <div style="height:100%;background:var(--accent);border-radius:99px" :style="{width:(ctrRankRows[0]?r.ctr/ctrRankRows[0].ctr*100:0)+'%'}"></div>
           </div>
         </div>
