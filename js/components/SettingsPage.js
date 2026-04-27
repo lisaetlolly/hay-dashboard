@@ -31,7 +31,23 @@ const SettingsPage = defineComponent({
     }
     const expandedUserId = Vue.ref('')
     const toggleExpand = id => { expandedUserId.value = expandedUserId.value === id ? '' : id }
-    const setMe = id => { state.currentUserId=id; persistAppState() }
+    const setMe = id => {
+      state.currentUserId = id
+      persistAppState()
+      // 强制提示一下，避免用户以为切换没生效
+      const u = (state.users||[]).find(x => x.id === id)
+      if (u) {
+        // 用 Vue.nextTick 等下一个 tick，确保 me.computed 已经响应新值
+        Vue.nextTick(() => {
+          const tag = document.getElementById('role-switch-toast')
+          if (tag) {
+            tag.textContent = `已切换到「${u.display_name}」(${u.role})`
+            tag.style.opacity = '1'
+            setTimeout(() => { tag.style.opacity = '0' }, 1800)
+          }
+        })
+      }
+    }
 
     // ── 用户 CRUD ──────────────────────────────────────────────
     const userModal = Vue.reactive({ show:false, mode:'', id:'', name:'', role:'member', username:'', password:'' })
@@ -355,6 +371,45 @@ const SettingsPage = defineComponent({
       alert('已保存！')
     }
 
+    // ── AI 配置（从 AIPage 搬过来）─────────────────────────
+    const PRESETS_KEY  = 'hay_ai_presets_v2'
+    const aiDefaultConfig = {
+      id: 'preset_default', name: '默认',
+      provider: 'openai-compatible',
+      model: 'gpt-4.1-mini',
+      apiBase: 'https://api.openai.com/v1',
+      apiKey: '',
+      systemPrompt: '你是 HAY 家居品牌运营分析助手。请基于提供的商品数据、投放数据、运营动作记录，输出简明、专业、可执行的业务建议。分析时优先关注ROI异常、趋势拐点、类目机会，建议要具体到商品名称和可操作步骤。',
+    }
+    const aiConfig = Vue.ref({ ...aiDefaultConfig })
+    const aiSavedAt = Vue.ref('')
+    const aiShowKey = Vue.ref(false)
+    const loadAiConfig = () => {
+      try {
+        const presetsRaw = localStorage.getItem(PRESETS_KEY)
+        if (presetsRaw) {
+          const data = JSON.parse(presetsRaw)
+          const active = (data.presets || []).find(p => p.id === data.activeId) || (data.presets || [])[0]
+          if (active) aiConfig.value = { ...aiDefaultConfig, ...active }
+        }
+      } catch {}
+    }
+    const saveAiConfig = () => {
+      const data = { activeId: aiConfig.value.id || 'preset_default', presets: [aiConfig.value] }
+      localStorage.setItem(PRESETS_KEY, JSON.stringify(data))
+      aiSavedAt.value = new Date().toLocaleString()
+      // 触发其他 tab 的 AIPage 重新加载
+      try {
+        window.dispatchEvent(new StorageEvent('storage', { key: PRESETS_KEY }))
+      } catch {}
+    }
+    const resetAiConfig = () => {
+      if (!confirm('恢复默认配置？API Key 会清空。')) return
+      aiConfig.value = { ...aiDefaultConfig }
+      saveAiConfig()
+    }
+    Vue.onMounted(loadAiConfig)
+
     return {
       me,users,metrics,permGroups,PERM_LABELS,expandedUserId,toggleExpand,meetings,can,setMe,
       userModal,openAddUser,openEditUser,saveUserModal,deleteUser,togglePerm,
@@ -365,6 +420,8 @@ const SettingsPage = defineComponent({
       // 人群投放品类计划
       audiencePlan, audiencePlanLoading, audiencePlanSaving, audiencePlanMsg, audiencePlanTotal,
       saveAudiencePlan, resetAudiencePlanDefault, loadAudiencePlan,
+      // AI 配置
+      aiConfig, aiSavedAt, aiShowKey, saveAiConfig, resetAiConfig,
       allProductsForManage,productModal,openAddProduct,openEditProduct,saveProductModal,toggleHideProduct,deleteCustomProduct,
       manualInputPid,manualInputDate,manualInputFields,manualProductOptions,saveManualData,
       productNameByPid: pid => RAW.products?.[pid]?.name || pid,
@@ -405,12 +462,13 @@ const SettingsPage = defineComponent({
 <div style="display:flex;flex-direction:column;gap:16px">
   <!-- 当前用户切换 -->
   <div class="card" style="padding:16px">
-    <div class="card-header" style="margin-bottom:10px"><span class="card-title">当前角色</span><span class="card-sub">切换后前端权限即时生效</span></div>
+    <div class="card-header" style="margin-bottom:10px"><span class="card-title">当前角色</span><span class="card-sub">前端测试用：切换后页面 can(...) 权限即时生效；服务器接口仍按真实登录账号校验</span></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <select :value="me?.id" @change="setMe($event.target.value)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;background:#fff">
         <option v-for="u in (users || [])" :key="u.id" :value="u.id">{{ u.display_name }}（{{ u.role }}）</option>
       </select>
-      <div style="font-size:11px;color:var(--muted)">切换不同角色可验证新增/编辑/删除的权限控制效果</div>
+      <span style="font-size:11px;color:#16a34a;font-weight:600">当前：{{ me?.display_name }} · {{ me?.role }} · {{ (me?.permissions||[]).includes('*') ? '全部权限' : ((me?.permissions||[]).length + ' 项权限') }}</span>
+      <span id="role-switch-toast" style="font-size:11px;background:#dcfce7;color:#166534;padding:4px 10px;border-radius:99px;opacity:0;transition:opacity 0.3s"></span>
       <div style="display:flex;gap:8px;margin-left:auto">
         <button @click="exportState" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer">导出配置 JSON</button>
         <button @click="importState" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer">导入配置 JSON</button>
@@ -484,8 +542,12 @@ const SettingsPage = defineComponent({
       <!-- 指标配置 -->
       <div class="card" style="padding:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div><span class="card-title">指标配置</span><span class="card-sub">可新增自定义指标</span></div>
+          <div><span class="card-title">指标配置</span><span class="card-sub">元数据登记表（key/label/口径说明）</span></div>
           <button @click="openAddMetric" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">新增指标</button>
+        </div>
+        <div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.6">
+          ⚠️ <strong>当前是登记表</strong>：在这里加/删指标只改 metricRegistry（前端 localStorage），<strong>不影响</strong>总览/单品/投放面板上实际显示的指标——那些是在各页组件里硬编码的。
+          <br/>下版本接通：让这里的列表驱动各页面的指标卡片选择 + tooltip 来源。
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto">
           <div v-for="m in (metrics || [])" :key="m.id" @click="openEditMetric(m)"
@@ -650,6 +712,40 @@ const SettingsPage = defineComponent({
       </div>
       <div v-if="audiencePlanMsg" style="margin-top:8px;font-size:12px"
         :style="{color: audiencePlanMsg.includes('失败') ? 'var(--red)' : 'var(--green)'}">{{ audiencePlanMsg }}</div>
+    </div>
+  </div>
+
+  <!-- AI 配置（从 AI 分析页搬过来）-->
+  <div class="card" style="padding:16px">
+    <div class="card-header" style="margin-bottom:14px">
+      <span class="card-title">AI 配置</span>
+      <span class="card-sub">配置存储在浏览器本地（localStorage），不上传服务器；填完保存后到「AI 分析」页用</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:12px">
+      <label style="display:flex;flex-direction:column;gap:6px;font-size:12px">
+        <span style="color:var(--muted)">模型名</span>
+        <input v-model="aiConfig.model" placeholder="gpt-4.1-mini / claude-sonnet-4-6 等" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;box-sizing:border-box">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:6px;font-size:12px">
+        <span style="color:var(--muted)">API Base URL</span>
+        <input v-model="aiConfig.apiBase" placeholder="https://api.openai.com/v1" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;box-sizing:border-box">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;grid-column:1/-1">
+        <span style="color:var(--muted)">API Key <span style="color:#dc2626">*</span></span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input :type="aiShowKey ? 'text' : 'password'" v-model="aiConfig.apiKey" placeholder="sk-..." style="flex:1;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;box-sizing:border-box">
+          <button @click="aiShowKey=!aiShowKey" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 10px;font-size:11px;cursor:pointer;white-space:nowrap">{{ aiShowKey ? '隐藏' : '显示' }}</button>
+        </div>
+      </label>
+    </div>
+    <label style="display:flex;flex-direction:column;gap:6px;font-size:12px">
+      <span style="color:var(--muted)">系统提示词</span>
+      <textarea v-model="aiConfig.systemPrompt" rows="3" style="border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;resize:vertical;font-family:inherit;box-sizing:border-box"></textarea>
+    </label>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+      <button @click="saveAiConfig" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:7px 16px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
+      <button @click="resetAiConfig" style="border:1px solid var(--border);background:#fff;color:var(--muted);border-radius:8px;padding:7px 14px;font-size:12px;cursor:pointer">恢复默认</button>
+      <span style="font-size:11px;color:var(--muted);margin-left:auto">{{ aiSavedAt ? '最近保存 ' + aiSavedAt : (aiConfig.apiKey ? '已存在配置' : '尚未保存') }}</span>
     </div>
   </div>
 

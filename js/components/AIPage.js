@@ -304,32 +304,11 @@ const AIPage = defineComponent({
     AI 页面初始化失败：{{ setupError }}
   </div>
   <template v-else>
-  <!-- AI 配置 -->
-  <div class="card" style="padding:16px">
-    <div class="card-header" style="margin-bottom:12px"><span class="card-title">AI 配置</span><span class="card-sub">配置存储在浏览器本地，不上传服务器</span></div>
-    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:12px">
-      <label style="display:flex;flex-direction:column;gap:6px;font-size:12px">
-        <span style="color:var(--muted)">模型名</span>
-        <input v-model="aiConfig.model" placeholder="gpt-4.1-mini" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px">
-      </label>
-      <label style="display:flex;flex-direction:column;gap:6px;font-size:12px">
-        <span style="color:var(--muted)">API Base URL</span>
-        <input v-model="aiConfig.apiBase" placeholder="https://api.openai.com/v1" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px">
-      </label>
-      <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;grid-column:1/-1">
-        <span style="color:var(--muted)">API Key <span style="color:#dc2626">*</span></span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <input :type="showApiKey ? 'text' : 'password'" v-model="aiConfig.apiKey" placeholder="sk-..." style="flex:1;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px">
-          <button @click="showApiKey=!showApiKey" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 10px;font-size:11px;cursor:pointer;white-space:nowrap">{{ showApiKey ? '隐藏' : '显示' }}</button>
-          <button @click="saveConfig" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:7px 14px;font-size:11px;cursor:pointer;white-space:nowrap;font-weight:600">保存</button>
-        </div>
-      </label>
+  <!-- 配置入口指引 -->
+  <div v-if="!aiConfig.apiKey" class="card" style="padding:14px 16px;border:1px solid #fde68a;background:#fffbeb">
+    <div style="font-size:12px;color:#92400e;line-height:1.6">
+      ⚠️ 还没配置 API Key。请到 <strong>设置 → AI 配置</strong> 填写后回来这里使用。
     </div>
-    <label style="display:flex;flex-direction:column;gap:6px;font-size:12px">
-      <span style="color:var(--muted)">系统提示词</span>
-      <textarea v-model="aiConfig.systemPrompt" rows="3" style="border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;resize:vertical;font-family:inherit"></textarea>
-    </label>
-    <div style="font-size:11px;color:var(--muted);margin-top:8px">{{ configSavedAt ? '最近保存 ' + configSavedAt : '尚未保存（填写后点击保存）' }}</div>
   </div>
 
   <!-- 一键分析 -->

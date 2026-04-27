@@ -224,7 +224,8 @@ CREATE TABLE IF NOT EXISTS fact_xhs_note_product (
     id              SERIAL PRIMARY KEY,
     note_id         INTEGER NOT NULL REFERENCES fact_xhs_note(id),
     product_id      TEXT NOT NULL,
-    product_mention TEXT
+    product_mention TEXT,
+    UNIQUE (note_id, product_id)
 );
 
 -- 用户表

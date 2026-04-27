@@ -152,7 +152,19 @@ const AdsPage = defineComponent({
       return tags.join(' · ')
     })
 
-    const totalPaidSpend = computed(() => +(audienceSpend.value + keywordSpend.value + videoSpend.value).toFixed(2))
+    const totalPaidSpend = computed(() => {
+      const a = +audienceSpend.value || 0
+      const k = +keywordSpend.value || 0
+      const v = +videoSpend.value || 0
+      const sum = a + k + v
+      // 数据自检：如果某个分量超过 sum，说明分量来源不一致（API 实时 vs RAW 快照混搭），
+      // 把日志打到 console 让你能 F12 看，但 UI 显示 max(sum, components) 避免视觉冲突
+      const maxComponent = Math.max(a, k, v)
+      if (maxComponent > sum + 0.01) {
+        console.warn('[AdsPage 总投放] 分量大于汇总：', { audience:a, keyword:k, video:v, sum, max: maxComponent })
+      }
+      return +Math.max(sum, maxComponent).toFixed(2)
+    })
     const totalPaidSpendWan = computed(() => (totalPaidSpend.value/10000).toFixed(1))
 
     const buildChannelItems = (total, channelKey) => {
@@ -319,6 +331,210 @@ const AdsPage = defineComponent({
       return out
     })
 
+    // ── 当前用户 + 权限 ─────────────────────────────────────
+    const me = computed(() => currentUserObj())
+    const myPerms = computed(() => {
+      const p = me.value?.permissions || []
+      return Array.isArray(p) ? p : []
+    })
+    const isAdmin = computed(() =>
+      me.value?.role === 'admin' || myPerms.value.includes('*') || myPerms.value.includes('task.edit_all')
+    )
+    const canEditOwn = computed(() => isAdmin.value || myPerms.value.includes('task.edit_own'))
+    const canDelete  = computed(() => isAdmin.value || myPerms.value.includes('task.delete'))
+    // 名字前缀匹配，和后端 update_task 同口径
+    const isTaskOwner = (task) => {
+      if (!me.value) return false
+      const display = me.value.display_name || ''
+      const owner   = task.owner || ''
+      if (!owner) return false
+      if (owner === display) return true
+      const prefix = display.split('（')[0].split('(')[0].trim()
+      return prefix.length >= 2 && owner.includes(prefix)
+    }
+    const canEditTask = (task) => isAdmin.value || (canEditOwn.value && isTaskOwner(task))
+
+    // ── 任务行内联编辑（状态 / 备注）─────────────────────
+    // editingTask = { id, status, note, saving } —— 同一时刻只编辑一行
+    const editingTask = ref(null)
+    const startInlineEdit = (task) => {
+      if (!canEditTask(task)) return alert('只能改自己负责的任务')
+      editingTask.value = { id: task.id, status: task.status, note: task.note || '', saving: false }
+    }
+    const cancelInlineEdit = () => { editingTask.value = null }
+    const saveInlineEdit = async () => {
+      const e = editingTask.value
+      if (!e) return
+      e.saving = true
+      try {
+        const res = await fetch(`/api/tasks/${e.id}`, {
+          method: 'PATCH', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ status: e.status, execution_note: e.note }),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'保存失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        // 刷新这条任务在 apiTasksData 中的值
+        for (const g of apiTasksData.value.groups || []) {
+          for (const t of g.tasks || []) {
+            if (t.id === e.id) {
+              t.status = e.status
+              t.execution_note = e.note
+            }
+          }
+        }
+        editingTask.value = null
+      } catch (err) {
+        alert('保存失败：' + err.message)
+        e.saving = false
+      }
+    }
+
+    // ── 删除任务 ─────────────────────────────────────────
+    const deleteTaskRow = async (task) => {
+      if (!canDelete.value) return alert('无删除权限')
+      if (!confirm(`确认删除「${task.detail}」？`)) return
+      try {
+        const res = await fetch(`/api/tasks/${task.id}`, { method:'DELETE' })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'删除失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        // 本地剔除
+        for (const g of apiTasksData.value.groups || []) {
+          g.tasks = (g.tasks || []).filter(t => t.id !== task.id)
+        }
+      } catch (err) {
+        alert('删除失败：' + err.message)
+      }
+    }
+
+    // ── 管理员全字段编辑 Modal ────────────────────────────
+    const fullEditModal = ref({ show:false, id:'', detail:'', owner:'', category:'', status:'', priority:'', execution_note:'', saving:false })
+    const TASK_CATEGORIES_ALL = ['标题优化','评价与问大家','淘内内容宣发','详情页优化','竞品分析','妈妈计划迭代','售卖复盘','其他']
+    const TASK_OWNERS_ALL = ['Jas team（内容）','豆豆（设计）','刘婷（商品）','晓东（运营）','婉婷（主管）','声超']
+    const openFullEdit = (task) => {
+      if (!isAdmin.value) return alert('需要管理员权限才能改全字段')
+      Object.assign(fullEditModal.value, {
+        show:true, id:task.id, detail:task.detail||'', owner:task.owner||'',
+        category:task.category||'标题优化', status:task.status||'待开始',
+        priority:task.priority||'中', execution_note:task.note||'', saving:false,
+      })
+    }
+    const closeFullEdit = () => { fullEditModal.value.show = false }
+    const saveFullEdit = async () => {
+      const m = fullEditModal.value
+      if (!m.detail.trim()) return alert('任务名不能空')
+      m.saving = true
+      try {
+        const body = {
+          detail: m.detail.trim(), owner: m.owner, category: m.category,
+          status: m.status, priority: m.priority,
+          execution_note: m.execution_note,
+        }
+        const res = await fetch(`/api/tasks/${m.id}`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'保存失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        // 刷新本地
+        for (const g of apiTasksData.value.groups || []) {
+          for (const t of g.tasks || []) {
+            if (t.id === m.id) {
+              Object.assign(t, body)
+            }
+          }
+        }
+        closeFullEdit()
+      } catch (err) {
+        alert('保存失败：' + err.message)
+        m.saving = false
+      }
+    }
+
+    // ── 批量分配 owner ──────────────────────────────────
+    const selectedTaskIds = ref(new Set())
+    const toggleSelectTask = (id) => {
+      const s = new Set(selectedTaskIds.value)
+      if (s.has(id)) s.delete(id); else s.add(id)
+      selectedTaskIds.value = s
+    }
+    const isTaskSelected = (id) => selectedTaskIds.value.has(id)
+    const clearSelectedTasks = () => { selectedTaskIds.value = new Set() }
+    const bulkAssignModal = ref({ show:false, owner:'', saving:false })
+    const openBulkAssign = () => {
+      if (!isAdmin.value) return alert('批量分配需要管理员权限')
+      if (!selectedTaskIds.value.size) return alert('先勾选任务')
+      Object.assign(bulkAssignModal.value, { show:true, owner:'Jas team（内容）', saving:false })
+    }
+    const closeBulkAssign = () => { bulkAssignModal.value.show = false }
+    const doBulkAssign = async () => {
+      const ids = Array.from(selectedTaskIds.value)
+      if (!ids.length) return closeBulkAssign()
+      bulkAssignModal.value.saving = true
+      try {
+        const res = await fetch('/api/tasks/bulk-update', {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ task_ids: ids, owner: bulkAssignModal.value.owner }),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'批量改失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        // 本地刷新
+        for (const g of apiTasksData.value.groups || []) {
+          for (const t of g.tasks || []) {
+            if (selectedTaskIds.value.has(t.id)) t.owner = bulkAssignModal.value.owner
+          }
+        }
+        clearSelectedTasks()
+        closeBulkAssign()
+      } catch (err) {
+        alert('批量分配失败：' + err.message)
+        bulkAssignModal.value.saving = false
+      }
+    }
+
+    // ── 新增任务 Modal（投放面板版）─────────────────────
+    const newTaskModal = ref({ show:false, pid:'', detail:'', category:'标题优化', owner:'Jas team（内容）', status:'待开始', priority:'中', execution_note:'', saving:false })
+    const openNewTask = (pid) => {
+      if (!isAdmin.value && !myPerms.value.includes('task.create')) return alert('无新增任务权限')
+      Object.assign(newTaskModal.value, { show:true, pid: pid||'', detail:'', category:'标题优化', owner:'Jas team（内容）', status:'待开始', priority:'中', execution_note:'', saving:false })
+    }
+    const closeNewTask = () => { newTaskModal.value.show = false }
+    const saveNewTask = async () => {
+      const m = newTaskModal.value
+      if (!m.pid) return alert('请选商品')
+      if (!m.detail.trim()) return alert('任务名不能空')
+      m.saving = true
+      try {
+        const period = activePeriod.value || ''
+        const body = {
+          product_id: m.pid, detail: m.detail.trim(), owner: m.owner,
+          status: m.status, priority: m.priority, category: m.category,
+          time_range_label: period, execution_note: m.execution_note || null,
+        }
+        const res = await fetch('/api/tasks', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'新增失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        // 重新拉一遍任务列表
+        await loadTasksWithMetrics()
+        closeNewTask()
+      } catch (err) {
+        alert('新增失败：' + err.message)
+        m.saving = false
+      }
+    }
+
     // ── 任务评论 / 反馈 ─────────────────────────────────────
     const expandedTaskId = ref(null)
     const taskComments = ref({})    // { task_id: [comments...] }
@@ -458,6 +674,40 @@ const AdsPage = defineComponent({
         .slice(0,8)
     })
 
+    // 新建周期 modal
+    const periodModal = ref({ show:false, start_date:'', end_date:'', set_current:true, saving:false })
+    const openPeriodModal = () => {
+      if (!isAdmin.value && !myPerms.value.includes('task.create')) return alert('需要管理员权限新建周期')
+      const today = new Date().toISOString().slice(0,10)
+      Object.assign(periodModal.value, { show:true, start_date: today, end_date: today, set_current:true, saving:false })
+    }
+    const closePeriodModal = () => { periodModal.value.show = false }
+    const savePeriod = async () => {
+      const m = periodModal.value
+      if (!m.start_date || !m.end_date) return alert('请选起止日期')
+      if (m.end_date < m.start_date) return alert('结束日期不能早于开始日期')
+      m.saving = true
+      try {
+        const res = await fetch('/api/task-periods', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ start_date: m.start_date, end_date: m.end_date, set_current: m.set_current }),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'创建失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        const created = await res.json()
+        // 刷新周期列表 + 切到新周期
+        await loadTaskPeriods()
+        selectedPeriod.value = created.label || ''
+        await loadTasksWithMetrics()
+        closePeriodModal()
+      } catch (err) {
+        alert('创建失败：' + err.message)
+        m.saving = false
+      }
+    }
+
     return {
       activeTab, openChannel, periodLabel, audienceSpend, keywordSpend, videoSpend, videoGmv,
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
@@ -472,6 +722,14 @@ const AdsPage = defineComponent({
       // 任务评论
       expandedTaskId, taskComments, commentDraft, previewImage,
       toggleTaskExpand, onCommentImagePick, sendComment, deleteComment, fmtCommentTime,
+      // 任务编辑权限 + 内联编辑 + 新增 + 批量
+      me, isAdmin, canDelete, canEditTask,
+      editingTask, startInlineEdit, cancelInlineEdit, saveInlineEdit, deleteTaskRow,
+      fullEditModal, openFullEdit, closeFullEdit, saveFullEdit, TASK_CATEGORIES_ALL, TASK_OWNERS_ALL,
+      newTaskModal, openNewTask, closeNewTask, saveNewTask,
+      selectedTaskIds, isTaskSelected, toggleSelectTask, clearSelectedTasks,
+      bulkAssignModal, openBulkAssign, closeBulkAssign, doBulkAssign,
+      periodModal, openPeriodModal, closePeriodModal, savePeriod,
     }
   },
   template: `
@@ -500,7 +758,7 @@ const AdsPage = defineComponent({
 
   <template v-if="activeTab==='delivery'">
     <div class="kpi-grid" style="grid-template-columns:repeat(6,1fr)">
-      <div class="kpi-card"><div class="kpi-label">总投放<span class="info-btn">?<span class="tooltip">万象台商品报表口径人群+关键词花费，加上内容报表短视频花费的总和。三个渠道分别独立统计。</span></span></div><div class="kpi-value">¥{{ totalPaidSpendWan }}万</div><div class="kpi-footer"><span>人群+关键词+短视频</span></div></div>
+      <div class="kpi-card"><div class="kpi-label">总投放<span class="info-btn">?<span class="tooltip">总投放 = 商品报表(人群+关键词) + 内容报表(短视频)。<br/>· 商品报表来源：fact_wxst_audience.spend + fact_wxst_keyword.spend，三方对账时和淘宝商家后台「万象台商品报表合计」对得上<br/>· 短视频来源：fact_wxst_content（光合、达人等内容投放），万象台后台是单独一个 tab，不在商品报表里<br/>· 如果你只想看「淘宝平台广告」口径，应该看「类目拆分额」（商品报表）；带短视频的应该看这个「总投放」</span></span></div><div class="kpi-value">¥{{ totalPaidSpendWan }}万</div><div class="kpi-footer"><span>商品报表 ¥{{ ((audienceSpend+keywordSpend)/10000).toFixed(1) }}万 ｜ 短视频 ¥{{ (videoSpend/10000).toFixed(1) }}万</span></div></div>
       <div class="kpi-card"><div class="kpi-label">人群<span class="info-btn">?<span class="tooltip">万象台「人群推广」渠道花费，来源：fact_wxst_audience.spend SUM。计划侧重看品类拆分（家具63/配饰30/灯具5/其他2），不是看总占比。</span></span></div><div class="kpi-value">{{ fmtMoney(audienceSpend) }}</div><div class="kpi-footer"><span>{{ apiSpend ? '实时' : 'RAW快照' }}</span></div></div>
       <div class="kpi-card"><div class="kpi-label">关键词<span class="info-btn">?<span class="tooltip">万象台「关键词推广」渠道花费，来源：fact_wxst_keyword.spend SUM。无品类计划要求。</span></span></div><div class="kpi-value">{{ fmtMoney(keywordSpend) }}</div><div class="kpi-footer"><span>{{ apiSpend ? '实时' : 'RAW快照' }}</span></div></div>
       <div class="kpi-card"><div class="kpi-label">短视频<span class="info-btn">?<span class="tooltip">内容报表「短视频」类型花费，与搜推报表独立统计，不叠加在人群/关键词中。来源：推广报表→内容报表。</span></span></div><div class="kpi-value">{{ fmtMoney(videoSpend) }}</div><div class="kpi-footer"><span>内容报表口径</span></div></div>
@@ -523,7 +781,7 @@ const AdsPage = defineComponent({
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px">
       <!-- 人群渠道: plan vs actual -->
       <div class="card" style="padding:16px">
         <div class="card-header" style="margin-bottom:10px;align-items:flex-start">
@@ -608,29 +866,38 @@ const AdsPage = defineComponent({
           <div v-if="!channelCatData.keywordRows.length" class="empty">暂无投放数据</div>
         </div>
       </div>
-    </div>
 
-    <!-- 短视频渠道 -->
-    <div v-if="videoSpend > 0" class="card" style="padding:16px">
-      <div class="card-header" style="margin-bottom:10px">
-        <div>
-          <span class="card-title">短视频渠道</span>
-          <span class="card-sub" style="margin-left:8px">内容报表口径</span>
+      <!-- 短视频渠道（同一行第三列）-->
+      <div class="card" style="padding:16px">
+        <div class="card-header" style="margin-bottom:10px;align-items:flex-start">
+          <div>
+            <span class="card-title">短视频渠道</span>
+            <span class="card-sub" style="margin-left:8px">内容报表口径</span>
+          </div>
+          <span style="font-size:12px;font-weight:700">¥{{ (videoSpend/10000).toFixed(2) }}万</span>
         </div>
-        <span style="font-size:12px;font-weight:700">¥{{ (videoSpend/10000).toFixed(2) }}万花费 · GMV ¥{{ (videoGmv/10000).toFixed(1) }}万</span>
-      </div>
-      <div style="display:flex;gap:24px;flex-wrap:wrap">
-        <div style="display:flex;flex-direction:column;gap:4px">
-          <div style="font-size:11px;color:var(--muted)">ROI</div>
-          <div style="font-size:16px;font-weight:700;color:var(--accent)">{{ videoSpend > 0 ? (videoGmv/videoSpend).toFixed(2) : '—' }}</div>
+        <div v-if="videoSpend > 0" style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-size:11px;color:var(--muted)">花费</span>
+            <span style="font-size:13px;font-weight:600">{{ fmtMoney(videoSpend) }}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-size:11px;color:var(--muted)">GMV</span>
+            <span style="font-size:13px;font-weight:600">{{ fmtMoney(videoGmv) }}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-size:11px;color:var(--muted)">ROI</span>
+            <span style="font-size:13px;font-weight:700;color:var(--accent)">{{ videoSpend > 0 ? (videoGmv/videoSpend).toFixed(2) : '—' }}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:baseline">
+            <span style="font-size:11px;color:var(--muted)">占总投放</span>
+            <span style="font-size:12px;font-weight:600">{{ totalPaidSpend > 0 ? (videoSpend/totalPaidSpend*100).toFixed(1) : 0 }}%</span>
+          </div>
+          <div style="height:6px;background:#f0f0f0;border-radius:3px;overflow:hidden">
+            <div style="height:100%;background:#a78bfa;border-radius:3px" :style="{width:Math.min(100,totalPaidSpend>0?videoSpend/totalPaidSpend*100:0)+'%'}"></div>
+          </div>
         </div>
-        <div style="display:flex;flex-direction:column;gap:4px">
-          <div style="font-size:11px;color:var(--muted)">花费占总投放</div>
-          <div style="font-size:16px;font-weight:700">{{ totalPaidSpend > 0 ? (videoSpend/totalPaidSpend*100).toFixed(1) : 0 }}%</div>
-        </div>
-        <div style="flex:1;height:6px;background:#f0f0f0;border-radius:3px;overflow:hidden;align-self:center;min-width:80px">
-          <div style="height:100%;background:#a78bfa;border-radius:3px" :style="{width:Math.min(100,totalPaidSpend>0?videoSpend/totalPaidSpend*100:0)+'%'}"></div>
-        </div>
+        <div v-else class="empty">暂无短视频投放数据</div>
       </div>
     </div>
 
@@ -670,6 +937,8 @@ const AdsPage = defineComponent({
                 <option value="">默认（当前周期）</option>
                 <option v-for="p in taskPeriods" :key="p" :value="p">{{ p }}</option>
               </select>
+              <button v-if="isAdmin" @click="openPeriodModal" title="新建任务周期"
+                style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;font-weight:600">+ 新周期</button>
             </div>
             <span style="font-size:11px;color:var(--muted)">
               当期：{{ activePeriodRange || '—' }}　·　对比上期：{{ prevPeriodLabel }} ({{ prevPeriodRange || '—' }})
@@ -696,10 +965,19 @@ const AdsPage = defineComponent({
 
       <!-- 任务列表 -->
       <div class="card" style="padding:16px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;flex-wrap:wrap">
           <div>
             <span class="card-title">任务清单</span>
             <span class="card-sub">{{ activePeriod }} · {{ taskGroups.length }} 个商品</span>
+            <span v-if="selectedTaskIds.size>0" style="margin-left:8px;font-size:11px;color:var(--accent);font-weight:600">已选 {{ selectedTaskIds.size }} 个</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button v-if="isAdmin && selectedTaskIds.size>0" @click="openBulkAssign"
+              style="padding:6px 12px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">批量分配（{{ selectedTaskIds.size }}）</button>
+            <button v-if="isAdmin && selectedTaskIds.size>0" @click="clearSelectedTasks"
+              style="padding:6px 12px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">清空选择</button>
+            <button v-if="isAdmin || (me?.permissions||[]).includes('task.create')" @click="openNewTask('')"
+              style="padding:6px 12px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">+ 新增任务</button>
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:10px">
@@ -727,7 +1005,9 @@ const AdsPage = defineComponent({
                       <span style="font-size:10px;color:var(--muted)">{{ m.l }}</span>
                       <div style="display:flex;align-items:baseline;gap:5px">
                         <span style="font-size:14px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ fmtMetric(item.metrics[m.k], m.fmt) }}</span>
-                        <span :class="['chg', diffCls(item.diff_pct[m.k])]" style="font-size:10px">{{ fmtDiffPct(item.diff_pct[m.k]) }}</span>
+                        <!-- 当期值 0/null 时不显示 diff（避免出现无意义的 -100%） -->
+                        <span v-if="item.metrics[m.k] != null && item.metrics[m.k] !== 0"
+                              :class="['chg', diffCls(item.diff_pct[m.k])]" style="font-size:10px">{{ fmtDiffPct(item.diff_pct[m.k]) }}</span>
                       </div>
                     </div>
                   </div>
@@ -735,50 +1015,82 @@ const AdsPage = defineComponent({
               </div>
             </div>
             <!-- 任务清单表头 -->
-            <div style="display:grid;grid-template-columns:100px 1fr 110px 90px 1fr;gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
+            <div style="display:grid;grid-template-columns:28px 90px 1fr 130px 110px minmax(160px,1.4fr) 70px;gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
+              <div style="padding:7px 6px;border-right:1px solid var(--border);text-align:center">
+                <span v-if="isAdmin" :title="'勾选批量分配'">☐</span>
+              </div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务标签</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务名称</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">负责人</div>
-              <div style="padding:7px 12px;border-right:1px solid var(--border)">任务状态</div>
-              <div style="padding:7px 12px">任务记录/备注</div>
+              <div style="padding:7px 12px;border-right:1px solid var(--border)">状态</div>
+              <div style="padding:7px 12px;border-right:1px solid var(--border)">备注（卡片可见）</div>
+              <div style="padding:7px 12px;text-align:center">操作</div>
             </div>
             <!-- 任务行列表 -->
             <div style="display:flex;flex-direction:column">
               <template v-for="(task, ti) in item.tasks" :key="task.id">
               <div
-                :style="{display:'grid',gridTemplateColumns:'100px 1fr 110px 90px 1fr',gap:'0',alignItems:'stretch',cursor:'pointer',
+                :style="{display:'grid',gridTemplateColumns:'28px 90px 1fr 130px 110px minmax(160px,1.4fr) 70px',gap:'0',alignItems:'stretch',
                   borderBottom: ti < item.tasks.length-1 ? '1px solid var(--border)' : 'none',
-                  background: expandedTaskId === task.id ? '#fff7ed' : (ti%2===0 ? '#fff' : '#fafaf9')}"
-                @click="toggleTaskExpand(task.id)">
+                  background: expandedTaskId === task.id ? '#fff7ed' : (isTaskSelected(task.id) ? '#eff6ff' : (ti%2===0 ? '#fff' : '#fafaf9'))}">
+                <!-- 勾选框（admin 才有） -->
+                <div style="padding:9px 6px;display:flex;align-items:center;justify-content:center;border-right:1px solid var(--border)">
+                  <input v-if="isAdmin" type="checkbox" :checked="isTaskSelected(task.id)" @change="toggleSelectTask(task.id)" style="cursor:pointer">
+                </div>
                 <!-- 任务标签 -->
                 <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border)">
                   <span style="font-size:11px;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:99px;background:#fff;white-space:nowrap">{{ task.category || '—' }}</span>
                 </div>
                 <!-- 任务名称 -->
                 <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
-                  <div style="font-size:12px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.detail }}</div>
+                  <div style="font-size:12px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.detail">{{ task.detail }}</div>
                 </div>
-                <!-- 负责人 -->
+                <!-- 负责人（拉宽到 130） -->
                 <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
                   <span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.owner">{{ task.owner || '—' }}</span>
                 </div>
-                <!-- 任务状态 -->
+                <!-- 任务状态：可编辑就是下拉，不可编辑是文字 -->
                 <div style="padding:9px 10px;display:flex;align-items:center;border-right:1px solid var(--border)">
-                  <span :style="{fontSize:'11px',fontWeight:'600',display:'flex',alignItems:'center',gap:'4px',color:statusColor(task.status),whiteSpace:'nowrap'}">
+                  <select v-if="editingTask && editingTask.id === task.id" v-model="editingTask.status"
+                    style="font-size:11px;border:1px solid var(--accent);border-radius:6px;padding:3px 6px;background:#fff;width:100%">
+                    <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
+                  </select>
+                  <span v-else @click="canEditTask(task) && startInlineEdit(task)"
+                    :style="{fontSize:'11px',fontWeight:'600',display:'flex',alignItems:'center',gap:'4px',color:statusColor(task.status),whiteSpace:'nowrap',cursor:canEditTask(task)?'pointer':'default'}"
+                    :title="canEditTask(task) ? '点击改状态' : '只能改自己的任务'">
                     <span :style="{width:'7px',height:'7px',borderRadius:'50%',background:statusColor(task.status),display:'inline-block',flexShrink:'0'}"></span>
                     {{ task.status||'—' }}
+                    <span v-if="canEditTask(task)" style="font-size:9px;color:var(--muted);margin-left:2px">✎</span>
                   </span>
                 </div>
-                <!-- 任务记录/反馈摘要 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;justify-content:space-between;overflow:hidden;gap:8px">
-                  <div style="flex:1;overflow:hidden">
-                    <div v-if="task.note" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.note">{{ task.note }}</div>
-                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">点击添加记录/反馈</div>
+                <!-- 备注：可编辑下显示 input -->
+                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);gap:6px;overflow:hidden">
+                  <input v-if="editingTask && editingTask.id === task.id" v-model="editingTask.note"
+                    placeholder="记录关键备注（卡片可见）"
+                    style="flex:1;font-size:11px;border:1px solid var(--accent);border-radius:6px;padding:4px 8px;outline:none">
+                  <div v-else @click="canEditTask(task) && startInlineEdit(task)"
+                    :style="{flex:'1',overflow:'hidden',cursor:canEditTask(task)?'pointer':'default'}"
+                    :title="canEditTask(task) ? '点击编辑备注' : ''">
+                    <div v-if="task.note" style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.note }}</div>
+                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">{{ canEditTask(task) ? '点击添加备注' : '—' }}</div>
                   </div>
-                  <span style="font-size:10px;color:var(--muted);white-space:nowrap;display:flex;align-items:center;gap:4px">
-                    💬 {{ (taskComments[task.id]||[]).length }}
-                    <span style="color:#d1d5db">{{ expandedTaskId === task.id ? '▲' : '▼' }}</span>
-                  </span>
+                </div>
+                <!-- 操作：保存/取消 / 编辑 / 删除 / 评论展开 -->
+                <div style="padding:9px 6px;display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap">
+                  <template v-if="editingTask && editingTask.id === task.id">
+                    <button @click="saveInlineEdit" :disabled="editingTask.saving"
+                      style="font-size:10px;padding:3px 8px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:4px;cursor:pointer">{{ editingTask.saving ? '...' : '保存' }}</button>
+                    <button @click="cancelInlineEdit"
+                      style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">×</button>
+                  </template>
+                  <template v-else>
+                    <button v-if="isAdmin" @click="openFullEdit(task)" title="管理员全字段编辑"
+                      style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">编辑</button>
+                    <button @click="toggleTaskExpand(task.id)" :title="'展开评论 (' + (taskComments[task.id]||[]).length + ')'"
+                      style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">💬{{ (taskComments[task.id]||[]).length }}</button>
+                    <button v-if="canDelete" @click.stop="deleteTaskRow(task)" title="删除"
+                      style="font-size:10px;padding:3px 6px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626">×</button>
+                  </template>
                 </div>
               </div>
               <!-- 展开的评论区 -->
@@ -849,6 +1161,137 @@ const AdsPage = defineComponent({
       </div>
     </div>
   </template>
+
+  <!-- 管理员全字段编辑任务 Modal -->
+  <div v-if="fullEditModal.show" @click.self="closeFullEdit"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:460px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">编辑任务（管理员）</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称 *</div>
+          <input v-model="fullEditModal.detail" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">分类</div>
+            <select v-model="fullEditModal.category" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option v-for="c in TASK_CATEGORIES_ALL" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人</div>
+            <select v-model="fullEditModal.owner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">状态</div>
+            <select v-model="fullEditModal.status" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">优先级</div>
+            <select v-model="fullEditModal.priority" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option>高</option><option>中</option><option>低</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">备注（卡片可见）</div>
+          <textarea v-model="fullEditModal.execution_note" rows="2" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;resize:vertical;box-sizing:border-box;font-family:inherit"></textarea>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeFullEdit" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveFullEdit" :disabled="fullEditModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ fullEditModal.saving ? '...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新增任务 Modal -->
+  <div v-if="newTaskModal.show" @click.self="closeNewTask"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:460px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新增任务</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">商品 PID *</div>
+          <input v-model="newTaskModal.pid" placeholder="如：690221882602" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">从单品页或商品管理复制 PID 过来</div>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称 *</div>
+          <input v-model="newTaskModal.detail" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">分类</div>
+            <select v-model="newTaskModal.category" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option v-for="c in TASK_CATEGORIES_ALL" :key="c" :value="c">{{ c }}</option>
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人</div>
+            <select v-model="newTaskModal.owner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+              <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
+            </select>
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--muted)">周期自动写：{{ activePeriod || '—' }}</div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeNewTask" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveNewTask" :disabled="newTaskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ newTaskModal.saving ? '...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批量分配 Modal -->
+  <div v-if="bulkAssignModal.show" @click.self="closeBulkAssign"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:380px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">批量分配负责人</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">已选 {{ selectedTaskIds.size }} 个任务，统一改成：</div>
+      <select v-model="bulkAssignModal.owner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+        <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
+      </select>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeBulkAssign" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="doBulkAssign" :disabled="bulkAssignModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ bulkAssignModal.saving ? '...' : '确认' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新建周期 Modal -->
+  <div v-if="periodModal.show" @click.self="closePeriodModal"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:380px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新建任务周期</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期 *</div>
+            <input v-model="periodModal.start_date" type="date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">结束日期 *</div>
+            <input v-model="periodModal.end_date" type="date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          </div>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
+          <input type="checkbox" v-model="periodModal.set_current"> 设为当前周期
+        </label>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closePeriodModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="savePeriod" :disabled="periodModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ periodModal.saving ? '...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
   </template>
 </div>`
 })

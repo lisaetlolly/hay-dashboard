@@ -42,12 +42,14 @@ function defaultMetricRegistry() {
   ]
 }
 function defaultUsers() {
+  // 默认成员权限基础集（content / design / product 共用）
+  const memberBase = ['task.view_all','task.edit_own','task.view_own','action.view','meeting.view','metric.view','product.view']
   return [
     { id:'u_admin', display_name:'管理员', role:'admin', permissions:['*'] },
-    { id:'u_ops', display_name:'晓东（运营）', role:'ops', permissions:['task.view_all','task.create','task.edit_all','meeting.view','meeting.create','meeting.edit','action.view','action.create','action.edit','metric.view','event.create','event.edit','event.delete'] },
-    { id:'u_design', display_name:'豆豆（设计）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','action.view','meeting.view','metric.view'] },
-    { id:'u_content', display_name:'Jas team（内容）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','meeting.view','metric.view'] },
-    { id:'u_product', display_name:'刘婷（商品）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','meeting.view','metric.view'] },
+    { id:'u_ops', display_name:'晓东（运营）', role:'ops', permissions:['task.view_all','task.create','task.edit_all','task.delete','meeting.view','meeting.create','meeting.edit','action.view','action.create','action.edit','metric.view','event.create','event.edit','event.delete','xhs.create','xhs.delete','product.view'] },
+    { id:'u_design', display_name:'豆豆（设计）', role:'member', permissions:[...memberBase, 'event.create'] },
+    { id:'u_content', display_name:'Jas team（内容）', role:'member', permissions:[...memberBase, 'event.create','xhs.create'] },
+    { id:'u_product', display_name:'刘婷（商品）', role:'member', permissions:[...memberBase, 'event.create'] },
   ]
 }
 function defaultTaskTemplates() {
@@ -159,12 +161,16 @@ function loadAppState() {
   const saved = readStore(APP_STORAGE_KEY, null)
   if (!saved) return
   const initial = createInitialAppState()
+  const migrated = migrateState(saved)
   const savedTaskJson = JSON.stringify((saved && saved.tasksByPid) || {})
+  // users / permissionGroups：只在 saved 里完全没数据时回退到 initial；
+  // 否则保留用户改过的权限（之前这里强制 = initial.users 会把改过的权限刷掉）
   APP_STATE.value = {
     ...initial,
-    ...migrateState(saved),
-    permissionGroups: initial.permissionGroups,
-    users: initial.users,
+    ...migrated,
+    permissionGroups: (migrated.permissionGroups && migrated.permissionGroups.length)
+      ? migrated.permissionGroups : initial.permissionGroups,
+    users: (migrated.users && migrated.users.length) ? migrated.users : initial.users,
   }
   // 若迁移修复了任务数据，回写服务器
   if (savedTaskJson !== JSON.stringify(APP_STATE.value.tasksByPid || {})) {
@@ -184,7 +190,14 @@ async function syncStateFromServer() {
     const initial = createInitialAppState()
     const serverTaskJson = JSON.stringify((state && state.tasksByPid) || {})
     const migrated = migrateState(state)
-    APP_STATE.value = { ...initial, ...migrated, permissionGroups: initial.permissionGroups, users: initial.users }
+    // 同 loadAppState：保留用户改过的权限/用户列表，server 没数据才退回默认
+    APP_STATE.value = {
+      ...initial,
+      ...migrated,
+      permissionGroups: (migrated.permissionGroups && migrated.permissionGroups.length)
+        ? migrated.permissionGroups : initial.permissionGroups,
+      users: (migrated.users && migrated.users.length) ? migrated.users : initial.users,
+    }
     writeStore(APP_STORAGE_KEY, APP_STATE.value)
     // 若迁移修复了任务数据，立即回写服务器，防止下次同步再覆盖
     if (serverTaskJson !== JSON.stringify(APP_STATE.value.tasksByPid || {})) {

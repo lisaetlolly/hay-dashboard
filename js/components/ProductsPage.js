@@ -270,25 +270,45 @@ const ProductsPage = defineComponent({
       Object.assign(xhsModal.value, { show:true, pid, title:'', link:'', date: today, author:'', likes:0, collect:0, comments:0, views:0, saving:false })
     }
     const closeXhsModal = () => { xhsModal.value.show = false }
-    const saveXhs = () => {
+    const saveXhs = async () => {
       const m = xhsModal.value
       if (!m.title.trim()) return alert('请填写笔记标题')
       if (!m.link.trim())  return alert('请填写笔记链接')
-      const note = {
-        pid: m.pid, title: m.title.trim(), link: m.link.trim(),
-        date: m.date, author: m.author.trim() || '—',
-        likes: +m.likes||0, collect: +m.collect||0, comments: +m.comments||0,
-        inter: (+m.likes||0)+(+m.collect||0)+(+m.comments||0),
-        views: +m.views||0,
+      m.saving = true
+      try {
+        const body = {
+          pid: m.pid, title: m.title.trim(), link: m.link.trim(),
+          date: m.date || null, author: m.author.trim() || null,
+          likes: +m.likes||0, collect: +m.collect||0,
+          comments: +m.comments||0, views: +m.views||0,
+        }
+        const res = await fetch('/api/xhs-notes', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'保存失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        const newNote = await res.json()
+        // 同步到 RAW.xhs_notes，避免等 reload
+        if (!Array.isArray(RAW.xhs_notes)) RAW.xhs_notes = []
+        RAW.xhs_notes.push(newNote)
+        // 更新 xhs_by_pid 聚合
+        if (!RAW.xhs_by_pid) RAW.xhs_by_pid = {}
+        const agg = RAW.xhs_by_pid[m.pid] || { notes:0,likes:0,collect:0,comments:0,inter:0,views:0 }
+        agg.notes++
+        agg.likes    += newNote.likes
+        agg.collect  += newNote.collect
+        agg.comments += newNote.comments
+        agg.inter    += newNote.inter
+        agg.views    += newNote.views
+        RAW.xhs_by_pid[m.pid] = agg
+        closeXhsModal()
+      } catch (err) {
+        alert('保存失败：' + err.message)
+        m.saving = false
       }
-      // 保存到 APP_STATE.customXhsNotes（前端暂存，下版本接 API 落库）
-      if (!APP_STATE.value.customXhsNotes) APP_STATE.value.customXhsNotes = []
-      APP_STATE.value.customXhsNotes.push(note)
-      // 把 RAW.xhs_notes 也补一份，下次 reload 之前界面里看得到
-      if (!Array.isArray(RAW.xhs_notes)) RAW.xhs_notes = []
-      RAW.xhs_notes.push(note)
-      persistAppState()
-      closeXhsModal()
     }
 
     const toggleChartMetric = key => {
@@ -658,13 +678,13 @@ const ProductsPage = defineComponent({
           <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">评论</div><input v-model.number="xhsModal.comments" type="number" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box"></div>
           <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">浏览</div><input v-model.number="xhsModal.views" type="number" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box"></div>
         </div>
-        <div style="font-size:10px;color:#d97706;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 8px;line-height:1.5">
-          ⚠️ 当前是前端暂存（刷新页面会丢失），下个版本接后端 API 落库 + 同步给所有人
+        <div style="font-size:10px;color:#16a34a;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:6px 8px;line-height:1.5">
+          ✓ 已接后端 API（fact_xhs_note 表），保存后所有人可见。链接重复会自动更新指标
         </div>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeXhsModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="saveXhs" style="padding:6px 14px;font-size:12px;border:1px solid #ff2442;background:#ff2442;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">保存</button>
+        <button @click="saveXhs" :disabled="xhsModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #ff2442;background:#ff2442;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ xhsModal.saving ? '...' : '保存' }}</button>
       </div>
     </div>
   </div>

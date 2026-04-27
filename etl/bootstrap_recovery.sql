@@ -31,6 +31,37 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at       TIMESTAMPTZ DEFAULT now()
 );
 
+-- 小红书笔记表（如不存在则建；用户从单品页手动添加）
+CREATE TABLE IF NOT EXISTS fact_xhs_note (
+    id            SERIAL PRIMARY KEY,
+    note_title    TEXT NOT NULL,
+    note_url      TEXT UNIQUE,
+    publish_time  TEXT,
+    author        TEXT,
+    likes         INTEGER DEFAULT 0,
+    collects      INTEGER DEFAULT 0,
+    shares        INTEGER DEFAULT 0,
+    comments      INTEGER DEFAULT 0,
+    reads         INTEGER DEFAULT 0,
+    loaded_at     TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS fact_xhs_note_product (
+    id              SERIAL PRIMARY KEY,
+    note_id         INTEGER NOT NULL REFERENCES fact_xhs_note(id) ON DELETE CASCADE,
+    product_id      TEXT NOT NULL,
+    product_mention TEXT
+);
+-- 加 UNIQUE，让 POST /api/xhs-notes 的 ON CONFLICT DO NOTHING 能命中
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fact_xhs_note_product_note_pid_uniq'
+    ) THEN
+        ALTER TABLE fact_xhs_note_product ADD CONSTRAINT fact_xhs_note_product_note_pid_uniq
+            UNIQUE (note_id, product_id);
+    END IF;
+END$$;
+
 -- 加唯一约束防止任务重复插入（按 商品+周期+任务详情+负责人 唯一）
 DO $$
 BEGIN
@@ -96,11 +127,11 @@ CREATE TABLE IF NOT EXISTS task_period (
 INSERT INTO users (username, password_hash, display_name, role, permissions) VALUES
     ('admin',    '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '系统管理员',     'admin',  '["*"]'::jsonb),
     ('xiaodong', '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '晓东（店长）',   'admin',  '["*"]'::jsonb),
-    ('shengchao','84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '声超（老板）',   'admin',  '["*"]'::jsonb),
-    ('wanting',  '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '婉婷（主管）',   'admin',  '["*"]'::jsonb),
-    ('jas',      '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', 'Jas team（内容）','member', '["task.view_all","task.edit_own","task.view_own","action.view","meeting.view","metric.view","product.view"]'::jsonb),
-    ('doudou',   '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '豆豆（设计）',   'member', '["task.view_all","task.edit_own","task.view_own","action.view","meeting.view","metric.view","product.view"]'::jsonb),
-    ('liuting',  '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '刘婷（商品）',   'member', '["task.view_all","task.edit_own","task.view_own","action.view","meeting.view","metric.view","product.view"]'::jsonb),
+    ('shengchao','84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '声超',           'admin',  '["*"]'::jsonb),
+    ('wanting',  '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '婉婷',           'admin',  '["*"]'::jsonb),
+    ('jas',      '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', 'Jas team（内容）','member', '["task.view_all","task.edit_own","task.view_own","action.view","meeting.view","metric.view","product.view","event.create","xhs.create"]'::jsonb),
+    ('doudou',   '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '豆豆（设计）',   'member', '["task.view_all","task.edit_own","task.view_own","action.view","meeting.view","metric.view","product.view","event.create"]'::jsonb),
+    ('liuting',  '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '刘婷（商品）',   'member', '["task.view_all","task.edit_own","task.view_own","action.view","meeting.view","metric.view","product.view","event.create"]'::jsonb),
     ('hay',      '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', 'HAY（客户只读）','viewer', '["task.view_all","action.view","meeting.view","metric.view","product.view"]'::jsonb)
 ON CONFLICT (username) DO UPDATE SET
     display_name = EXCLUDED.display_name,
@@ -204,6 +235,19 @@ UPDATE task_period SET is_current = FALSE
 --        UPDATE task_template SET default_owner='新人' WHERE id=X;
 --        UPDATE tasks SET owner=（新人）WHERE template_id=X AND time_range_label IN (...);
 -- ════════════════════════════════════════════════════════════════
+
+-- 先确保 4 个商品都在 dim_product 里（不在的话 /api/tasks/with-metrics 取不到名字）
+-- Cotton Bag 564552361178 不在「优化商品ID清单」里但有任务，需要手动补
+INSERT INTO dim_product (product_id, spu_id, title, category_l1, category_l2, inventory)
+VALUES
+    ('679198301351',  '679198301351',  'Colour Crate 收纳篮',     '配饰', '收纳', 0),
+    ('564552361178',  '564552361178',  'Cotton Bag 帆布包',       '配饰', '包袋', 0),
+    ('682036237751',  '682036237751',  'Korpus 置物架',           '家具', '储物', 0),
+    ('1020815058332', '1020815058332', 'Barro Bowl & Plate 碗盘', '配饰', '餐具', 0)
+ON CONFLICT (product_id) DO UPDATE SET
+    title       = EXCLUDED.title,
+    category_l1 = EXCLUDED.category_l1,
+    category_l2 = EXCLUDED.category_l2;
 
 -- 4 商品 × 9 模板 = 36 条任务，CROSS JOIN 一次写入
 WITH product_list(product_id, product_label) AS (

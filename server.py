@@ -436,6 +436,50 @@ def get_raw_data():
             except Exception:
                 plan_pct = {"家具": 63, "配饰": 30, "灯具": 5, "其他": 2}
 
+            # 13. xhs_notes（小红书笔记）—— ETL 拉的 + 用户手动加的，前端按 PID 分组用
+            try:
+                xhs_rows = rows(conn, """
+                    SELECT n.id, n.note_title AS title, n.note_url AS link,
+                           n.publish_time AS date, n.author,
+                           COALESCE(n.likes,0)    AS likes,
+                           COALESCE(n.collects,0) AS collect,
+                           COALESCE(n.comments,0) AS comments,
+                           COALESCE(n.reads,0)    AS views,
+                           array_agg(np.product_id) AS product_ids
+                    FROM fact_xhs_note n
+                    LEFT JOIN fact_xhs_note_product np ON np.note_id = n.id
+                    GROUP BY n.id
+                    ORDER BY n.publish_time DESC
+                """)
+                xhs_notes = []
+                xhs_by_pid_full = {}
+                for r in xhs_rows:
+                    pids = [p for p in (r.get("product_ids") or []) if p]
+                    inter = (r.get("likes") or 0) + (r.get("collect") or 0) + (r.get("comments") or 0)
+                    base = {
+                        "id": r["id"], "title": r["title"] or "", "link": r["link"] or "",
+                        "date": str(r["date"] or ""), "author": r["author"] or "",
+                        "likes": r["likes"], "collect": r["collect"],
+                        "comments": r["comments"], "inter": inter,
+                        "views": r["views"],
+                    }
+                    for pid in (pids or [None]):
+                        item = dict(base, pid=pid)
+                        xhs_notes.append(item)
+                        if pid:
+                            agg = xhs_by_pid_full.setdefault(pid, {
+                                "notes": 0, "likes": 0, "collect": 0,
+                                "comments": 0, "inter": 0, "views": 0,
+                            })
+                            agg["notes"]    += 1
+                            agg["likes"]    += item["likes"]
+                            agg["collect"]  += item["collect"]
+                            agg["comments"] += item["comments"]
+                            agg["inter"]    += item["inter"]
+                            agg["views"]    += item["views"]
+            except Exception:
+                xhs_notes, xhs_by_pid_full = [], {}
+
             return {
                 "products":        products,
                 "syzt":            syzt_flat,
@@ -449,6 +493,8 @@ def get_raw_data():
                 "tasks_by_pid":    tasks_by_pid,
                 "meetings":        meetings,
                 "plan_pct":        plan_pct,
+                "xhs_notes":       xhs_notes,
+                "xhs_by_pid":      xhs_by_pid_full,
                 "data_start":      data_start,
                 "data_end":        data_end,
                 "loaded_at":       datetime.now().strftime("%m-%d %H:%M"),
@@ -2283,6 +2329,84 @@ def get_xhs_metrics(
             else:
                 r["pay_after_7d"] = None
         return result
+
+
+# ══════════════════════════════════════════════════
+# 小红书笔记 CRUD（用户在单品页手动加 / 删）
+# ══════════════════════════════════════════════════
+class XhsNoteCreate(BaseModel):
+    pid: str
+    title: str
+    link: str
+    date: Optional[str] = None
+    author: Optional[str] = None
+    likes: int = 0
+    collect: int = 0
+    comments: int = 0
+    views: int = 0
+
+
+@app.post("/api/xhs-notes", status_code=201)
+def create_xhs_note(body: XhsNoteCreate,
+                    _user=Depends(require_permission('xhs.create'))):
+    """
+    新增小红书笔记。链接 UNIQUE，已存在则更新指标。
+    """
+    if not body.title.strip():
+        raise HTTPException(400, "标题不能为空")
+    if not body.link.strip():
+        raise HTTPException(400, "链接不能为空")
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # 1. upsert fact_xhs_note
+        cur.execute("""
+            INSERT INTO fact_xhs_note
+                (note_title, note_url, publish_time, author,
+                 likes, collects, comments, reads)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (note_url) DO UPDATE SET
+                note_title = EXCLUDED.note_title,
+                publish_time = EXCLUDED.publish_time,
+                author = EXCLUDED.author,
+                likes = EXCLUDED.likes,
+                collects = EXCLUDED.collects,
+                comments = EXCLUDED.comments,
+                reads = EXCLUDED.reads
+            RETURNING id
+        """, (body.title.strip(), body.link.strip(), body.date or None,
+              body.author or '', body.likes, body.collect,
+              body.comments, body.views))
+        note_id = cur.fetchone()["id"]
+        # 2. upsert fact_xhs_note_product 关联
+        cur.execute("""
+            INSERT INTO fact_xhs_note_product (note_id, product_id)
+            VALUES (%s, %s)
+            ON CONFLICT DO NOTHING
+        """, (note_id, body.pid))
+        conn.commit()
+        return {
+            "id": note_id, "pid": body.pid, "title": body.title,
+            "link": body.link, "date": body.date, "author": body.author,
+            "likes": body.likes, "collect": body.collect,
+            "comments": body.comments,
+            "inter": body.likes + body.collect + body.comments,
+            "views": body.views,
+        }
+
+
+@app.delete("/api/xhs-notes/{note_id}")
+def delete_xhs_note(note_id: int,
+                    _user=Depends(require_permission('xhs.delete'))):
+    """
+    删除小红书笔记（连带删 fact_xhs_note_product）。
+    """
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM fact_xhs_note_product WHERE note_id = %s", (note_id,))
+        cur.execute("DELETE FROM fact_xhs_note WHERE id = %s", (note_id,))
+        conn.commit()
+        return {"ok": True}
+
 
 # ══════════════════════════════════════════════════
 # ══════════════════════════════════════════════════
