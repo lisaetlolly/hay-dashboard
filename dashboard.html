@@ -118,9 +118,10 @@ async function _loadRawFromAPI() {
 
 const OFFICIAL = new Set(RAW.official_pids)      // depends on RAW (Python-injected)
 const APP_STATE = Vue.ref(createInitialAppState()) // depends on RAW
-const PLAN_LOOKUP = buildPlanLookup()              // depends on RAW
+let PLAN_LOOKUP = {}                               // populated after API fetch
 ;(async () => {
   await _loadRawFromAPI()
+  PLAN_LOOKUP = buildPlanLookup()
   loadAppState()
   startStateSync(15000)
   const __app = createApp(App)

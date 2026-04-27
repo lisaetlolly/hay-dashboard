@@ -73,6 +73,11 @@ for i, f in enumerate(xls_files):
         vis  = to_float(row.get('商品访客数'))
         cart = to_float(row.get('商品加购人数'))
         syzt_rows.append({'d': d, 'pid': pid, 'pay': pay, 'vis': vis, 'cart': cart})
+        raw_pcvr = row.get('商品支付转化率', 0)
+        try:
+            pcvr = float(str(raw_pcvr).rstrip('%')) / 100 if '%' in str(raw_pcvr) else float(raw_pcvr or 0)
+        except Exception:
+            pcvr = 0.0
         syzt_map[(d, pid)] = {
             'pay':        pay,
             'vis':        vis,
@@ -80,6 +85,8 @@ for i, f in enumerate(xls_files):
             'collect':    to_float(row.get('商品收藏人数')),
             'refund':     to_float(row.get('成功退款金额')),
             'new_buyers': to_float(row.get('支付新买家数')),
+            'avg_stay':   to_float(row.get('平均停留时长')),
+            'pay_cvr':    pcvr,
         }
 print(f'    syzt 共 {len(syzt_rows)} 行')
 
@@ -281,7 +288,7 @@ for pid in sorted(product_ids):
     cat  = cat_map.get(pid)    or old.get('cat')  or '其他'
     series  = {k: [] for k in ['pay', 'vis', 'cart', 'collect', 'refund',
                                 'new_buyers', 'spend', 'ctr', 'roi',
-                                'spend_rq', 'spend_kw']}
+                                'spend_rq', 'spend_kw', 'avg_stay', 'pay_cvr']}
     has_any = False
     for d in all_dates:
         sy = syzt_map.get((d, pid), {})
@@ -298,6 +305,8 @@ for pid in sorted(product_ids):
             'roi':        round(float(wx.get('roi',      0) or 0), 2),
             'spend_rq':   rq_product_map.get((d, pid), 0.0),
             'spend_kw':   kw_product_map.get((d, pid), 0.0),
+            'avg_stay':   round(float(sy.get('avg_stay', 0) or 0), 1),
+            'pay_cvr':    round(float(sy.get('pay_cvr',  0) or 0), 4),
         }
         if any(vals.values()):
             has_any = True

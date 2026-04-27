@@ -11,7 +11,7 @@ function computeKPI(s, e) {
   for (const r of filterRows(RAW.wxst, s, e)) {
     if (r.imps > 0) { ctr_sum += r.ctr; ctr_n++ }
   }
-  for (const p of Object.values(RAW.products)) {
+  for (const p of Object.values(RAW.products || {})) {
     for (let i=0;i<p.dates.length;i++) {
       if (p.dates[i]>=s && p.dates[i]<=e) {
         fav_cart += (p.collect?.[i]||0) + (p.cart?.[i]||0)
@@ -197,7 +197,7 @@ function computeAll(s, e) {
 function buildPlanLookup() {
   const lookup = {}  // product pid → plan_pct
   const planEntries = RAW.plan_detail || []
-  for (const p of Object.values(RAW.products)) {
+  for (const p of Object.values(RAW.products || {})) {
     const pname = (p.name || '').toLowerCase()
     let best = null, bestLen = 0
     for (const entry of planEntries) {

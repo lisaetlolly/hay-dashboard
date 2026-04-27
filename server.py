@@ -143,7 +143,8 @@ def _build_raw_from_db(conn) -> dict:
     syzt = _rows("""SELECT stat_date AS d, product_id AS pid,
                            pay_amount AS pay, visitors AS vis, cart_users AS cart,
                            collect_users AS collect, refund_amount AS refund,
-                           pay_new_buyers AS new_buyers
+                           pay_new_buyers AS new_buyers,
+                           avg_stay_duration AS avg_stay, pay_cvr
                     FROM fact_syzt_product ORDER BY stat_date, product_id""")
     syzt_map = {(r['d'], r['pid']): r for r in syzt}
 
@@ -180,6 +181,7 @@ def _build_raw_from_db(conn) -> dict:
         p = dim.get(pid, {})
         pay_a = []; vis_a = []; cart_a = []; col_a = []; ref_a = []; nb_a = []
         sp_a  = []; ctr_a = []; roi_a = []; rq_a  = []; kw_a  = []
+        stay_a = []; pcvr_a = []
         for d in all_dates:
             sy = syzt_map.get((d, pid), {})
             wx = wxst_map.get((d, pid), {})
@@ -194,6 +196,8 @@ def _build_raw_from_db(conn) -> dict:
             roi_a.append(round(float(wx.get('roi')   or 0), 2))
             rq_a.append(round (rq_map.get((d, pid), 0.0), 2))
             kw_a.append(round (kw_map.get((d, pid), 0.0), 2))
+            stay_a.append(round(float(sy.get('avg_stay') or 0), 1))
+            pcvr_a.append(round(float(sy.get('pay_cvr')  or 0), 4))
         if any(pay_a) or any(vis_a) or any(sp_a) or pid in dim:
             products[pid] = {
                 'pid': pid,
@@ -204,6 +208,7 @@ def _build_raw_from_db(conn) -> dict:
                 'collect': col_a, 'refund': ref_a, 'new_buyers': nb_a,
                 'spend': sp_a, 'ctr': ctr_a, 'roi': roi_a,
                 'spend_rq': rq_a, 'spend_kw': kw_a,
+                'avg_stay': stay_a, 'pay_cvr': pcvr_a,
             }
 
     # ── 人群报表（维度汇总）─────────────────────────────────

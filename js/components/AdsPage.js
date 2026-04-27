@@ -203,8 +203,8 @@ const AdsPage = defineComponent({
         // 只显示 RAW 商品目录中存在的商品，过滤旧数据残留 PID
         const p = RAW.products?.[pid]
         if (!p) return []
-        let gmv=0, spend=0, cart=0, ctrSum=0, ctrN=0
-        let pgmv=0, pspend=0, pcart=0, pctrSum=0, pctrN=0
+        let gmv=0, spend=0, cart=0, vis=0, ctrSum=0, ctrN=0, staySum=0, stayN=0, pcvrSum=0, pcvrN=0
+        let pgmv=0, pspend=0, pcart=0, pvis=0, pctrSum=0, pctrN=0, pStaySum=0, pStayN=0, pPcvrSum=0, pPcvrN=0
         // 近 7 天 XHS 笔记
         const xhsNotes  = (RAW.xhs_notes||[]).filter(n=>n.pid===pid&&n.date>=noteS&&n.date<=e).length
         const pXhsNotes = (RAW.xhs_notes||[]).filter(n=>n.pid===pid&&n.date>=pNoteS&&n.date<=pNoteE).length
@@ -215,19 +215,30 @@ const AdsPage = defineComponent({
             const d = p.dates[i]
             if (d >= s && d <= e) {
               gmv   += p.pay?.[i]   || 0; spend += p.spend?.[i] || 0
-              cart  += p.cart?.[i]  || 0
-              if ((p.ctr?.[i]||0)>0) { ctrSum+=p.ctr[i]*100; ctrN++ }
+              cart  += p.cart?.[i]  || 0; vis   += p.vis?.[i]   || 0
+              if ((p.ctr?.[i]||0)>0)     { ctrSum  +=p.ctr[i]*100;  ctrN++  }
+              if ((p.avg_stay?.[i]||0)>0) { staySum +=p.avg_stay[i]; stayN++ }
+              if ((p.pay_cvr?.[i]||0)>0)  { pcvrSum +=p.pay_cvr[i]*100; pcvrN++ }
             }
             if (d >= prevS && d <= prevE) {
               pgmv   += p.pay?.[i]   || 0; pspend += p.spend?.[i] || 0
-              pcart  += p.cart?.[i]  || 0
-              if ((p.ctr?.[i]||0)>0) { pctrSum+=p.ctr[i]*100; pctrN++ }
+              pcart  += p.cart?.[i]  || 0; pvis   += p.vis?.[i]   || 0
+              if ((p.ctr?.[i]||0)>0)     { pctrSum  +=p.ctr[i]*100;  pctrN++  }
+              if ((p.avg_stay?.[i]||0)>0) { pStaySum +=p.avg_stay[i]; pStayN++ }
+              if ((p.pay_cvr?.[i]||0)>0)  { pPcvrSum +=p.pay_cvr[i]*100; pPcvrN++ }
             }
           }
         }
         const pct = (a, b) => b > 0 ? +((a-b)/b*100).toFixed(1) : null
-        const ctr  = ctrN  > 0 ? +(ctrSum /ctrN ).toFixed(2) : null
-        const pctr = pctrN > 0 ? +(pctrSum/pctrN).toFixed(2) : null
+        const ctr      = ctrN   > 0 ? +(ctrSum  /ctrN  ).toFixed(2) : null
+        const pctr     = pctrN  > 0 ? +(pctrSum /pctrN ).toFixed(2) : null
+        const avgStay  = stayN  > 0 ? +(staySum /stayN ).toFixed(1) : null
+        const pAvgStay = pStayN > 0 ? +(pStaySum/pStayN).toFixed(1) : null
+        const payCvr   = pcvrN  > 0 ? +(pcvrSum /pcvrN ).toFixed(2) : null
+        const pPayCvr  = pPcvrN > 0 ? +(pPcvrSum/pPcvrN).toFixed(2) : null
+        // 加购率 = 加购用户数 / 访客数（周期累计）
+        const cartRate  = vis  > 0 ? +((cart /vis )*100).toFixed(2) : null
+        const pCartRate = pvis > 0 ? +((pcart/pvis)*100).toFixed(2) : null
         return (list||[]).map(t => ({ ...t, pid, image: imgSrc(pid),
           metrics: {
             gmv:   +gmv.toFixed(2),   gmv_chg:   pct(gmv,  pgmv),
@@ -237,6 +248,9 @@ const AdsPage = defineComponent({
             roi:  spend>0 ? +(gmv/spend).toFixed(2) : null,
             xhs_notes: xhsNotes, xhs_notes_chg: pct(xhsNotes, pXhsNotes),
             guanghe,
+            avg_stay: avgStay, avg_stay_chg: (avgStay!=null&&pAvgStay!=null) ? pct(avgStay, pAvgStay) : null,
+            cart_rate: cartRate, cart_rate_chg: (cartRate!=null&&pCartRate!=null) ? pct(cartRate, pCartRate) : null,
+            pay_cvr: payCvr, pay_cvr_chg: (payCvr!=null&&pPayCvr!=null) ? pct(payCvr, pPayCvr) : null,
           }
         }))
       })
@@ -631,11 +645,14 @@ const AdsPage = defineComponent({
                   <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计：{{ taskPeriodDates.label }}</div>
                   <div style="display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:8px;overflow:hidden">
                     <template v-for="(m,mi) in [
-                      {label:'销售金额', val:fmtMoney(item.metrics.gmv), chg:item.metrics.gmv_chg},
-                      {label:'CTR',      val:item.metrics.ctr!=null?item.metrics.ctr+\`%\`:\`—\`, chg:item.metrics.ctr_chg},
-                      {label:'花费',     val:fmtMoney(item.metrics.spend), chg:item.metrics.spend_chg},
-                      {label:'加购量',   val:item.metrics.cart, chg:item.metrics.cart_chg},
-                      {label:'发布笔记量 (近7天)', val:item.metrics.xhs_notes, chg:item.metrics.xhs_notes_chg},
+                      {label:'销售金额',           val:fmtMoney(item.metrics.gmv),                                            chg:item.metrics.gmv_chg},
+                      {label:'CTR',               val:item.metrics.ctr!=null?item.metrics.ctr+\`%\`:\`—\`,                    chg:item.metrics.ctr_chg},
+                      {label:'花费',               val:fmtMoney(item.metrics.spend),                                          chg:item.metrics.spend_chg},
+                      {label:'加购量',             val:item.metrics.cart,                                                     chg:item.metrics.cart_chg},
+                      {label:'加购率',             val:item.metrics.cart_rate!=null?item.metrics.cart_rate+\`%\`:\`—\`,       chg:item.metrics.cart_rate_chg},
+                      {label:'支付转化率',         val:item.metrics.pay_cvr!=null?item.metrics.pay_cvr+\`%\`:\`—\`,           chg:item.metrics.pay_cvr_chg},
+                      {label:'平均停留时长 (秒)',   val:item.metrics.avg_stay!=null?item.metrics.avg_stay+\`s\`:\`—\`,         chg:item.metrics.avg_stay_chg},
+                      {label:'发布笔记量 (近7天)', val:item.metrics.xhs_notes,                                                chg:item.metrics.xhs_notes_chg},
                     ]" :key="mi">
                       <div :style="{padding:'8px 12px',background:'#fafaf9',borderRight:'1px solid var(--border)',borderBottom:'1px solid var(--border)'}">
                         <div style="font-size:10px;color:var(--muted);margin-bottom:3px">{{ m.label }}</div>
