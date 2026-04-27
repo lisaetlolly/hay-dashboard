@@ -336,112 +336,103 @@ def default_range():
 
 @app.post("/api/seed-legacy")
 @app.get("/api/seed-legacy")
-def seed_legacy():
+def seed_legacy(background_tasks: __import__('fastapi').BackgroundTasks = None):
     """
-    一次性灌入旧 dashboard.html hardcoded 的历史数据（迁移到 Neon DB 之前的快照）。
-    幂等：先 DELETE 同日期范围内的旧记录再插入。
+    一次性灌入旧 dashboard.html hardcoded 的历史数据。
+    立即返回 {started:true}，后台执行写入（避免 HTTP 超时）。
+    进度可访问 /api/seed-legacy/status 查看。
     """
-    import json as _json
+    from fastapi import BackgroundTasks as _BT
+    import json as _json, threading
+
     seed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etl', 'legacy_seed.json')
     if not os.path.exists(seed_path):
         return {"ok": False, "error": f"legacy_seed.json not found at {seed_path}"}
 
-    try:
-        with open(seed_path, 'r', encoding='utf-8') as f:
-            seed = _json.load(f)
-    except Exception as e:
-        return {"ok": False, "error": f"failed to load seed: {e}"}
+    if _seed_status.get('running'):
+        return {"ok": True, "started": False, "msg": "已在运行中", "status": _seed_status}
 
-    products  = seed.get('products', {})
-    syzt_rows = seed.get('syzt', [])
-    wxst_rows = seed.get('wxst', [])
-    pid_daily = seed.get('pid_daily_spend', {})
-    cat_map   = seed.get('cat_map', {})
-
-    out = {"products": 0, "syzt": 0, "wxst": 0, "errors": []}
-
-    try:
-        with db() as conn:
-            cur = conn.cursor()
-
-            # 1) 先建表（schema.sql）
-            schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etl', 'schema.sql')
-            if os.path.exists(schema_path):
-                with open(schema_path, 'r', encoding='utf-8') as f:
-                    cur.execute(f.read())
-
-            # 2) dim_product
-            for pid, p in products.items():
-                title = p.get('name') or pid
-                cat_l1 = p.get('cat') or cat_map.get(pid) or ''
-                cur.execute("""
-                    INSERT INTO dim_product(product_id, spu_id, title, category_l1, category_l2, inventory)
-                    VALUES (%s, %s, %s, %s, '', 0)
-                    ON CONFLICT(product_id) DO UPDATE SET
-                        title=EXCLUDED.title, category_l1=EXCLUDED.category_l1
-                """, (pid, pid, title, cat_l1))
-                out["products"] += 1
-
-            # 3) fact_syzt_product (按 products[pid].dates/pay/vis/cart/collect/refund/new_buyers 重建)
-            for pid, p in products.items():
-                dates = p.get('dates', [])
-                pay = p.get('pay', []); vis = p.get('vis', []); cart = p.get('cart', [])
-                collect = p.get('collect', []); refund = p.get('refund', []); nb = p.get('new_buyers', [])
-                for i, d in enumerate(dates):
-                    pay_v = pay[i] if i < len(pay) else 0
-                    vis_v = vis[i] if i < len(vis) else 0
-                    cart_v = cart[i] if i < len(cart) else 0
-                    col_v = collect[i] if i < len(collect) else 0
-                    ref_v = refund[i] if i < len(refund) else 0
-                    nb_v = nb[i] if i < len(nb) else 0
-                    if not (pay_v or vis_v or cart_v or col_v or ref_v or nb_v):
-                        continue
+    def _do_seed():
+        _seed_status.update({'running': True, 'done': False, 'error': None, 'products': 0, 'syzt': 0, 'wxst': 0, 'step': '读取JSON'})
+        try:
+            with open(seed_path, 'r', encoding='utf-8') as f:
+                seed = _json.load(f)
+            products  = seed.get('products', {})
+            wxst_rows = seed.get('wxst', [])
+            pid_daily = seed.get('pid_daily_spend', {})
+            cat_map   = seed.get('cat_map', {})
+            _seed_status['step'] = '连接DB'
+            with db() as conn:
+                cur = conn.cursor()
+                schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etl', 'schema.sql')
+                if os.path.exists(schema_path):
+                    _seed_status['step'] = '建表'
+                    with open(schema_path, 'r', encoding='utf-8') as f:
+                        cur.execute(f.read())
+                _seed_status['step'] = 'dim_product'
+                for pid, p in products.items():
+                    title  = p.get('name') or pid
+                    cat_l1 = p.get('cat') or cat_map.get(pid) or ''
                     cur.execute("""
-                        INSERT INTO fact_syzt_product(stat_date, product_id, visitors, cart_users,
-                            collect_users, pay_amount, refund_amount, pay_new_buyers, source_file)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'legacy_seed')
-                        ON CONFLICT(stat_date, product_id) DO UPDATE SET
-                            visitors=EXCLUDED.visitors, cart_users=EXCLUDED.cart_users,
-                            collect_users=EXCLUDED.collect_users, pay_amount=EXCLUDED.pay_amount,
-                            refund_amount=EXCLUDED.refund_amount, pay_new_buyers=EXCLUDED.pay_new_buyers
-                    """, (d, pid, vis_v, cart_v, col_v, pay_v, ref_v, nb_v))
-                    out["syzt"] += 1
+                        INSERT INTO dim_product(product_id,spu_id,title,category_l1,category_l2,inventory)
+                        VALUES(%s,%s,%s,%s,'',0)
+                        ON CONFLICT(product_id) DO UPDATE SET title=EXCLUDED.title,category_l1=EXCLUDED.category_l1
+                    """, (pid, pid, title, cat_l1))
+                    _seed_status['products'] += 1
+                _seed_status['step'] = 'fact_syzt_product'
+                for pid, p in products.items():
+                    dates = p.get('dates', [])
+                    pay = p.get('pay',[]); vis = p.get('vis',[]); cart = p.get('cart',[])
+                    collect = p.get('collect',[]); refund = p.get('refund',[]); nb = p.get('new_buyers',[])
+                    for i, d in enumerate(dates):
+                        pv = pay[i] if i<len(pay) else 0; vv = vis[i] if i<len(vis) else 0
+                        cv = cart[i] if i<len(cart) else 0; colv = collect[i] if i<len(collect) else 0
+                        rv = refund[i] if i<len(refund) else 0; nbv = nb[i] if i<len(nb) else 0
+                        if not (pv or vv or cv or colv or rv or nbv): continue
+                        cur.execute("""
+                            INSERT INTO fact_syzt_product(stat_date,product_id,visitors,cart_users,
+                                collect_users,pay_amount,refund_amount,pay_new_buyers,source_file)
+                            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'legacy_seed')
+                            ON CONFLICT(stat_date,product_id) DO UPDATE SET
+                                visitors=EXCLUDED.visitors,cart_users=EXCLUDED.cart_users,
+                                collect_users=EXCLUDED.collect_users,pay_amount=EXCLUDED.pay_amount,
+                                refund_amount=EXCLUDED.refund_amount,pay_new_buyers=EXCLUDED.pay_new_buyers
+                        """, (d, pid, vv, cv, colv, pv, rv, nbv))
+                        _seed_status['syzt'] += 1
+                _seed_status['step'] = 'fact_wxst_product'
+                for pid, daily_map in pid_daily.items():
+                    for d, vals in daily_map.items():
+                        spend = vals.get('spend',0); ctr = vals.get('ctr',0); roi = vals.get('roi',0)
+                        if not (spend or ctr or roi): continue
+                        cur.execute("""
+                            INSERT INTO fact_wxst_product(stat_date,product_id,spend,ctr,roi,impressions,source_file)
+                            VALUES(%s,%s,%s,%s,%s,0,'legacy_seed')
+                            ON CONFLICT(stat_date,product_id) DO UPDATE SET spend=EXCLUDED.spend,ctr=EXCLUDED.ctr,roi=EXCLUDED.roi
+                        """, (d, pid, spend, ctr, roi))
+                        _seed_status['wxst'] += 1
+                for r in wxst_rows:
+                    d = r.get('d'); pid = r.get('pid'); imps = r.get('imps') or 0
+                    if not (d and pid and imps): continue
+                    cur.execute("UPDATE fact_wxst_product SET impressions=%s WHERE stat_date=%s AND product_id=%s", (imps, d, pid))
+                conn.commit()
+            _invalidate_raw_cache()
+            _seed_status.update({'running': False, 'done': True, 'step': '完成'})
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            _seed_status.update({'running': False, 'done': False, 'error': str(e), 'step': '失败'})
 
-            # 4) fact_wxst_product (从 pid_daily_spend 还原)
-            for pid, daily_map in pid_daily.items():
-                for d, vals in daily_map.items():
-                    spend = vals.get('spend', 0)
-                    ctr = vals.get('ctr', 0)
-                    roi = vals.get('roi', 0)
-                    if not (spend or ctr or roi):
-                        continue
-                    # 用 ctr * 假设的 imps 反推；这里没有 imps，给个占位（前端用 spend 为主）
-                    # 也可以用 wxst_rows 里查 imps
-                    cur.execute("""
-                        INSERT INTO fact_wxst_product(stat_date, product_id, spend, ctr, roi, impressions, source_file)
-                        VALUES (%s,%s,%s,%s,%s,0,'legacy_seed')
-                        ON CONFLICT(stat_date, product_id) DO UPDATE SET
-                            spend=EXCLUDED.spend, ctr=EXCLUDED.ctr, roi=EXCLUDED.roi
-                    """, (d, pid, spend, ctr, roi))
-                    out["wxst"] += 1
+    t = threading.Thread(target=_do_seed, daemon=True)
+    t.start()
+    return {"ok": True, "started": True, "msg": "后台开始写入，访问 /api/seed-legacy/status 查看进度"}
 
-            # 5) 用 wxst_rows 补 impressions
-            for r in wxst_rows:
-                d = r.get('d'); pid = r.get('pid')
-                imps = r.get('imps') or 0
-                if not d or not pid or not imps:
-                    continue
-                cur.execute("""
-                    UPDATE fact_wxst_product SET impressions=%s
-                    WHERE stat_date=%s AND product_id=%s
-                """, (imps, d, pid))
 
-            conn.commit()
-        _invalidate_raw_cache()
-        return {"ok": True, **out}
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return {"ok": False, "error": str(e), "partial": out}
+_seed_status: dict = {}
+
+@app.get("/api/seed-legacy/status")
+def seed_legacy_status():
+    """查看 /api/seed-legacy 后台执行进度"""
+    return _seed_status if _seed_status else {"msg": "未启动，先访问 /api/seed-legacy"}
+
 
 
 # ══════════════════════════════════════════════════
