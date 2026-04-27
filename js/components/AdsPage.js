@@ -134,7 +134,7 @@ const AdsPage = defineComponent({
       }))
     })
 
-    const allTasks = computed(() => Object.entries(RAW.tasks_by_pid || {}).flatMap(([pid, list]) => {
+    const allTasks = computed(() => Object.entries(APP_STATE.value.tasksByPid || {}).flatMap(([pid, list]) => {
       const p = RAW.products?.[pid]
       let gmv = 0, spend = 0, collect = 0, vis = 0
       if (p) {
@@ -189,6 +189,28 @@ const AdsPage = defineComponent({
     const latestMeeting = computed(() => meetings.value[0] || null)
     const toggleChannel = key => { openChannel.value[key] = !openChannel.value[key] }
 
+    const taskModal = ref({ show:false, pid:'', id:'', detail:'', owner:'', category:'', status:'待开始', note:'' })
+    const openEditTask = (item, task) => {
+      Object.assign(taskModal.value, { show:true, pid:item.pid, id:task.id, detail:task.detail, owner:task.owner, category:task.category, status:task.status||'待开始', note:task.note||'' })
+    }
+    const saveTaskModal = () => {
+      const { pid, id, detail, owner, category, status, note } = taskModal.value
+      const list = APP_STATE.value.tasksByPid[pid]
+      if (!list) return (taskModal.value.show = false)
+      const t = list.find(x => x.id === id)
+      if (t) {
+        t.detail = detail; t.owner = owner; t.category = category; t.status = status
+        if (!t.period_notes) t.period_notes = {}
+        t.period_notes[activePeriod.value] = note
+      }
+      persistAppState(); taskModal.value.show = false
+    }
+    const updateTaskStatus = (pid, taskId, newStatus) => {
+      const list = APP_STATE.value.tasksByPid[pid]
+      const t = list?.find(x => x.id === taskId)
+      if (t) { t.status = newStatus; persistAppState() }
+    }
+
     const channelCatData = computed(() => computeChannelCatTable(periodStart.value, periodEnd.value))
 
     const adsCtr = computed(() => {
@@ -218,6 +240,7 @@ const AdsPage = defineComponent({
       channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod, teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,
       channelCatData,
+      taskModal, openEditTask, saveTaskModal, updateTaskStatus,
     }
   },
   template: `
@@ -503,16 +526,20 @@ const AdsPage = defineComponent({
                   <span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.owner">{{ task.owner || '—' }}</span>
                 </div>
                 <!-- 任务状态 -->
-                <div style="padding:9px 10px;display:flex;align-items:center;border-right:1px solid var(--border)">
-                  <span :style="{fontSize:'11px',fontWeight:'600',display:'flex',alignItems:'center',gap:'4px',color:statusColor(task.status),whiteSpace:'nowrap'}">
-                    <span :style="{width:'7px',height:'7px',borderRadius:'50%',background:statusColor(task.status),display:'inline-block',flexShrink:'0'}"></span>
-                    {{ task.status||'—' }}
-                  </span>
+                <div style="padding:6px 8px;display:flex;align-items:center;border-right:1px solid var(--border)">
+                  <select :value="task.status" @change="updateTaskStatus(item.pid, task.id, $event.target.value)"
+                    style="width:100%;border:1px solid var(--border);border-radius:6px;padding:3px 4px;font-size:11px;background:#fff;cursor:pointer"
+                    :style="{color:statusColor(task.status),fontWeight:'600'}">
+                    <option v-for="s in statusOptions" :key="s" :value="s" :style="{color:statusColor(s)}">{{ s||'—' }}</option>
+                  </select>
                 </div>
                 <!-- 任务记录/备注 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;overflow:hidden">
-                  <div v-if="task.note" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.note">{{ task.note }}</div>
-                  <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">暂无记录</div>
+                <div style="padding:9px 12px;display:flex;align-items:center;gap:8px;overflow:hidden">
+                  <div style="flex:1;min-width:0;overflow:hidden">
+                    <div v-if="task.note" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.note">{{ task.note }}</div>
+                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">暂无记录</div>
+                  </div>
+                  <button @click="openEditTask(item, task)" style="flex-shrink:0;border:1px solid var(--border);background:#fff;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--muted);white-space:nowrap">编辑</button>
                 </div>
               </div>
             </div>
@@ -522,6 +549,7 @@ const AdsPage = defineComponent({
       </div>
 
       <!-- 会议要点 -->
+
       <div class="card" style="padding:16px">
         <div class="card-header" style="margin-bottom:12px"><span class="card-title">会议要点</span><span class="card-sub">{{ meetings.length }} 条</span></div>
         <div style="display:flex;flex-direction:column;gap:10px">
@@ -537,6 +565,37 @@ const AdsPage = defineComponent({
     </div>
   </template>
   </template>
+
+  <!-- 任务编辑 Modal -->
+  <div v-if="taskModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="taskModal.show=false">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:420px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+      <div style="font-size:15px;font-weight:700;margin-bottom:16px">编辑任务</div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务名称</div>
+        <input v-model="taskModal.detail" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">负责人</div>
+          <input v-model="taskModal.owner" placeholder="负责人姓名" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务状态</div>
+          <select v-model="taskModal.status" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+            <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:20px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务备注（{{ activePeriod }}）</div>
+        <textarea v-model="taskModal.note" rows="3" placeholder="本周期进展记录" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;resize:vertical;box-sizing:border-box"></textarea>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button @click="saveTaskModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
+        <button @click="taskModal.show=false" style="flex:1;background:#f4f4f5;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer">取消</button>
+      </div>
+    </div>
+  </div>
 </div>`
 })
 
