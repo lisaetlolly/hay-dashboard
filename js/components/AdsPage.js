@@ -157,44 +157,65 @@ const AdsPage = defineComponent({
       newPeriodInput.value = ''
     }
 
+    const saveGuanghe = (pid, value) => {
+      const num = parseFloat(String(value).replace(/,/g,'')) || 0
+      if (!APP_STATE.value.guangheTraffic) APP_STATE.value.guangheTraffic = {}
+      if (!APP_STATE.value.guangheTraffic[pid]) APP_STATE.value.guangheTraffic[pid] = {}
+      APP_STATE.value.guangheTraffic[pid][activePeriod.value] = num
+      persistAppState()
+    }
+
     const allTasks = computed(() => {
       const s = periodStart.value, e = periodEnd.value
-      // 上一周期（等长，紧接在当前周期之前）用于环比
+      const period = activePeriod.value
+      // 上一等长周期（紧接在当前之前）用于环比
       const days = Math.round((new Date(e) - new Date(s)) / 86400000) + 1
       const pe = new Date(s); pe.setDate(pe.getDate() - 1)
       const ps = new Date(pe); ps.setDate(ps.getDate() - days + 1)
       const prevS = ps.toISOString().slice(0,10), prevE = pe.toISOString().slice(0,10)
+      // 近 7 天笔记窗口（以 e 为终点）
+      const noteStartD = new Date(e); noteStartD.setDate(noteStartD.getDate() - 6)
+      const noteS = noteStartD.toISOString().slice(0,10)
+      const prevNoteE = new Date(noteS); prevNoteE.setDate(prevNoteE.getDate() - 1)
+      const prevNoteS = new Date(prevNoteE); prevNoteS.setDate(prevNoteS.getDate() - 6)
+      const pNoteS = prevNoteS.toISOString().slice(0,10), pNoteE = prevNoteE.toISOString().slice(0,10)
 
       return Object.entries(APP_STATE.value.tasksByPid || {}).flatMap(([pid, list]) => {
         const p = RAW.products?.[pid]
-        let gmv=0, spend=0, cart=0, vis=0, ctrSum=0, ctrN=0
-        let pgmv=0, pcart=0
-        const xhsNotes = (RAW.xhs_notes || []).filter(n => n.pid===pid && n.date>=s && n.date<=e).length
+        let gmv=0, spend=0, cart=0, ctrSum=0, ctrN=0
+        let pgmv=0, pspend=0, pcart=0, pctrSum=0, pctrN=0
+        // 近 7 天 XHS 笔记
+        const xhsNotes  = (RAW.xhs_notes||[]).filter(n=>n.pid===pid&&n.date>=noteS&&n.date<=e).length
+        const pXhsNotes = (RAW.xhs_notes||[]).filter(n=>n.pid===pid&&n.date>=pNoteS&&n.date<=pNoteE).length
+        // 光合渠道流量（人工录入）
+        const guanghe = (APP_STATE.value.guangheTraffic||{})[pid]?.[period] ?? null
         if (p) {
           for (let i=0; i<p.dates.length; i++) {
             const d = p.dates[i]
             if (d >= s && d <= e) {
-              gmv   += p.pay?.[i]   || 0
-              spend += p.spend?.[i] || 0
+              gmv   += p.pay?.[i]   || 0; spend += p.spend?.[i] || 0
               cart  += p.cart?.[i]  || 0
-              vis   += p.vis?.[i]   || 0
-              if ((p.ctr?.[i]||0) > 0) { ctrSum += p.ctr[i]*100; ctrN++ }
+              if ((p.ctr?.[i]||0)>0) { ctrSum+=p.ctr[i]*100; ctrN++ }
             }
             if (d >= prevS && d <= prevE) {
-              pgmv  += p.pay?.[i]  || 0
-              pcart += p.cart?.[i] || 0
+              pgmv   += p.pay?.[i]   || 0; pspend += p.spend?.[i] || 0
+              pcart  += p.cart?.[i]  || 0
+              if ((p.ctr?.[i]||0)>0) { pctrSum+=p.ctr[i]*100; pctrN++ }
             }
           }
         }
         const pct = (a, b) => b > 0 ? +((a-b)/b*100).toFixed(1) : null
+        const ctr  = ctrN  > 0 ? +(ctrSum /ctrN ).toFixed(2) : null
+        const pctr = pctrN > 0 ? +(pctrSum/pctrN).toFixed(2) : null
         return (list||[]).map(t => ({ ...t, pid, image: imgSrc(pid),
           metrics: {
-            gmv: +gmv.toFixed(2), gmv_chg: pct(gmv, pgmv),
-            spend: +spend.toFixed(2),
-            cart: Math.round(cart), cart_chg: pct(cart, pcart),
-            ctr: ctrN > 0 ? +(ctrSum/ctrN).toFixed(2) : null,
-            roi: spend > 0 ? +(gmv/spend).toFixed(2) : null,
-            xhs_notes: xhsNotes,
+            gmv:   +gmv.toFixed(2),   gmv_chg:   pct(gmv,  pgmv),
+            spend: +spend.toFixed(2), spend_chg: pct(spend, pspend),
+            cart:  Math.round(cart),  cart_chg:  pct(cart,  pcart),
+            ctr,  ctr_chg: (ctr!=null&&pctr!=null) ? pct(ctr, pctr) : null,
+            roi:  spend>0 ? +(gmv/spend).toFixed(2) : null,
+            xhs_notes: xhsNotes, xhs_notes_chg: pct(xhsNotes, pXhsNotes),
+            guanghe,
           }
         }))
       })
@@ -285,6 +306,12 @@ const AdsPage = defineComponent({
       const t = list?.find(x => x.id === taskId)
       if (t) { t.status = newStatus; persistAppState() }
     }
+    const updateTaskOwner = (pid, taskId, newOwner, task) => {
+      if (!canEditTask(task || {})) return
+      const list = APP_STATE.value.tasksByPid[pid]
+      const t = list?.find(x => x.id === taskId)
+      if (t) { t.owner = newOwner; persistAppState() }
+    }
     const saveInlineNote = (pid, taskId, value) => {
       const list = APP_STATE.value.tasksByPid?.[pid]
       const t = list?.find(x => x.id === taskId)
@@ -327,7 +354,7 @@ const AdsPage = defineComponent({
       teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,
       channelCatData,
-      taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, saveInlineNote, userOptions,
+      taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, updateTaskOwner, saveInlineNote, saveGuanghe, userOptions,
     }
   },
   template: `
@@ -574,41 +601,34 @@ const AdsPage = defineComponent({
                   </button>
                 </div>
                 <div>
-                  <div style="font-size:10px;color:var(--muted);margin-bottom:8px">数据统计：{{ periodLabel }}</div>
-                  <!-- 第一行 -->
-                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:8px">
-                    <div>
-                      <div style="font-size:10px;color:var(--muted)">销售金额</div>
-                      <div style="font-size:15px;font-weight:700">{{ fmtMoney(item.metrics.gmv) }}</div>
-                      <div :style="{fontSize:'10px',color:item.metrics.gmv_chg==null?'var(--muted)':item.metrics.gmv_chg>=0?'#16a34a':'#dc2626'}">
-                        {{ item.metrics.gmv_chg == null ? '—' : (item.metrics.gmv_chg > 0 ? '↑' : '↓') + Math.abs(item.metrics.gmv_chg) + '%' }}
+                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计：{{ periodLabel }}</div>
+                  <div style="display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                    <template v-for="(m,mi) in [
+                      {label:'本月销售金额', val:fmtMoney(item.metrics.gmv), chg:item.metrics.gmv_chg},
+                      {label:'本月CTR',      val:item.metrics.ctr!=null?item.metrics.ctr+\`%\`:\`—\`, chg:item.metrics.ctr_chg},
+                      {label:'本月花费',     val:fmtMoney(item.metrics.spend), chg:item.metrics.spend_chg},
+                      {label:'本月加购量',   val:item.metrics.cart, chg:item.metrics.cart_chg},
+                      {label:'本月发布笔记量 (近7天)', val:item.metrics.xhs_notes, chg:item.metrics.xhs_notes_chg},
+                    ]" :key="mi">
+                      <div :style="{padding:'8px 12px',background:'#fafaf9',borderRight:'1px solid var(--border)',borderBottom:'1px solid var(--border)'}">
+                        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">{{ m.label }}</div>
+                        <div style="font-size:15px;font-weight:700">{{ m.val }}</div>
+                        <div style="font-size:10px;margin-top:2px">
+                          <span style="color:var(--muted)">月环比 </span>
+                          <span :style="{fontWeight:'600',color:m.chg==null?'var(--muted)':m.chg>=0?'#16a34a':'#dc2626'}">
+                            {{ m.chg==null ? '—' : (m.chg>0?'↑':'↓')+Math.abs(m.chg)+'%' }}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <div style="font-size:10px;color:var(--muted)">推广 CTR</div>
-                      <div style="font-size:15px;font-weight:700">{{ item.metrics.ctr != null ? item.metrics.ctr + '%' : '—' }}</div>
-                    </div>
-                    <div>
-                      <div style="font-size:10px;color:var(--muted)">投放花费</div>
-                      <div style="font-size:15px;font-weight:700">{{ fmtMoney(item.metrics.spend) }}</div>
-                    </div>
-                  </div>
-                  <!-- 第二行 -->
-                  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-                    <div>
-                      <div style="font-size:10px;color:var(--muted)">加购量</div>
-                      <div style="font-size:15px;font-weight:700">{{ item.metrics.cart }}</div>
-                      <div :style="{fontSize:'10px',color:item.metrics.cart_chg==null?'var(--muted)':item.metrics.cart_chg>=0?'#16a34a':'#dc2626'}">
-                        {{ item.metrics.cart_chg == null ? '—' : (item.metrics.cart_chg > 0 ? '↑' : '↓') + Math.abs(item.metrics.cart_chg) + '%' }}
-                      </div>
-                    </div>
-                    <div>
-                      <div style="font-size:10px;color:var(--muted)">笔记量</div>
-                      <div style="font-size:15px;font-weight:700">{{ item.metrics.xhs_notes }}</div>
-                    </div>
-                    <div>
-                      <div style="font-size:10px;color:var(--muted)">ROI</div>
-                      <div style="font-size:15px;font-weight:700">{{ item.metrics.roi != null ? item.metrics.roi : '—' }}</div>
+                    </template>
+                    <!-- 光合渠道流量（可内联录入） -->
+                    <div style="padding:8px 12px;background:#fafaf9;border-bottom:1px solid var(--border)">
+                      <div style="font-size:10px;color:var(--muted);margin-bottom:3px">本月光合渠道流量</div>
+                      <input :value="item.metrics.guanghe ?? ''"
+                        type="text" placeholder="点击录入"
+                        @blur="saveGuanghe(item.pid, $event.target.value)"
+                        style="width:100%;border:none;outline:none;background:transparent;font-size:15px;font-weight:700;color:var(--text);padding:0;cursor:text">
+                      <div style="font-size:10px;margin-top:2px;color:var(--muted)">月环比 —</div>
                     </div>
                   </div>
                 </div>
@@ -640,9 +660,15 @@ const AdsPage = defineComponent({
                   <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     :style="{color:canEditTask(task)?'var(--accent)':'var(--text)'}">{{ task.detail }}</div>
                 </div>
-                <!-- 负责人 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
-                  <span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.owner">{{ task.owner || '—' }}</span>
+                <!-- 负责人（可直接下拉选择） -->
+                <div style="padding:6px 8px;display:flex;align-items:center;border-right:1px solid var(--border)">
+                  <select :value="task.owner" @change="updateTaskOwner(item.pid, task.id, $event.target.value, task)"
+                    :disabled="!canEditTask(task)"
+                    style="width:100%;border:1px solid var(--border);border-radius:6px;padding:3px 4px;font-size:11px;background:#fff"
+                    :style="{cursor:canEditTask(task)?'pointer':'default',color:'var(--text)'}">
+                    <option value="">— 未分配 —</option>
+                    <option v-for="u in userOptions" :key="u.id" :value="u.display_name">{{ u.display_name }}</option>
+                  </select>
                 </div>
                 <!-- 任务状态 -->
                 <div style="padding:6px 8px;display:flex;align-items:center;border-right:1px solid var(--border)">

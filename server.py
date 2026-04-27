@@ -1509,6 +1509,18 @@ def update_plan_category(body: PlanCategoryUpdate):
 
 @app.get("/api/health")
 def health():
+    import re as _re
+    # 直接从 dashboard.html RAW 块读取最新时间（ETL 写这里，不写数据库）
+    raw_loaded_at = None
+    raw_data_end  = None
+    try:
+        _html = open(os.path.join(DASHBOARD_DIR, "dashboard.html"), encoding="utf-8").read()
+        _m = _re.search(r'"loaded_at"\s*:\s*"([^"]+)"', _html)
+        if _m: raw_loaded_at = _m.group(1)
+        _m2 = _re.search(r'"data_end"\s*:\s*"([^"]+)"', _html)
+        if _m2: raw_data_end = _m2.group(1)
+    except Exception:
+        pass
     try:
         with db() as conn:
             counts = {
@@ -1518,21 +1530,17 @@ def health():
                 "tasks": row(conn, "SELECT COUNT(*) as n FROM tasks")["n"],
             }
             latest = row(conn, "SELECT MAX(stat_date) as d FROM fact_wxst_product")
-            loaded = row(conn, """
-                SELECT TO_CHAR(MAX(loaded_at) AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:MI') AS t
-                FROM fact_syzt_product
-            """)
         return {
             "status": "ok",
-            "latest_date": latest["d"],
-            "loaded_at": loaded["t"] if loaded else None,
+            "latest_date": raw_data_end or (latest["d"] if latest else None),
+            "loaded_at": raw_loaded_at,
             "counts": counts,
         }
     except Exception:
         return {
             "status": "offline",
-            "latest_date": "2026-04-21",
-            "loaded_at": "04-21 21:57",
+            "latest_date": raw_data_end,
+            "loaded_at": raw_loaded_at,
             "counts": {},
         }
 

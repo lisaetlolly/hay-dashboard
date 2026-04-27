@@ -65,8 +65,37 @@ function createInitialAppState() {
     imageOverrides: {},
     manualDailyData: {},
     selectedTaskPeriod: '',
+    guangheTraffic: {},
   }
 }
+// 旧数据迁移：统一周期格式 + 修正用户名
+const PERIOD_RENAMES = {
+  '3月23日～3月29日':'3.23-29','3月30日～4月5日':'3.30-4.5',
+  '4月6日～4月12日':'4.6-12','4月13日～4月19日':'4.13-19',
+  '4月20日～4月22日':'4.20-22','4月20日～22日':'4.20-22',
+}
+function migrateState(state) {
+  if (!state) return state
+  // 迁移 customPeriods
+  if (state.customPeriods)
+    state.customPeriods = state.customPeriods.map(p => PERIOD_RENAMES[p] || p)
+  // 迁移 tasksByPid
+  if (state.tasksByPid) {
+    for (const tasks of Object.values(state.tasksByPid)) {
+      for (const t of tasks) {
+        if (t.owner === 'Jas（内容）') t.owner = 'Jas team（内容）'
+        if (t.period_notes) {
+          const n = {}
+          for (const [k, v] of Object.entries(t.period_notes))
+            n[PERIOD_RENAMES[k] || k] = v
+          t.period_notes = n
+        }
+      }
+    }
+  }
+  return state
+}
+
 // APP_STATE 初始化在 dashboard.html 内联脚本中（需要 RAW 和 ref 均已就绪后执行）
 // let APP_STATE  ← 由内联脚本声明：const APP_STATE = Vue.ref(createInitialAppState())
 function loadAppState() {
@@ -75,7 +104,7 @@ function loadAppState() {
   const initial = createInitialAppState()
   APP_STATE.value = {
     ...initial,
-    ...saved,
+    ...migrateState(saved),
     permissionGroups: initial.permissionGroups,
   }
 }
@@ -90,7 +119,7 @@ async function syncStateFromServer() {
     if (_lastServerStateAt === updated_at) return
     _lastServerStateAt = updated_at
     const initial = createInitialAppState()
-    APP_STATE.value = { ...initial, ...state, permissionGroups: initial.permissionGroups }
+    APP_STATE.value = { ...initial, ...migrateState(state), permissionGroups: initial.permissionGroups }
     writeStore(APP_STORAGE_KEY, APP_STATE.value)
   } catch {}
 }
