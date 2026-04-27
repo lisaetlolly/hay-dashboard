@@ -405,7 +405,7 @@ const AdsPage = defineComponent({
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
       <div>
         <div style="font-size:16px;font-weight:700;margin-bottom:4px">投放面板</div>
-        <div style="font-size:11px;color:var(--muted)">{{ periodLabel }}</div>
+        <div style="font-size:11px;color:var(--muted)">{{ activeTab==='team' ? (activePeriod || taskPeriodDates.label) : periodLabel }}</div>
       </div>
       <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fafaf9">
         <button @click="activeTab='delivery'" :style="{padding:'6px 14px',fontSize:'12px',border:'none',cursor:'pointer',background:activeTab==='delivery'?'var(--accent)':'transparent',color:activeTab==='delivery'?'#fff':'var(--muted)'}">投放</button>
