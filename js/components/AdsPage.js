@@ -152,11 +152,36 @@ const AdsPage = defineComponent({
       }))
     }))
 
-    const taskPeriods = computed(() => RAW.task_periods || [])
+    const taskPeriods = computed(() => {
+      const raw = RAW.task_periods || []
+      const custom = APP_STATE.value.customPeriods || []
+      return [...new Set([...raw, ...custom])].sort()
+    })
     const selectedPeriod = ref('')
     const activePeriod = computed(() =>
       selectedPeriod.value || taskPeriods.value[taskPeriods.value.length-1] || ''
     )
+    const newPeriodInput = ref('')
+    const addPeriod = () => {
+      const p = newPeriodInput.value.trim()
+      if (!p) return
+      const existing = taskPeriods.value
+      if (!existing.includes(p)) {
+        APP_STATE.value.customPeriods = [...(APP_STATE.value.customPeriods || []), p]
+        persistAppState()
+      }
+      selectedPeriod.value = p
+      newPeriodInput.value = ''
+    }
+
+    const currentUser = computed(() => currentUserObj())
+    const canEditTask = (task) => {
+      const u = currentUser.value
+      if (!u) return false
+      if (u.role === 'admin' || (u.permissions || []).includes('*')) return true
+      return task.owner === u.display_name
+    }
+
     const teamFilters = ref({ owner:'', category:'', productKeyword:'', status:'' })
     const ownerOptions = computed(() => [...new Set(allTasks.value.map(t => t.owner).filter(Boolean))])
     const categoryOptions = computed(() => [...new Set(allTasks.value.map(t => RAW.products?.[t.pid]?.cat).filter(Boolean))])
@@ -191,6 +216,7 @@ const AdsPage = defineComponent({
 
     const taskModal = ref({ show:false, pid:'', id:'', detail:'', owner:'', category:'', status:'待开始', note:'' })
     const openEditTask = (item, task) => {
+      if (!canEditTask(task)) return
       Object.assign(taskModal.value, { show:true, pid:item.pid, id:task.id, detail:task.detail, owner:task.owner, category:task.category, status:task.status||'待开始', note:task.note||'' })
     }
     const saveTaskModal = () => {
@@ -205,11 +231,13 @@ const AdsPage = defineComponent({
       }
       persistAppState(); taskModal.value.show = false
     }
-    const updateTaskStatus = (pid, taskId, newStatus) => {
+    const updateTaskStatus = (pid, taskId, newStatus, task) => {
+      if (!canEditTask(task || {})) return
       const list = APP_STATE.value.tasksByPid[pid]
       const t = list?.find(x => x.id === taskId)
       if (t) { t.status = newStatus; persistAppState() }
     }
+    const userOptions = computed(() => APP_STATE.value.users || [])
 
     const channelCatData = computed(() => computeChannelCatTable(periodStart.value, periodEnd.value))
 
@@ -237,10 +265,12 @@ const AdsPage = defineComponent({
     return {
       activeTab, openChannel, periodLabel, audienceSpend, keywordSpend, videoSpend, videoGmv,
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
-      channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod, teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
+      channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod,
+      newPeriodInput, addPeriod, canEditTask,
+      teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,
       channelCatData,
-      taskModal, openEditTask, saveTaskModal, updateTaskStatus,
+      taskModal, openEditTask, saveTaskModal, updateTaskStatus, userOptions,
     }
   },
   template: `
@@ -426,12 +456,16 @@ const AdsPage = defineComponent({
       <div class="card" style="padding:14px 16px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <div style="font-size:13px;font-weight:700;color:var(--text);margin-right:4px">任务周期</div>
-          <div style="display:flex;align-items:center;gap:6px">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod }}</span>
             <select v-if="taskPeriods.length>1" v-model="selectedPeriod"
               style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;cursor:pointer;color:var(--muted)">
               <option v-for="p in taskPeriods" :key="p" :value="p">{{ p }}</option>
             </select>
+            <input v-model="newPeriodInput" placeholder="新时间段名称" @keydown.enter="addPeriod"
+              style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;width:120px;background:#fff">
+            <button @click="addPeriod"
+              style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer">+ 新增</button>
           </div>
           <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
             <select v-model="teamFilters.owner" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
@@ -527,19 +561,25 @@ const AdsPage = defineComponent({
                 </div>
                 <!-- 任务状态 -->
                 <div style="padding:6px 8px;display:flex;align-items:center;border-right:1px solid var(--border)">
-                  <select :value="task.status" @change="updateTaskStatus(item.pid, task.id, $event.target.value)"
-                    style="width:100%;border:1px solid var(--border);border-radius:6px;padding:3px 4px;font-size:11px;background:#fff;cursor:pointer"
-                    :style="{color:statusColor(task.status),fontWeight:'600'}">
+                  <select :value="task.status" @change="updateTaskStatus(item.pid, task.id, $event.target.value, task)"
+                    :disabled="!canEditTask(task)"
+                    style="width:100%;border:1px solid var(--border);border-radius:6px;padding:3px 4px;font-size:11px;background:#fff"
+                    :style="{color:statusColor(task.status),fontWeight:'600',cursor:canEditTask(task)?'pointer':'default'}">
                     <option v-for="s in statusOptions" :key="s" :value="s" :style="{color:statusColor(s)}">{{ s||'—' }}</option>
                   </select>
                 </div>
-                <!-- 任务记录/备注 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;gap:8px;overflow:hidden">
+                <!-- 任务记录/备注（点击可编辑） -->
+                <div @click="openEditTask(item, task)"
+                  :style="{padding:'9px 12px',display:'flex',alignItems:'center',overflow:'hidden',
+                    cursor:canEditTask(task)?'pointer':'default',
+                    background:canEditTask(task)?'transparent':'inherit'}"
+                  :title="canEditTask(task)?'点击编辑':''">
                   <div style="flex:1;min-width:0;overflow:hidden">
-                    <div v-if="task.note" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.note">{{ task.note }}</div>
-                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">暂无记录</div>
+                    <div v-if="task.note" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.note }}</div>
+                    <div v-else style="font-size:11px;font-style:italic"
+                      :style="{color:canEditTask(task)?'var(--accent)':'#d1d5db'}">
+                      {{ canEditTask(task) ? '点击添加记录…' : '暂无记录' }}</div>
                   </div>
-                  <button @click="openEditTask(item, task)" style="flex-shrink:0;border:1px solid var(--border);background:#fff;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;color:var(--muted);white-space:nowrap">编辑</button>
                 </div>
               </div>
             </div>
@@ -577,7 +617,10 @@ const AdsPage = defineComponent({
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
         <div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">负责人</div>
-          <input v-model="taskModal.owner" placeholder="负责人姓名" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+          <select v-model="taskModal.owner" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff;box-sizing:border-box">
+            <option value="">— 请选择 —</option>
+            <option v-for="u in userOptions" :key="u.id" :value="u.display_name">{{ u.display_name }}</option>
+          </select>
         </div>
         <div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务状态</div>
