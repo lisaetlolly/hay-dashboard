@@ -8,8 +8,13 @@ const AIPage = defineComponent({
     const setupError = ref('')
     try {
 
-    const STORAGE_KEY = 'hay_ai_settings_v1'
+    // ── AI 配置（已搬到设置页 → "AI 模型预设"）────────────────
+    // 支持多个预设，AIPage 这边只读"当前激活"的那个
+    const PRESETS_KEY  = 'hay_ai_presets_v2'
+    const LEGACY_KEY   = 'hay_ai_settings_v1'  // 旧单配置 key，做一次性迁移
     const defaultConfig = {
+      id: 'preset_default',
+      name: '默认',
       provider: 'openai-compatible',
       model: 'gpt-4.1-mini',
       apiBase: 'https://api.openai.com/v1',
@@ -22,13 +27,35 @@ const AIPage = defineComponent({
 
     const loadConfig = () => {
       try {
-        const raw = localStorage.getItem(STORAGE_KEY)
-        if (!raw) return
-        aiConfig.value = { ...defaultConfig, ...JSON.parse(raw) }
+        const presetsRaw = localStorage.getItem(PRESETS_KEY)
+        if (presetsRaw) {
+          const data = JSON.parse(presetsRaw)
+          const active = (data.presets || []).find(p => p.id === data.activeId)
+                      || (data.presets || [])[0]
+          if (active) aiConfig.value = { ...defaultConfig, ...active }
+          return
+        }
+        // 一次性迁移：旧 single-config → 新 preset 结构
+        const legacy = localStorage.getItem(LEGACY_KEY)
+        if (legacy) {
+          const cfg = { ...defaultConfig, ...JSON.parse(legacy), id: 'preset_default', name: '默认' }
+          aiConfig.value = cfg
+          localStorage.setItem(PRESETS_KEY, JSON.stringify({
+            activeId: 'preset_default', presets: [cfg]
+          }))
+        }
       } catch (e) {}
     }
     const saveConfig = () => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(aiConfig.value))
+      // 把当前 config 当作 active preset 保存（兼容老 UI）
+      const presetsRaw = localStorage.getItem(PRESETS_KEY)
+      let data = { activeId: aiConfig.value.id || 'preset_default', presets: [] }
+      try { if (presetsRaw) data = JSON.parse(presetsRaw) } catch {}
+      const idx = (data.presets || []).findIndex(p => p.id === aiConfig.value.id)
+      if (idx >= 0) data.presets[idx] = aiConfig.value
+      else (data.presets = data.presets || []).push(aiConfig.value)
+      data.activeId = aiConfig.value.id
+      localStorage.setItem(PRESETS_KEY, JSON.stringify(data))
       configSavedAt.value = new Date().toLocaleString()
     }
     const resetConfig = () => {
@@ -36,6 +63,10 @@ const AIPage = defineComponent({
       saveConfig()
     }
     onMounted(loadConfig)
+    // 监听设置页保存时触发的 storage 事件，自动切换激活预设
+    window.addEventListener('storage', (e) => {
+      if (e.key === PRESETS_KEY) loadConfig()
+    })
 
     // ── 数据摘要卡片（本地计算，无需 API Key）──────────────────
     const insights = computed(() => {

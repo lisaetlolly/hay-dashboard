@@ -316,6 +316,87 @@ const AdsPage = defineComponent({
       return out
     })
 
+    // ── 任务评论 / 反馈 ─────────────────────────────────────
+    const expandedTaskId = ref(null)
+    const taskComments = ref({})    // { task_id: [comments...] }
+    const commentDraft = ref({})    // { task_id: { text, image, sending } }
+    const previewImage = ref('')    // 点击放大显示
+
+    const toggleTaskExpand = async (taskId) => {
+      if (expandedTaskId.value === taskId) {
+        expandedTaskId.value = null
+        return
+      }
+      expandedTaskId.value = taskId
+      if (!taskComments.value[taskId]) {
+        try {
+          const res = await fetch(`/api/tasks/${taskId}/comments`)
+          if (res.ok) taskComments.value[taskId] = await res.json()
+        } catch { taskComments.value[taskId] = [] }
+      }
+      if (!commentDraft.value[taskId]) {
+        commentDraft.value[taskId] = { text: '', image: '', sending: false }
+      }
+    }
+
+    const onCommentImagePick = (taskId, event) => {
+      const file = event.target.files?.[0]
+      if (!file) return
+      if (file.size > 1000000) { alert('图片过大（>1MB），请先压缩'); return }
+      const reader = new FileReader()
+      reader.onload = e => {
+        commentDraft.value[taskId] = { ...commentDraft.value[taskId], image: e.target.result }
+      }
+      reader.readAsDataURL(file)
+    }
+
+    const sendComment = async (taskId) => {
+      const draft = commentDraft.value[taskId] || {}
+      if (!draft.text?.trim() && !draft.image) return
+      commentDraft.value[taskId] = { ...draft, sending: true }
+      try {
+        const res = await fetch(`/api/tasks/${taskId}/comments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: draft.text, image_data: draft.image })
+        })
+        if (res.ok) {
+          const c = await res.json()
+          taskComments.value[taskId] = [...(taskComments.value[taskId]||[]), c]
+          commentDraft.value[taskId] = { text: '', image: '', sending: false }
+        } else {
+          const err = await res.json().catch(()=>({detail:'网络错误'}))
+          alert('发送失败：' + (err.detail || res.status))
+          commentDraft.value[taskId] = { ...draft, sending: false }
+        }
+      } catch (e) {
+        alert('发送失败：' + e.message)
+        commentDraft.value[taskId] = { ...draft, sending: false }
+      }
+    }
+
+    const deleteComment = async (taskId, commentId) => {
+      if (!confirm('确认删除评论？')) return
+      try {
+        const res = await fetch(`/api/comments/${commentId}`, { method: 'DELETE' })
+        if (res.ok) {
+          taskComments.value[taskId] = (taskComments.value[taskId]||[]).filter(c => c.id !== commentId)
+        } else {
+          alert('删除失败（可能不是你的评论）')
+        }
+      } catch (e) { alert('删除失败：' + e.message) }
+    }
+
+    const fmtCommentTime = ts => {
+      if (!ts) return ''
+      try {
+        const d = new Date(ts)
+        const m = d.getMonth()+1, day = d.getDate()
+        const hh = String(d.getHours()).padStart(2,'0'), mm = String(d.getMinutes()).padStart(2,'0')
+        return `${m}-${day} ${hh}:${mm}`
+      } catch { return String(ts) }
+    }
+
     // 指标定义（卡片上展示的 10 个 KPI）
     const taskMetricDefs = [
       { k:'gmv',            l:'销售金额',  fmt:'money' },
@@ -385,10 +466,18 @@ const AdsPage = defineComponent({
       // 任务面板新指标
       taskMetricDefs, fmtMetric, fmtDiffPct, diffCls,
       activePeriodRange, prevPeriodLabel, prevPeriodRange,
+      // 任务评论
+      expandedTaskId, taskComments, commentDraft, previewImage,
+      toggleTaskExpand, onCommentImagePick, sendComment, deleteComment, fmtCommentTime,
     }
   },
   template: `
 <div style="display:flex;flex-direction:column;gap:16px">
+  <!-- 图片放大预览（fixed 全屏） -->
+  <div v-if="previewImage" @click="previewImage=''"
+    style="position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;align-items:center;justify-content:center;cursor:zoom-out">
+    <img :src="previewImage" style="max-width:90vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5)">
+  </div>
   <div class="card" style="padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
       <div>
@@ -652,10 +741,12 @@ const AdsPage = defineComponent({
             </div>
             <!-- 任务行列表 -->
             <div style="display:flex;flex-direction:column">
-              <div v-for="(task, ti) in item.tasks" :key="task.id"
-                :style="{display:'grid',gridTemplateColumns:'100px 1fr 110px 90px 1fr',gap:'0',alignItems:'stretch',
+              <template v-for="(task, ti) in item.tasks" :key="task.id">
+              <div
+                :style="{display:'grid',gridTemplateColumns:'100px 1fr 110px 90px 1fr',gap:'0',alignItems:'stretch',cursor:'pointer',
                   borderBottom: ti < item.tasks.length-1 ? '1px solid var(--border)' : 'none',
-                  background: ti%2===0 ? '#fff' : '#fafaf9'}">
+                  background: expandedTaskId === task.id ? '#fff7ed' : (ti%2===0 ? '#fff' : '#fafaf9')}"
+                @click="toggleTaskExpand(task.id)">
                 <!-- 任务标签 -->
                 <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border)">
                   <span style="font-size:11px;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:99px;background:#fff;white-space:nowrap">{{ task.category || '—' }}</span>
@@ -675,12 +766,65 @@ const AdsPage = defineComponent({
                     {{ task.status||'—' }}
                   </span>
                 </div>
-                <!-- 任务记录/备注 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;overflow:hidden">
-                  <div v-if="task.note" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.note">{{ task.note }}</div>
-                  <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">暂无记录</div>
+                <!-- 任务记录/反馈摘要 -->
+                <div style="padding:9px 12px;display:flex;align-items:center;justify-content:space-between;overflow:hidden;gap:8px">
+                  <div style="flex:1;overflow:hidden">
+                    <div v-if="task.note" style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.note">{{ task.note }}</div>
+                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">点击添加记录/反馈</div>
+                  </div>
+                  <span style="font-size:10px;color:var(--muted);white-space:nowrap;display:flex;align-items:center;gap:4px">
+                    💬 {{ (taskComments[task.id]||[]).length }}
+                    <span style="color:#d1d5db">{{ expandedTaskId === task.id ? '▲' : '▼' }}</span>
+                  </span>
                 </div>
               </div>
+              <!-- 展开的评论区 -->
+              <div v-if="expandedTaskId === task.id" style="padding:14px 16px;background:#fff7ed;border-bottom:1px solid var(--border)" @click.stop>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+                  <div v-if="!(taskComments[task.id]||[]).length" style="font-size:11px;color:var(--muted);font-style:italic">还没有反馈，下面写一条</div>
+                  <div v-for="c in (taskComments[task.id]||[])" :key="c.id"
+                    style="display:flex;gap:8px;padding:8px 10px;background:#fff;border:1px solid var(--border);border-radius:8px">
+                    <div style="flex:1;min-width:0">
+                      <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+                        <span style="font-size:11px;font-weight:600;color:var(--text)">{{ c.author_name || c.author_username || '匿名' }}</span>
+                        <span style="font-size:10px;color:var(--muted)">{{ fmtCommentTime(c.created_at) }}</span>
+                        <span style="flex:1"></span>
+                        <button @click="deleteComment(task.id, c.id)"
+                          style="font-size:10px;color:#dc2626;background:none;border:none;cursor:pointer;padding:0">删除</button>
+                      </div>
+                      <div v-if="c.content" style="font-size:12px;color:var(--text);line-height:1.5;white-space:pre-wrap;word-break:break-word">{{ c.content }}</div>
+                    </div>
+                    <!-- 图片缩略：60x60 -->
+                    <img v-if="c.image_data" :src="c.image_data" @click="previewImage=c.image_data"
+                      style="width:60px;height:60px;object-fit:cover;border-radius:6px;cursor:zoom-in;border:1px solid var(--border);flex-shrink:0">
+                  </div>
+                </div>
+                <!-- 添加评论 -->
+                <div style="display:flex;gap:8px;align-items:flex-start">
+                  <textarea
+                    :value="(commentDraft[task.id]||{}).text || ''"
+                    @input="commentDraft[task.id] = {...(commentDraft[task.id]||{}), text: $event.target.value}"
+                    placeholder="写记录或反馈，可附图..." rows="2"
+                    style="flex:1;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;resize:vertical;font-family:inherit"></textarea>
+                  <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;align-items:stretch">
+                    <label style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--muted);text-align:center">
+                      📷 选图
+                      <input type="file" accept="image/*" @change="onCommentImagePick(task.id, $event)" style="display:none">
+                    </label>
+                    <button @click="sendComment(task.id)" :disabled="(commentDraft[task.id]||{}).sending"
+                      style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:4px 14px;font-size:11px;cursor:pointer;font-weight:600;white-space:nowrap">
+                      {{ (commentDraft[task.id]||{}).sending ? '...' : '发送' }}
+                    </button>
+                  </div>
+                </div>
+                <!-- 图片预览 -->
+                <div v-if="(commentDraft[task.id]||{}).image" style="margin-top:8px;display:flex;align-items:center;gap:6px">
+                  <img :src="(commentDraft[task.id]||{}).image" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
+                  <button @click="commentDraft[task.id] = {...(commentDraft[task.id]||{}), image:''}"
+                    style="font-size:10px;color:#dc2626;background:none;border:none;cursor:pointer">移除</button>
+                </div>
+              </div>
+              </template>
             </div>
           </div>
           <div v-if="!taskGroups.length" class="empty">暂无任务</div>

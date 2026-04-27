@@ -45,14 +45,17 @@ const InteractiveTrendChart = defineComponent({
       const baseVals = (props.series||[]).flatMap(s => (s.values||[]).map(v => v.value).filter(v => v != null))
       const gMin = Math.min(...baseVals, 0)
       const gMax = Math.max(...baseVals, 1)
+      // 默认按各指标自身量级归一化（normalize=true），避免量级差大的指标互相压扁。
+      // 父组件可显式传 :normalize="false" 关闭。
+      const useNormalize = props.normalize !== false
       return (props.series||[]).map(s => {
         const ownVals = (s.values||[]).map(v => v.value).filter(v => v != null)
         const sMin = Math.min(...ownVals, 0)
         const sMax = Math.max(...ownVals, 1)
         const xOf = d => pad.L + (ls.indexOf(d) / Math.max(ls.length - 1, 1)) * (W.value - pad.L - pad.R)
         const yOf = v => {
-          const min = props.normalize ? sMin : gMin
-          const max = props.normalize ? sMax : gMax
+          const min = useNormalize ? sMin : gMin
+          const max = useNormalize ? sMax : gMax
           return H.value - pad.B - ((v - min) / ((max - min) || 1)) * (H.value - pad.T - pad.B)
         }
         return {
@@ -61,9 +64,10 @@ const InteractiveTrendChart = defineComponent({
             ...v,
             x: xOf(v.d),
             y: v.value != null ? yOf(v.value) : null,
-          })).filter(v => v.x != null)
+          })).filter(v => v.x != null),
+          hasData: ownVals.length > 0,
         }
-      }).filter(s => s.points.length)
+      }).filter(s => s.hasData)  // 整个 series 全 null 的直接不画（之前会留空 series 占位）
     })
 
     const gridYs = computed(() => [0,.25,.5,.75,1].map(p => pad.T + p*(H.value-pad.T-pad.B)))

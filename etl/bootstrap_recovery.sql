@@ -62,6 +62,21 @@ CREATE TABLE IF NOT EXISTS task_template (
 -- 任务表加 template_id 外键（关联到模板）
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS template_id INT REFERENCES task_template(id);
 
+-- ── 任务评论 / 反馈 ──
+-- 一条任务多条评论，店长晓东可以在 Jas/豆豆/刘婷的任务下加反馈
+-- 图片 base64 直接存 image_data（限制 1MB 内的小图，更大的应上传到对象存储）
+CREATE TABLE IF NOT EXISTS task_comment (
+    id              SERIAL PRIMARY KEY,
+    task_id         INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    author_username TEXT NOT NULL DEFAULT '',
+    author_name     TEXT NOT NULL DEFAULT '',
+    content         TEXT,
+    image_data      TEXT,
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    updated_at      TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_task_comment_task ON task_comment(task_id);
+
 -- 任务周期表（让前端日历筛选可用）
 CREATE TABLE IF NOT EXISTS task_period (
     id            SERIAL PRIMARY KEY,

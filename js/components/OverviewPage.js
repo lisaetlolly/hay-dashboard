@@ -60,8 +60,9 @@ const OverviewPage = defineComponent({
       return v >= 10000 ? (v/10000).toFixed(1) + '万' : v.toFixed(0)
     })
 
-    const localRank = (metric, s, e, cat) => {
-      const rows = Object.values(RAW.products)
+    // 在 [s, e] 范围内计算每个商品的 metric value，按 value 降序返回 top10
+    const localRankInRange = (metric, s, e, cat) => {
+      return Object.values(RAW.products)
         .filter(p => cat === '全部' || p.cat === cat)
         .map(p => {
           let gmv=0, vis=0
@@ -82,7 +83,15 @@ const OverviewPage = defineComponent({
         .sort((a,b)=>(b.value||0)-(a.value||0))
         .slice(0,10)
         .map((r,i)=>({ ...r, rank:i+1 }))
-      return { items: rows, prev_top: [] }
+    }
+    const localRank = (metric, s, e, cat) => {
+      const items = localRankInRange(metric, s, e, cat)
+      // 上期 = 等长前移
+      const subD = (ds, n) => { const d = new Date(ds); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10) }
+      const days = Math.max(1, Math.round((new Date(e) - new Date(s)) / 86400000) + 1)
+      const ps = subD(s, days), pe = subD(s, 1)
+      const prev_top = localRankInRange(metric, ps, pe, cat)
+      return { items, prev_top }
     }
 
     const loadRank = async () => {
@@ -92,12 +101,18 @@ const OverviewPage = defineComponent({
       const params = { metric: rankMetric.value, start: s, end: e }
       if (rankCategory.value !== '全部') params.category = rankCategory.value
       const d = await api('/api/overview/ranking', params)
-      // 接口返回不足或失败时回退到本地计算（带分类筛选）
+      // API 返回不足时本地兜底（含上期）
       const valid = d && Array.isArray(d.items) && d.items.length > 0
         ? d
         : localRank(rankMetric.value, s, e, rankCategory.value)
       rankData.value = valid || { items: [] }
-      if (valid && valid.prev_top) prevTopData.value = valid.prev_top
+      // 总是重写 prevTopData：API 没返回 prev_top 也用本地算一份兜底
+      if (valid && Array.isArray(valid.prev_top) && valid.prev_top.length) {
+        prevTopData.value = valid.prev_top
+      } else {
+        const fallbackPrev = localRank(rankMetric.value, s, e, rankCategory.value).prev_top
+        prevTopData.value = fallbackPrev || []
+      }
       rankLoading.value = false
     }
     // 切换分类时立即重载

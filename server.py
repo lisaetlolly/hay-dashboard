@@ -352,6 +352,37 @@ def get_raw_data():
             official_pids = sorted({d["spu_id"] for d in dim
                                     if d["spu_id"] == d["product_id"]})
 
+            # 9a. img_map —— 实际扫描 25个商品图片/ 目录，避免幽灵路径
+            img_map = {}
+            try:
+                img_dir = os.path.join(DASHBOARD_DIR, "25个商品图片")
+                if os.path.exists(img_dir):
+                    for fname in os.listdir(img_dir):
+                        # 文件名 = "{pid}.{ext}"，pid 必须是纯数字
+                        stem = fname.rsplit(".", 1)[0]
+                        if stem.isdigit():
+                            img_map[stem] = "/images/" + fname
+                # 副 SKU 共用主 SKU 的图
+                for d in dim:
+                    pid = d["product_id"]; sid = d["spu_id"]
+                    if pid != sid and sid in img_map and pid not in img_map:
+                        img_map[pid] = img_map[sid]
+            except Exception:
+                pass
+
+            # 9b. cat_map / short_names —— 用 Neon 数据覆盖前端 RAW 里的旧 typo（如 7660181033346）
+            cat_map = {}
+            short_names = {}
+            for d in dim:
+                pid = d["product_id"]
+                cat_map[pid] = d["category_l1"] or "其他"
+                short_names[pid] = d["title"] or pid
+                # 副 SKU 也填上主链的标题，避免老旧链接 lookup 失败
+                sid = d["spu_id"]
+                if sid != pid:
+                    cat_map.setdefault(sid, d["category_l1"] or "其他")
+                    short_names.setdefault(sid, d["title"] or sid)
+
             # 10. tasks_by_pid（从 tasks 表读，按 product_id 分组）
             tasks_by_pid = {}
             try:
@@ -397,6 +428,9 @@ def get_raw_data():
                 "pid_daily_spend": pid_daily_spend,
                 "video_daily":     video_daily,
                 "official_pids":   official_pids,
+                "cat_map":         cat_map,
+                "short_names":     short_names,
+                "img_map":         img_map,
                 "tasks_by_pid":    tasks_by_pid,
                 "meetings":        meetings,
                 "plan_pct":        plan_pct,
@@ -930,6 +964,123 @@ def get_tasks(
     sql += " ORDER BY t.time_range_label DESC, t.product_id, t.id"
     with db() as conn:
         return rows(conn, sql, tuple(params))
+
+
+# ── 任务评论 / 反馈 ─────────────────────────────────────
+def _ensure_task_comment_table():
+    """server 启动时自建表（生产已建则跳过），避免 deploy 时漏跑 bootstrap"""
+    try:
+        with db() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS task_comment (
+                    id              SERIAL PRIMARY KEY,
+                    task_id         INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    author_username TEXT NOT NULL DEFAULT '',
+                    author_name     TEXT NOT NULL DEFAULT '',
+                    content         TEXT,
+                    image_data      TEXT,
+                    created_at      TIMESTAMPTZ DEFAULT now(),
+                    updated_at      TIMESTAMPTZ DEFAULT now()
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_task_comment_task ON task_comment(task_id)")
+            conn.commit()
+    except Exception as e:
+        import logging; logging.warning(f"task_comment table init skipped: {e}")
+_ensure_task_comment_table()
+
+
+@app.get("/api/tasks/{task_id}/comments")
+def list_task_comments(task_id: int):
+    with db() as conn:
+        return rows(conn, """
+            SELECT id, task_id, author_username, author_name, content, image_data,
+                   created_at, updated_at
+            FROM task_comment
+            WHERE task_id = %s
+            ORDER BY created_at ASC
+        """, (task_id,))
+
+
+class CommentCreate(BaseModel):
+    content: Optional[str] = None
+    image_data: Optional[str] = None
+
+
+@app.post("/api/tasks/{task_id}/comments", status_code=201)
+def create_task_comment(task_id: int, body: CommentCreate,
+                         user: Optional[dict] = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(401, "未登录")
+    if not body.content and not body.image_data:
+        raise HTTPException(400, "评论内容和图片至少有一项")
+    # 限制图片大小（base64 ~1.4MB 起为约束 1MB 原始）
+    if body.image_data and len(body.image_data) > 1500000:
+        raise HTTPException(400, "图片过大（>1MB），请压缩后再上传")
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            INSERT INTO task_comment (task_id, author_username, author_name, content, image_data)
+            VALUES (%s, %s, %s, %s, %s) RETURNING *
+        """, (task_id, user.get("username") or "", user.get("display_name") or "",
+              body.content or "", body.image_data or None))
+        out = dict(cur.fetchone())
+        conn.commit()
+        return out
+
+
+class CommentUpdate(BaseModel):
+    content: Optional[str] = None
+    image_data: Optional[str] = None
+
+
+@app.patch("/api/comments/{comment_id}")
+def update_task_comment(comment_id: int, body: CommentUpdate,
+                         user: Optional[dict] = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(401, "未登录")
+    with db() as conn:
+        c = row(conn, "SELECT author_username FROM task_comment WHERE id = %s", (comment_id,))
+        if not c:
+            raise HTTPException(404, "评论不存在")
+        # admin 或评论作者本人才能改
+        perms = user.get("permissions") or []
+        if isinstance(perms, dict): perms = []
+        is_admin = user.get("role") == "admin" or "*" in perms
+        if not is_admin and c["author_username"] != user.get("username"):
+            raise HTTPException(403, "只能编辑自己的评论")
+        fields = {k: v for k, v in body.model_dump().items() if v is not None}
+        if not fields:
+            raise HTTPException(400, "无字段更新")
+        set_clause = ", ".join(f"{k} = %s" for k in fields)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            f"UPDATE task_comment SET {set_clause}, updated_at = now() WHERE id = %s RETURNING *",
+            (*fields.values(), comment_id)
+        )
+        out = dict(cur.fetchone())
+        conn.commit()
+        return out
+
+
+@app.delete("/api/comments/{comment_id}")
+def delete_task_comment(comment_id: int, user: Optional[dict] = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(401, "未登录")
+    with db() as conn:
+        c = row(conn, "SELECT author_username FROM task_comment WHERE id = %s", (comment_id,))
+        if not c:
+            return {"ok": True}
+        perms = user.get("permissions") or []
+        if isinstance(perms, dict): perms = []
+        is_admin = user.get("role") == "admin" or "*" in perms
+        if not is_admin and c["author_username"] != user.get("username"):
+            raise HTTPException(403, "只能删除自己的评论")
+        cur = conn.cursor()
+        cur.execute("DELETE FROM task_comment WHERE id = %s", (comment_id,))
+        conn.commit()
+        return {"ok": True}
 
 
 @app.get("/api/tasks/with-metrics")

@@ -256,20 +256,25 @@ const ProductsPage = defineComponent({
   },
   template: `
 <div style="display:flex;flex-direction:column;height:100%;gap:0">
-  <div class="card" style="flex-shrink:0;padding:10px 14px;margin-bottom:12px">
-    <div @click="showMetricGuide=!showMetricGuide" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none">
-      <span style="font-size:12px;font-weight:700;color:var(--muted)">指标说明</span>
-      <span style="font-size:11px;color:var(--muted)">{{ showMetricGuide ? '▲ 收起' : '▼ 展开' }}</span>
-    </div>
-    <div v-if="showMetricGuide" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px">
-      <div v-for="item in guideItems" :key="item.key" style="padding:8px 10px;background:#f8f8f7;border-radius:8px;font-size:11px">
-        <div style="font-weight:700;color:var(--text);margin-bottom:2px">{{ item.label }}</div>
-        <div style="color:var(--muted);line-height:1.5">{{ item.tip }}</div>
+  <!-- 指标说明：折叠到弹窗，不再占顶部一大块 -->
+  <div v-if="showMetricGuide" @click.self="showMetricGuide=false"
+       style="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center">
+    <div style="background:#fff;border-radius:12px;padding:20px;max-width:780px;max-height:80vh;overflow:auto;width:90%">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <span style="font-size:14px;font-weight:700">指标说明</span>
+        <button @click="showMetricGuide=false" style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--muted)">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px">
+        <div v-for="item in guideItems" :key="item.key" style="padding:8px 10px;background:#f8f8f7;border-radius:8px;font-size:11px">
+          <div style="font-weight:700;color:var(--text);margin-bottom:2px">{{ item.label }}</div>
+          <div style="color:var(--muted);line-height:1.5">{{ item.tip }}</div>
+        </div>
       </div>
     </div>
   </div>
   <div style="flex-shrink:0;padding-bottom:10px;margin-bottom:12px;border-bottom:1px solid var(--border)">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button @click="showMetricGuide=true" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff;cursor:pointer;color:var(--muted)" title="查看各指标口径">📖 指标说明</button>
       <input v-model="searchQ" placeholder="搜索商品名 / ID" style="padding:5px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;outline:none;width:150px;background:var(--surface)">
       <div style="display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
         <button v-for="c in ['全部','配饰','家具','灯具','其他']" :key="c" @click="filterCat=c" :style="{padding:'5px 10px',fontSize:'12px',border:'none',cursor:'pointer',background:filterCat===c?'var(--accent)':'transparent',color:filterCat===c?'#fff':'var(--muted)'}">{{ c }}</button>
