@@ -316,7 +316,8 @@ def get_raw_data():
             wxst_flat = [{"d": r["d"], "pid": r["spu_id"],
                           "spend": float(r.get("spend") or 0),
                           "ctr": float(r.get("ctr") or 0),
-                          "imps": int(r.get("imps") or 0)} for r in wxst_data]
+                          "imps": int(r.get("imps") or 0),
+                          "clicks": int(r.get("clicks") or 0)} for r in wxst_data]
 
             # 7. pid_daily_spend：每个 SPU 每天的 spend/ctr/roi
             pid_daily_spend = {}

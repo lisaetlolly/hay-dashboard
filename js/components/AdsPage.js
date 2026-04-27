@@ -654,11 +654,16 @@ const AdsPage = defineComponent({
     const channelCatData = computed(() => computeChannelCatTable(periodStart.value, periodEnd.value))
 
     const adsCtr = computed(() => {
-      let ctrS=0, ctrN=0
+      // 加权 CTR = SUM(clicks) / SUM(impressions)，和万象台后台口径一致。
+      // 之前算的是「每商品 CTR 取算术均值」，小曝光商品权重虚高，整体偏大。
+      let totalClicks = 0, totalImps = 0
       for (const r of filterRows(RAW.wxst, periodStart.value, periodEnd.value)) {
-        if (r.imps > 0) { ctrS += r.ctr; ctrN++ }
+        if (r.imps > 0) {
+          totalImps += r.imps
+          totalClicks += (r.clicks != null ? r.clicks : r.imps * r.ctr)  // 兼容：没存 clicks 时用 imps×ctr 反推
+        }
       }
-      return ctrN > 0 ? +(ctrS / ctrN * 100).toFixed(2) : null
+      return totalImps > 0 ? +(totalClicks / totalImps * 100).toFixed(2) : null
     })
     const ctrRankRows = computed(() => {
       const sumC={}, cntC={}
@@ -763,22 +768,21 @@ const AdsPage = defineComponent({
       <div class="kpi-card"><div class="kpi-label">关键词<span class="info-btn">?<span class="tooltip">万象台「关键词推广」渠道花费，来源：fact_wxst_keyword.spend SUM。无品类计划要求。</span></span></div><div class="kpi-value">{{ fmtMoney(keywordSpend) }}</div><div class="kpi-footer"><span>{{ apiSpend ? '实时' : 'RAW快照' }}</span></div></div>
       <div class="kpi-card"><div class="kpi-label">短视频<span class="info-btn">?<span class="tooltip">内容报表「短视频」类型花费，与搜推报表独立统计，不叠加在人群/关键词中。来源：推广报表→内容报表。</span></span></div><div class="kpi-value">{{ fmtMoney(videoSpend) }}</div><div class="kpi-footer"><span>内容报表口径</span></div></div>
       <div class="kpi-card"><div class="kpi-label">类目拆分额<span class="info-btn">?<span class="tooltip">商品报表口径的各品类投放花费，直接来自商品级数据累加，不经渠道比例换算，用于类目计划 vs 实际对比。</span></span></div><div class="kpi-value">¥{{ totalProductSpendWan }}万</div><div class="kpi-footer"><span>商品报表口径</span></div></div>
-      <div class="kpi-card"><div class="kpi-label">推广 CTR<span class="info-btn">?<span class="tooltip">万象台商品报表 CTR 字段均值（点击量 ÷ 展现量 × 100%）。仅统计有曝光的商品，按商品数取算术均值。</span></span></div><div class="kpi-value">{{ adsCtr != null ? adsCtr.toFixed(2)+'%' : '—' }}</div><div class="kpi-footer"><span>万象台均值</span></div></div>
+      <div class="kpi-card"><div class="kpi-label">推广 CTR<span class="info-btn">?<span class="tooltip">加权 CTR = SUM(点击量) ÷ SUM(展现量) × 100%。和万象台后台口径一致。<br/>之前用算术均值（每个商品 CTR 平均）会让小曝光商品权重虚高，已修复。</span></span></div><div class="kpi-value">{{ adsCtr != null ? adsCtr.toFixed(2)+'%' : '—' }}</div><div class="kpi-footer"><span>加权（点击/曝光）</span></div></div>
     </div>
 
     <div class="card" style="padding:16px">
-      <div class="card-header" style="margin-bottom:12px"><span class="card-title">投放趋势</span><span class="card-sub">当前周期按日</span></div>
-      <div style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow:auto">
-        <div style="display:grid;grid-template-columns:84px repeat(3,1fr);gap:10px;padding:0 4px 6px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
-          <div>日期</div><div style="text-align:right">花费</div><div style="text-align:right">成交额</div><div style="text-align:right">ROI / 收藏加购</div>
-        </div>
-        <div v-for="row in trendRows" :key="row.d" style="display:grid;grid-template-columns:84px repeat(3,1fr);gap:10px;padding:6px 4px;border-bottom:1px solid #f1f5f9;font-size:11px;align-items:center">
-          <div style="color:var(--muted)">{{ row.d.slice(5) }}</div>
-          <div style="text-align:right;font-weight:600">{{ fmtMoney(row.spend) }}</div>
-          <div style="text-align:right;font-weight:600">{{ fmtMoney(row.gmv) }}</div>
-          <div style="text-align:right;color:var(--muted)">{{ row.roi == null ? '—' : 'ROI ' + row.roi }} / {{ row.collect }}</div>
-        </div>
-      </div>
+      <div class="card-header" style="margin-bottom:12px"><span class="card-title">投放趋势</span><span class="card-sub">当前周期按日（花费 / 成交额 / ROI）</span></div>
+      <interactive-trend-chart v-if="trendRows.length"
+        :series="[
+          { key:'spend', name:'花费', color:'#60a5fa', type:'bar',
+            values: trendRows.map(r => ({d:r.d, value:r.spend, label:fmtMoney(r.spend)})) },
+          { key:'gmv',   name:'成交额', color:'#a78bfa', type:'bar',
+            values: trendRows.map(r => ({d:r.d, value:r.gmv,   label:fmtMoney(r.gmv)})) },
+          { key:'roi',   name:'ROI', color:'#16a34a', type:'line',
+            values: trendRows.map(r => ({d:r.d, value:r.roi,   label:r.roi==null?'—':'×'+r.roi})) },
+        ]" :height="220" :normalize="true" />
+      <div v-else class="empty">当前周期暂无投放数据</div>
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px">
@@ -1292,7 +1296,6 @@ const AdsPage = defineComponent({
       </div>
     </div>
   </div>
-  </template>
 </div>`
 })
 

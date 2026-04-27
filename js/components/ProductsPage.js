@@ -116,7 +116,12 @@ const ProductsPage = defineComponent({
         if (d>=prev.s && d<=prev.e) { ppay += p.pay[i]||0; pvis += p.vis[i]||0 }
       }
       const xhsList = (RAW.xhs_notes||[]).filter(n=>n.pid===p.pid&&n.date>=s&&n.date<=e)
-      const allTasks = (APP_STATE.value.tasksByPid?.[p.pid]||[])
+      // 任务只显示当前周期；用 activePeriod（已经在 setup 末尾定义为「APP_STATE.selectedTaskPeriod || apiCurrentPeriod」）
+      const _all = APP_STATE.value.tasksByPid?.[p.pid]||[]
+      const _curPeriod = activePeriod.value || ''
+      const allTasks = _curPeriod
+        ? _all.filter(t => (t.time_range_label || '').includes(_curPeriod) || (t.period_notes && t.period_notes[_curPeriod]))
+        : _all
       const pct = (a,b)=>b>0?+((a-b)/b*100).toFixed(1):null
       return {
         gmv:+pay.toFixed(2), vis:Math.round(vis),
@@ -432,9 +437,9 @@ const ProductsPage = defineComponent({
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
             <div style="font-size:15px;font-weight:700">{{ p.name }}</div>
             <span style="font-size:10px;color:var(--muted);padding:2px 6px;border:1px solid var(--border);border-radius:99px">{{ p.cat }}</span>
-            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='xhs'?'daily':'xhs')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='xhs'?'#ff2442':'#ffccd5',background:getCardTab(p.pid)==='xhs'?'#ff2442':'#fff0f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='xhs'?'#fff':'#ff2442'}">小红书 {{ p.xhs_notes }}</span>
-            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='tasks'?'daily':'tasks')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='tasks'?'#d97706':'#fde68a',background:getCardTab(p.pid)==='tasks'?'#d97706':'#fffbeb',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='tasks'?'#fff':'#d97706'}">任务 {{ p.allTasks.length }}</span>
-            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='events'?'daily':'events')" :style="{fontSize:'10px',padding:'2px 6px',border:'1px solid',borderColor:getCardTab(p.pid)==='events'?'#dc2626':'#fecaca',background:getCardTab(p.pid)==='events'?'#dc2626':'#fef2f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='events'?'#fff':'#dc2626'}">事件 {{ p.events.length }}</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='xhs'?'daily':'xhs')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='xhs'?'#ff2442':'#ffccd5',background:getCardTab(p.pid)==='xhs'?'#ff2442':'#fff0f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='xhs'?'#fff':'#ff2442'}">小红书</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='tasks'?'daily':'tasks')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='tasks'?'#d97706':'#fde68a',background:getCardTab(p.pid)==='tasks'?'#d97706':'#fffbeb',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='tasks'?'#fff':'#d97706'}">任务</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='events'?'daily':'events')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='events'?'#dc2626':'#fecaca',background:getCardTab(p.pid)==='events'?'#dc2626':'#fef2f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='events'?'#fff':'#dc2626'}">事件</span>
           </div>
           <div :style="{display:'grid',gridTemplateColumns:'repeat('+Math.min(filteredSummaryMetrics.length,5)+',minmax(72px,1fr))',gap:'10px',marginBottom:'10px'}">
             <div v-for="m in filteredSummaryMetrics" :key="m.k">

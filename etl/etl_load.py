@@ -509,13 +509,34 @@ def load_wxst_audience(conn):
     print(f"  fact_wxst_audience: {total} rows ({len(matches)} files)")
 
 def load_wxst_keyword(conn):
-    """循环所有 CSV 合并去重（同 audience，去重 key=(stat_date, keyword_name)）"""
+    """
+    循环所有 CSV 合并去重。
+    去重 key = (stat_date, keyword_id, scene_name, keyword_name)
+    —— 修复：同一关键词「茶几」在「关键词推广」「精准词包」等不同场景下都会出现，
+       老 key=(date, name) 把第二次起全部丢弃，导致花费严重少算（4 月少 24K，约 68%）。
+    """
     matches = (glob.glob(os.path.join(DATA_DIR, '推广报表', '关键词报表', '*.csv'))
             or glob.glob(os.path.join(DATA_DIR, '推广报表', '关键词报表*.csv')))
     if not matches:
         print("  [SKIP] 万象台关键词报表 not found")
         return
     cur = conn.cursor()
+    # 先把旧的窄 UNIQUE 拆掉（只跑一次也是幂等）
+    cur.execute("""
+        ALTER TABLE fact_wxst_keyword
+        DROP CONSTRAINT IF EXISTS fact_wxst_keyword_stat_date_keyword_name_key
+    """)
+    # 加宽 UNIQUE 让多场景共存
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='fact_wxst_keyword_uniq_v2') THEN
+                ALTER TABLE fact_wxst_keyword ADD CONSTRAINT fact_wxst_keyword_uniq_v2
+                    UNIQUE (stat_date, keyword_id, scene_name, keyword_name);
+            END IF;
+        END$$;
+    """)
+    conn.commit()
     sql = """
         INSERT INTO fact_wxst_keyword (
             stat_date, keyword_name, keyword_id, keyword_type, scene_name, product_name,
@@ -526,7 +547,7 @@ def load_wxst_keyword(conn):
             guided_visits, avg_visit_pages, new_buyers,
             natural_gmv, natural_impressions, source_file
         ) VALUES %s
-        ON CONFLICT(stat_date, keyword_name) DO NOTHING
+        ON CONFLICT (stat_date, keyword_id, scene_name, keyword_name) DO NOTHING
     """
     seen = set()
     total = 0
@@ -542,9 +563,12 @@ def load_wxst_keyword(conn):
         for row in rs:
             stat_date = str(row.get('日期', '')).strip()[:10]
             kname = str(row.get('词名字/词包名字', '')).strip()
+            kid   = str(row.get('词ID/词包ID', row.get('词 ID/词包ID', ''))).strip()
+            scene = str(row.get('场景名字', '')).strip()
             if not stat_date or not kname:
                 continue
-            key = (stat_date, kname)
+            # 用 (date, kid, scene, kname) 全维度去重，匹配新 UNIQUE 约束
+            key = (stat_date, kid, scene, kname)
             if key in seen: continue
             seen.add(key)
             def g(k):  return safe_float(row.get(k))
