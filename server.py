@@ -1626,15 +1626,35 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
         name = f.filename or "upload"
         ext = name.rsplit(".", 1)[-1].lower()
         if ext in ("xls", "xlsx"):
-            dest_dir = os.path.join(base_dir, "生意参谋商品")
-        elif ext == "csv":
-            # Detect: ad report vs store report
-            content_head = await f.read(512)
-            await f.seek(0)
-            if b"\xe8\x8a\xb1\xe8\xb4\xb9" in content_head or b"spend" in content_head.lower() or "推广" in name or "商品报表" in name:
-                dest_dir = os.path.join(base_dir, "推广报表", "商品报表")
+            # 文件名含"流量"→无限店铺流量，否则→生意参谋商品
+            if "流量" in name:
+                dest_dir = os.path.join(base_dir, "无限店铺流量")
             else:
                 dest_dir = os.path.join(base_dir, "生意参谋商品")
+        elif ext == "csv":
+            # 按文件名精确匹配，更具体的模式优先
+            if "人群推广商品报表" in name:
+                dest_dir = os.path.join(base_dir, "推广报表", "人群推广商品报表")
+            elif "关键词商品报表" in name:
+                dest_dir = os.path.join(base_dir, "推广报表", "关键词商品报表")
+            elif "人群报表" in name:
+                dest_dir = os.path.join(base_dir, "推广报表", "人群报表")
+            elif "关键词报表" in name:
+                dest_dir = os.path.join(base_dir, "推广报表", "关键词报表")
+            elif "内容报表" in name:
+                dest_dir = os.path.join(base_dir, "推广报表", "内容报表")
+            elif "创意报表" in name:
+                dest_dir = os.path.join(base_dir, "推广报表", "创意报表")
+            elif "商品报表" in name:
+                dest_dir = os.path.join(base_dir, "推广报表", "商品报表")
+            else:
+                # 兜底：检查内容是否含花费字段
+                content_head = await f.read(512)
+                await f.seek(0)
+                if b"\xe8\x8a\xb1\xe8\xb4\xb9" in content_head:  # 花费
+                    dest_dir = os.path.join(base_dir, "推广报表", "商品报表")
+                else:
+                    dest_dir = os.path.join(base_dir, "生意参谋商品")
         else:
             continue
         os.makedirs(dest_dir, exist_ok=True)
