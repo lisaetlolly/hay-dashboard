@@ -94,25 +94,26 @@ app.add_middleware(
 )
 
 
-@contextmanager
-def db():
-    # Neon serverless 冷启动可能需要 5-15s，给 30s 超时；连接失败时重试一次
-    last_err = None
+def _connect_with_retry():
+    # Neon serverless 冷启动 5-15s，30s 超时；连接错误重试一次
+    import time
     for attempt in range(2):
         try:
-            conn = psycopg2.connect(NEON_DSN, connect_timeout=30)
-            conn.autocommit = False
-            try:
-                yield conn
-                return
-            finally:
-                conn.close()
-        except Exception as e:
-            last_err = e
+            return psycopg2.connect(NEON_DSN, connect_timeout=30)
+        except psycopg2.OperationalError:
             if attempt == 0:
-                import time; time.sleep(1)
-                continue
+                time.sleep(2); continue
             raise
+
+
+@contextmanager
+def db():
+    conn = _connect_with_retry()
+    conn.autocommit = False
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def rows(conn, sql, params=()):
@@ -343,22 +344,22 @@ def get_ads_summary(
                 MAX(p.category_l1)                    AS category_l1,
                 MAX(p.category_l2)                    AS category_l2,
                 COUNT(DISTINCT w.stat_date)           AS days,
-                ROUND(SUM(w.spend), 2)                AS total_spend,
-                ROUND(SUM(w.total_gmv), 2)            AS total_gmv,
-                ROUND(SUM(w.direct_gmv), 2)           AS total_direct_gmv,
-                ROUND(SUM(w.indirect_gmv), 2)         AS total_indirect_gmv,
-                ROUND(SUM(w.total_gmv) / NULLIF(SUM(w.spend),0), 2) AS roi,
-                ROUND(SUM(w.clicks) / NULLIF(SUM(w.impressions),0) * 100, 4) AS avg_ctr,
-                ROUND(SUM(w.spend) / NULLIF(SUM(w.clicks),0), 2)  AS avg_cpc,
+                ROUND((SUM(w.spend))::numeric, 2)                AS total_spend,
+                ROUND((SUM(w.total_gmv))::numeric, 2)            AS total_gmv,
+                ROUND((SUM(w.direct_gmv))::numeric, 2)           AS total_direct_gmv,
+                ROUND((SUM(w.indirect_gmv))::numeric, 2)         AS total_indirect_gmv,
+                ROUND((SUM(w.total_gmv) / NULLIF(SUM(w.spend),0))::numeric, 2) AS roi,
+                ROUND((SUM(w.clicks) / NULLIF(SUM(w.impressions),0) * 100)::numeric, 4) AS avg_ctr,
+                ROUND((SUM(w.spend) / NULLIF(SUM(w.clicks),0))::numeric, 2)  AS avg_cpc,
                 SUM(w.new_buyers)                     AS total_new_buyers,
-                ROUND(SUM(w.spend) / NULLIF(SUM(w.new_buyers),0), 2) AS cpna,
+                ROUND((SUM(w.spend) / NULLIF(SUM(w.new_buyers),0))::numeric, 2) AS cpna,
                 SUM(w.cart_cnt)                       AS total_cart_cnt,
                 SUM(w.total_collect_cart)             AS total_collect_cart,
                 SUM(w.impressions)                    AS total_impressions,
                 SUM(w.clicks)                         AS total_clicks,
                 SUM(w.guided_visits)                  AS total_guided_visits,
                 SUM(w.transaction_buyers)             AS total_transaction_buyers,
-                ROUND(SUM(w.natural_gmv), 2)          AS total_natural_gmv,
+                ROUND((SUM(w.natural_gmv))::numeric, 2)          AS total_natural_gmv,
                 SUM(w.natural_impressions)            AS total_natural_impressions
             FROM fact_wxst_product w
             LEFT JOIN dim_product p ON w.product_id = p.product_id
@@ -379,9 +380,9 @@ def get_ads_by_category(
         return rows(conn, """
             SELECT
                 p.category_l1,
-                ROUND(SUM(w.spend), 2)       AS total_spend,
-                ROUND(SUM(w.total_gmv), 2)   AS total_gmv,
-                ROUND(SUM(w.total_gmv) / NULLIF(SUM(w.spend),0), 2) AS roi,
+                ROUND((SUM(w.spend))::numeric, 2)       AS total_spend,
+                ROUND((SUM(w.total_gmv))::numeric, 2)   AS total_gmv,
+                ROUND((SUM(w.total_gmv) / NULLIF(SUM(w.spend),0))::numeric, 2) AS roi,
                 COUNT(DISTINCT w.product_id) AS product_count
             FROM fact_wxst_product w
             LEFT JOIN dim_product p ON w.product_id = p.product_id
@@ -402,9 +403,9 @@ def get_ads_latest():
         return row(conn, """
             SELECT
                 stat_date,
-                ROUND(SUM(spend), 2)      AS total_spend,
-                ROUND(SUM(total_gmv), 2)  AS total_gmv,
-                ROUND(SUM(total_gmv) / NULLIF(SUM(spend),0), 2) AS roi,
+                ROUND((SUM(spend))::numeric, 2)      AS total_spend,
+                ROUND((SUM(total_gmv))::numeric, 2)  AS total_gmv,
+                ROUND((SUM(total_gmv) / NULLIF(SUM(spend),0))::numeric, 2) AS roi,
                 SUM(total_collect_cart)   AS total_collect_cart,
                 SUM(new_buyers)           AS total_new_buyers
             FROM fact_wxst_product
@@ -434,11 +435,11 @@ def get_syzt_summary(
                 COUNT(DISTINCT s.stat_date)             AS days,
                 SUM(s.visitors)                         AS total_visitors,
                 SUM(s.page_views)                       AS total_pv,
-                ROUND(SUM(s.page_views)/NULLIF(SUM(s.visitors),0), 2) AS avg_pv_per_uv,
+                ROUND((SUM(s.page_views)/NULLIF(SUM(s.visitors),0))::numeric, 2) AS avg_pv_per_uv,
                 SUM(s.pay_amount)                       AS total_pay,
                 SUM(s.order_amount)                     AS total_order,
                 SUM(s.refund_amount)                    AS total_refund,
-                ROUND(SUM(s.pay_amount) - SUM(s.refund_amount), 2) AS net_pay,
+                ROUND((SUM(s.pay_amount) - SUM(s.refund_amount))::numeric, 2) AS net_pay,
                 SUM(s.cart_users)                       AS total_cart_users,
                 SUM(s.cart_qty)                         AS total_cart_qty,
                 SUM(s.collect_users)                    AS total_collect,
@@ -447,15 +448,15 @@ def get_syzt_summary(
                 SUM(s.pay_new_buyers)                   AS total_new_buyers,
                 SUM(s.pay_old_buyers)                   AS total_old_buyers,
                 SUM(s.search_visitors)                  AS total_search_visitors,
-                ROUND(SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100, 2) AS search_traffic_pct,
-                ROUND(SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100, 4)      AS cart_rate,
-                ROUND(SUM(s.collect_users)/NULLIF(SUM(s.visitors),0)*100, 4)   AS collect_rate,
-                ROUND(SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100, 4)    AS order_cvr,
-                ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0), 2)          AS visitor_value,
-                ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0), 2) AS avg_order_value,
-                ROUND(SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100, 2) AS new_buyer_pct,
-                ROUND(AVG(s.avg_stay_duration), 1)      AS avg_stay_duration,
-                ROUND(AVG(s.bounce_rate)*100, 2)        AS avg_bounce_rate
+                ROUND((SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100)::numeric, 2) AS search_traffic_pct,
+                ROUND((SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100)::numeric, 4)      AS cart_rate,
+                ROUND((SUM(s.collect_users)/NULLIF(SUM(s.visitors),0)*100)::numeric, 4)   AS collect_rate,
+                ROUND((SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100)::numeric, 4)    AS order_cvr,
+                ROUND((SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0))::numeric, 2)          AS visitor_value,
+                ROUND((SUM(s.pay_amount)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0))::numeric, 2) AS avg_order_value,
+                ROUND((SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100)::numeric, 2) AS new_buyer_pct,
+                ROUND((AVG(s.avg_stay_duration))::numeric, 1)      AS avg_stay_duration,
+                ROUND((AVG(s.bounce_rate)*100)::numeric, 2)        AS avg_bounce_rate
             FROM fact_syzt_product s
             LEFT JOIN dim_product p ON s.product_id = p.product_id
             WHERE s.stat_date BETWEEN %s AND %s
@@ -505,9 +506,9 @@ def get_traffic_summary(
             SELECT
                 source_l1,
                 source_l2,
-                ROUND(SUM(visitors), 0)         AS total_visitors,
-                ROUND(SUM(pay_buyers), 0)        AS total_pay_buyers,
-                ROUND(SUM(product_visitors), 0)  AS total_product_visitors
+                ROUND((SUM(visitors))::numeric, 0)         AS total_visitors,
+                ROUND((SUM(pay_buyers))::numeric, 0)        AS total_pay_buyers,
+                ROUND((SUM(product_visitors))::numeric, 0)  AS total_product_visitors
             FROM fact_traffic
             WHERE stat_date BETWEEN %s AND %s
               AND source_l1 != ''
@@ -528,8 +529,8 @@ def get_traffic_trend(
         return rows(conn, """
             SELECT
                 stat_date,
-                ROUND(SUM(CASE WHEN visitors > 0 THEN visitors ELSE 0 END), 0) AS total_visitors,
-                ROUND(SUM(CASE WHEN pay_buyers > 0 THEN pay_buyers ELSE 0 END), 0) AS total_pay_buyers
+                ROUND((SUM(CASE WHEN visitors > 0 THEN visitors ELSE 0 END))::numeric, 0) AS total_visitors,
+                ROUND((SUM(CASE WHEN pay_buyers > 0 THEN pay_buyers ELSE 0 END))::numeric, 0) AS total_pay_buyers
             FROM fact_traffic
             WHERE stat_date BETWEEN %s AND %s
             GROUP BY stat_date
@@ -553,10 +554,10 @@ def get_top_keywords(
             SELECT
                 keyword_name,
                 scene_name,
-                ROUND(SUM(spend), 2)      AS total_spend,
-                ROUND(SUM(total_gmv), 2)  AS total_gmv,
-                ROUND(SUM(total_gmv) / NULLIF(SUM(spend),0), 2) AS roi,
-                ROUND(AVG(ctr) * 100, 2)  AS avg_ctr
+                ROUND((SUM(spend))::numeric, 2)      AS total_spend,
+                ROUND((SUM(total_gmv))::numeric, 2)  AS total_gmv,
+                ROUND((SUM(total_gmv) / NULLIF(SUM(spend),0))::numeric, 2) AS roi,
+                ROUND((AVG(ctr) * 100)::numeric, 2)  AS avg_ctr
             FROM fact_wxst_keyword
             WHERE stat_date BETWEEN %s AND %s
             GROUP BY keyword_name, scene_name
@@ -575,10 +576,10 @@ def get_top_audience(
         return rows(conn, """
             SELECT
                 audience_name,
-                ROUND(SUM(spend), 2)      AS total_spend,
-                ROUND(SUM(total_gmv), 2)  AS total_gmv,
-                ROUND(SUM(total_gmv) / NULLIF(SUM(spend),0), 2) AS roi,
-                ROUND(AVG(ctr) * 100, 2)  AS avg_ctr
+                ROUND((SUM(spend))::numeric, 2)      AS total_spend,
+                ROUND((SUM(total_gmv))::numeric, 2)  AS total_gmv,
+                ROUND((SUM(total_gmv) / NULLIF(SUM(spend),0))::numeric, 2) AS roi,
+                ROUND((AVG(ctr) * 100)::numeric, 2)  AS avg_ctr
             FROM fact_wxst_audience
             WHERE stat_date BETWEEN %s AND %s
             GROUP BY audience_name
@@ -1213,23 +1214,23 @@ def compare_products(
                 MAX(p.category_l1)   AS category_l1,
                 SUM(s.visitors)      AS total_visitors,
                 SUM(s.page_views)    AS total_pv,
-                ROUND(SUM(s.page_views)/NULLIF(SUM(s.visitors),0),2)          AS pv_per_uv,
+                ROUND((SUM(s.page_views)/NULLIF(SUM(s.visitors),0))::numeric,2)          AS pv_per_uv,
                 SUM(s.pay_amount)    AS total_pay,
-                ROUND(SUM(s.pay_amount)-SUM(s.refund_amount),2)               AS net_pay,
-                ROUND(SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100,4)      AS cart_rate,
-                ROUND(SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100,4)    AS order_cvr,
-                ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0),2)          AS visitor_value,
-                ROUND(SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100,2) AS new_buyer_pct,
+                ROUND((SUM(s.pay_amount)-SUM(s.refund_amount))::numeric,2)               AS net_pay,
+                ROUND((SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100)::numeric,4)      AS cart_rate,
+                ROUND((SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100)::numeric,4)    AS order_cvr,
+                ROUND((SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0))::numeric,2)          AS visitor_value,
+                ROUND((SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100)::numeric,2) AS new_buyer_pct,
                 AVG(s.avg_stay_duration)  AS avg_stay,
                 AVG(s.bounce_rate)*100    AS bounce_rate,
                 SUM(s.search_visitors)    AS search_visitors,
-                ROUND(SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100,2) AS search_pct,
+                ROUND((SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100)::numeric,2) AS search_pct,
                 SUM(w.spend)              AS total_spend,
                 SUM(w.total_gmv)          AS ad_total_gmv,
-                ROUND(SUM(w.total_gmv)/NULLIF(SUM(w.spend),0),2)              AS roi,
-                ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100,4)       AS ctr,
-                ROUND(SUM(w.spend)/NULLIF(SUM(w.clicks),0),2)                 AS cpc,
-                ROUND(SUM(w.spend)/NULLIF(SUM(w.new_buyers),0),2)             AS cpna
+                ROUND((SUM(w.total_gmv)/NULLIF(SUM(w.spend),0))::numeric,2)              AS roi,
+                ROUND((SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100)::numeric,4)       AS ctr,
+                ROUND((SUM(w.spend)/NULLIF(SUM(w.clicks),0))::numeric,2)                 AS cpc,
+                ROUND((SUM(w.spend)/NULLIF(SUM(w.new_buyers),0))::numeric,2)             AS cpna
             FROM fact_syzt_product s
             JOIN dim_product p ON s.product_id = p.product_id
             LEFT JOIN fact_wxst_product w
@@ -1258,12 +1259,12 @@ def get_product_daily_metrics(
                 SUM(s.cart_users)    AS cart_users,
                 SUM(s.order_buyers)  AS order_buyers,
                 SUM(s.collect_users) AS collect_users,
-                ROUND(SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100,4)   AS cart_rate,
-                ROUND(SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100,4) AS order_cvr,
+                ROUND((SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100)::numeric,4)   AS cart_rate,
+                ROUND((SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100)::numeric,4) AS order_cvr,
                 SUM(w.spend)         AS spend,
                 SUM(w.total_gmv)     AS ad_gmv,
-                ROUND(SUM(w.total_gmv)/NULLIF(SUM(w.spend),0),2)          AS roi,
-                ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100,4)   AS ctr
+                ROUND((SUM(w.total_gmv)/NULLIF(SUM(w.spend),0))::numeric,2)          AS roi,
+                ROUND((SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100)::numeric,4)   AS ctr
             FROM fact_syzt_product s
             JOIN dim_product p ON s.product_id = p.product_id
             LEFT JOIN fact_wxst_product w
@@ -1304,9 +1305,9 @@ def get_alerts(
                 GROUP BY spu_id
             )
             SELECT r.spu_id, r.title,
-                ROUND(r.avg_pay,2) AS recent_7d_avg,
-                ROUND(p.avg_pay,2) AS prev_7d_avg,
-                ROUND((r.avg_pay-p.avg_pay)/NULLIF(p.avg_pay,0)*100,1) AS change_pct,
+                ROUND((r.avg_pay)::numeric,2) AS recent_7d_avg,
+                ROUND((p.avg_pay)::numeric,2) AS prev_7d_avg,
+                ROUND(((r.avg_pay-p.avg_pay)/NULLIF(p.avg_pay,0)*100)::numeric,1) AS change_pct,
                 CASE WHEN r.avg_pay < p.avg_pay*0.7 THEN true ELSE false END AS decay_alert
             FROM recent r LEFT JOIN prev p USING(spu_id)
             ORDER BY change_pct ASC NULLS LAST
@@ -1344,9 +1345,8 @@ def get_xhs_metrics(
         base_sql = """
             SELECT n.id, n.note_title, n.note_url, n.publish_time, n.author,
                 n.likes, n.collects, n.shares, n.comments, n.reads,
-                ROUND(
-                    (n.likes*1.0 + n.collects*2.0 + n.shares*3.0 + n.comments*1.5)
-                    / NULLIF(n.reads,0) * 1000, 2
+                ROUND(((n.likes*1.0 + n.collects*2.0 + n.shares*3.0 + n.comments*1.5)
+                    / NULLIF(n.reads,0) * 1000)::numeric, 2
                 ) AS cei,
                 array_agg(np.product_id) AS product_ids
             FROM fact_xhs_note n
@@ -1414,7 +1414,7 @@ def get_overview_ranking(
                     SELECT p.spu_id,
                            MAX(p.title) AS title,
                            MAX(p.category_l1) AS category_l1,
-                           ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100, 4) AS value,
+                           ROUND((SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100)::numeric, 4) AS value,
                            SUM(w.impressions) AS impressions,
                            SUM(w.clicks)      AS clicks
                     FROM fact_wxst_product w
@@ -1426,7 +1426,7 @@ def get_overview_ranking(
                 """
                 sql_prev = """
                     SELECT p.spu_id,
-                           ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100, 4) AS value
+                           ROUND((SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100)::numeric, 4) AS value
                     FROM fact_wxst_product w
                     JOIN dim_product p ON w.product_id = p.product_id
                     WHERE w.stat_date BETWEEN %s AND %s
@@ -1460,7 +1460,7 @@ def get_overview_ranking(
                     SELECT p.spu_id,
                            MAX(p.title) AS title,
                            MAX(p.category_l1) AS category_l1,
-                           ROUND(SUM(s.pay_amount), 2) AS value
+                           ROUND((SUM(s.pay_amount))::numeric, 2) AS value
                     FROM fact_syzt_product s
                     JOIN dim_product p ON s.product_id = p.product_id
                     WHERE s.stat_date BETWEEN %s AND %s
@@ -1468,7 +1468,7 @@ def get_overview_ranking(
                     ORDER BY value DESC LIMIT %s
                 """
                 sql_prev = """
-                    SELECT p.spu_id, ROUND(SUM(s.pay_amount), 2) AS value
+                    SELECT p.spu_id, ROUND((SUM(s.pay_amount))::numeric, 2) AS value
                     FROM fact_syzt_product s
                     JOIN dim_product p ON s.product_id = p.product_id
                     WHERE s.stat_date BETWEEN %s AND %s
@@ -1607,7 +1607,7 @@ def get_plan_category():
 
         actuals = rows(conn, """
             SELECT p.category_l1 AS category,
-                   ROUND(SUM(w.spend), 2) AS actual_spend
+                   ROUND((SUM(w.spend))::numeric, 2) AS actual_spend
             FROM fact_wxst_product w
             JOIN dim_product p ON w.product_id = p.product_id
             WHERE w.stat_date >= %s
