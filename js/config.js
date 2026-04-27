@@ -11,6 +11,7 @@ const DEFAULT_PERMISSION_GROUPS = [
   { key:'action', label:'运营动作', perms:['action.view','action.create','action.edit','action.delete'] },
   { key:'metric', label:'指标配置', perms:['metric.view','metric.create','metric.edit','metric.delete'] },
   { key:'user', label:'用户权限', perms:['user.view','user.create','user.edit','user.delete','permission.assign'] },
+  { key:'event', label:'事件标注', perms:['event.create','event.edit','event.delete'] },
 ]
 
 // 渠道拆分比例（来自实际投放数据，如有变化在此处更新）

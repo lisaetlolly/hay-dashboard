@@ -150,7 +150,10 @@ const ProductsPage = defineComponent({
         .sort((a,b) => (b[sortBy.value]||0) - (a[sortBy.value]||0))
     })
 
-    // 事件 CRUD
+    // 事件 CRUD（权限控制）
+    const currentUser = computed(() => currentUserObj())
+    const canEvent = code => hasPermission(currentUser.value, code)
+
     const EVENT_CATEGORIES = [
       { k:'promo',    l:'大促',   color:'#dc2626' },
       { k:'activity', l:'活动',   color:'#f59e0b' },
@@ -162,10 +165,12 @@ const ProductsPage = defineComponent({
     const labelOfCategory = c => (EVENT_CATEGORIES.find(x=>x.k===c)?.l) || '其他'
     const eventModal = ref({ show:false, mode:'add', id:'', pid:'', title:'', category:'promo', start_date:'', end_date:'', note:'' })
     const openAddEvent = (pid) => {
+      if (!canEvent('event.create')) return alert('无权限新增事件')
       const today = new Date().toISOString().slice(0,10)
       Object.assign(eventModal.value, { show:true, mode:'add', id:'', pid, title:'', category:'promo', start_date: today, end_date:'', note:'' })
     }
     const openEditEvent = (pid, ev) => {
+      if (!canEvent('event.edit')) return alert('无权限编辑事件')
       Object.assign(eventModal.value, { show:true, mode:'edit', id:ev.id, pid, title:ev.title||'', category:ev.category||'other', start_date:ev.start_date||'', end_date:ev.end_date||'', note:ev.note||'' })
     }
     const closeEventModal = () => { eventModal.value.show = false }
@@ -192,6 +197,7 @@ const ProductsPage = defineComponent({
       closeEventModal()
     }
     const deleteEvent = (id) => {
+      if (!canEvent('event.delete')) return alert('无权限删除事件')
       if (!confirm('确认删除此事件？')) return
       const list = APP_STATE.value.events || []
       const idx = list.findIndex(x => x.id === id)
@@ -239,7 +245,7 @@ const ProductsPage = defineComponent({
     const activePeriod = computed(() => APP_STATE.value.selectedTaskPeriod || '')
 
     return { filterCat, filterXhs, searchQ, sortBy, displayMode, periodLabel, sortOpts, products, summaryMetrics, chartMetricGroups, selectedChartMetrics, toggleChartMetric, isChartMetricSelected, filteredSummaryMetrics, fmt, fchg, chgCls, imgSrc, miniChart, productChartSeries, getCardTab, setCardTab, showMetricGuide, guideItems, activePeriod,
-      EVENT_CATEGORIES, labelOfCategory, colorOfCategory, eventModal, openAddEvent, openEditEvent, closeEventModal, saveEvent, deleteEvent }
+      EVENT_CATEGORIES, labelOfCategory, colorOfCategory, eventModal, openAddEvent, openEditEvent, closeEventModal, saveEvent, deleteEvent, canEvent }
   },
   template: `
 <div style="display:flex;flex-direction:column;height:100%;gap:0">
@@ -308,7 +314,7 @@ const ProductsPage = defineComponent({
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <div style="font-size:12px;font-weight:700">{{ getCardTab(p.pid)==='xhs'?'小红书笔记':getCardTab(p.pid)==='tasks'?'本期任务':getCardTab(p.pid)==='events'?'事件标注':'日数据' }}</div>
             <span v-if="getCardTab(p.pid)!=='daily'" @click="setCardTab(p.pid,'daily')" style="font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">返回日数据</span>
-            <button v-if="getCardTab(p.pid)==='events'" @click="openAddEvent(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #7c3aed;background:#7c3aed;color:#fff;border-radius:6px;cursor:pointer">+ 新增事件</button>
+            <button v-if="getCardTab(p.pid)==='events' && canEvent('event.create')" @click="openAddEvent(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #7c3aed;background:#7c3aed;color:#fff;border-radius:6px;cursor:pointer">+ 新增事件</button>
           </div>
           <template v-if="getCardTab(p.pid)==='xhs'">
             <div style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow:auto">
@@ -339,9 +345,9 @@ const ProductsPage = defineComponent({
                   <span v-else-if="!ev.end_date"> · 单点 / 进行中</span>
                 </div>
                 <div v-if="ev.note" style="color:var(--text);font-size:10px;background:#fff;border-radius:4px;padding:3px 5px;margin-bottom:4px">{{ ev.note }}</div>
-                <div style="display:flex;gap:6px">
-                  <button @click="openEditEvent(p.pid, ev)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">编辑</button>
-                  <button @click="deleteEvent(ev.id)" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626">删除</button>
+                <div v-if="canEvent('event.edit')||canEvent('event.delete')" style="display:flex;gap:6px">
+                  <button v-if="canEvent('event.edit')" @click="openEditEvent(p.pid, ev)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">编辑</button>
+                  <button v-if="canEvent('event.delete')" @click="deleteEvent(ev.id)" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626">删除</button>
                 </div>
               </div>
             </div>
