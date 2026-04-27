@@ -21,6 +21,7 @@ raw   = json.loads(html[start + len('const RAW = '):end].strip().rstrip('\n'))
 product_ids = set(raw.get('cat_map', {}).keys()) | set(raw.get('products', {}).keys())
 short_names = raw.get('short_names', {})
 cat_map     = raw.get('cat_map', {})
+wxst_exclude = set(raw.get('wxst_exclude_dates', []))
 
 def to_float(v):
     try:
@@ -90,6 +91,8 @@ else:
         ctr   = ctr / 100 if ctr > 1.5 else ctr
         roi   = to_float(row.get('投入产出比'))
         imps  = to_float(row.get('展现量'))
+        if d in wxst_exclude:
+            continue
         wxst_rows.append({'d':d,'pid':pid,'spend':round(spend,2),'ctr':round(ctr,4),'imps':imps})
         wxst_map[(d,pid)] = {'spend':round(spend,2),'ctr':round(ctr,4),'roi':round(roi,2)}
         pid_daily_spend.setdefault(pid,{})[d] = {'spend':round(spend,2),'ctr':round(ctr,4),'roi':round(roi,2)}
