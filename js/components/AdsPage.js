@@ -11,6 +11,24 @@ const AdsPage = defineComponent({
     const periodEnd = computed(() => props.end || RAW.data_end)
     const periodLabel = computed(() => periodStart.value===periodEnd.value ? periodStart.value : `${periodStart.value} ~ ${periodEnd.value}`)
 
+    // 将 "4.20-22" / "3.30-4.5" 等短格式解析为 {s,e} ISO 日期
+    const parseTaskPeriod = str => {
+      if (!str) return { s: null, e: null }
+      const pad = n => String(n).padStart(2, '0')
+      const fmt = (m, d) => `2026-${pad(m)}-${pad(d)}`
+      const cross = str.match(/^(\d+)\.(\d+)-(\d+)\.(\d+)$/)
+      if (cross) return { s: fmt(+cross[1], +cross[2]), e: fmt(+cross[3], +cross[4]) }
+      const same = str.match(/^(\d+)\.(\d+)-(\d+)$/)
+      if (same) return { s: fmt(+same[1], +same[2]), e: fmt(+same[1], +same[3]) }
+      return { s: null, e: null }
+    }
+    // 任务周期对应的实际日期范围（优先用任务周期，不可解析时退回顶栏日期）
+    const taskPeriodDates = computed(() => {
+      const p = parseTaskPeriod(activePeriod.value)
+      return { start: p.s || periodStart.value, end: p.e || periodEnd.value,
+               label: p.s && p.e ? `${p.s} ~ ${p.e}` : periodLabel.value }
+    })
+
     const audienceRatio = AUDIENCE_RATIO
     const keywordRatio = KEYWORD_RATIO
 
@@ -134,45 +152,95 @@ const AdsPage = defineComponent({
       }))
     })
 
-    const allTasks = computed(() => Object.entries(APP_STATE.value.tasksByPid || {}).flatMap(([pid, list]) => {
-      const p = RAW.products?.[pid]
-      let gmv = 0, spend = 0, collect = 0, vis = 0
-      if (p) {
-        for (let i=0;i<p.dates.length;i++) {
-          const d = p.dates[i]
-          if (d >= periodStart.value && d <= periodEnd.value) {
-            gmv += p.pay?.[i] || 0; spend += p.spend?.[i] || 0
-            collect += (p.collect?.[i]||0)+(p.cart?.[i]||0); vis += p.vis?.[i] || 0
-          }
-        }
-      }
-      return (list||[]).map(t => ({ ...t, pid, image: imgSrc(pid),
-        metrics: { gmv:+gmv.toFixed(2), spend:+spend.toFixed(2), collect:Math.round(collect),
-          visitors:Math.round(vis), roi: spend>0 ? +(gmv/spend).toFixed(2) : null }
-      }))
-    }))
-
     const taskPeriods = computed(() => {
-      const raw = RAW.task_periods || []
+      const base = RAW.task_periods || []
       const custom = APP_STATE.value.customPeriods || []
-      return [...new Set([...raw, ...custom])].sort()
+      return [...new Set([...base, ...custom])].sort()
     })
-    const selectedPeriod = ref('')
     const activePeriod = computed(() =>
-      selectedPeriod.value || taskPeriods.value[taskPeriods.value.length-1] || ''
+      APP_STATE.value.selectedTaskPeriod || taskPeriods.value[taskPeriods.value.length - 1] || ''
     )
+    const setTaskPeriod = (p) => {
+      APP_STATE.value.selectedTaskPeriod = p
+      persistAppState()
+    }
     const newPeriodInput = ref('')
     const addPeriod = () => {
       const p = newPeriodInput.value.trim()
       if (!p) return
-      const existing = taskPeriods.value
-      if (!existing.includes(p)) {
+      if (!taskPeriods.value.includes(p)) {
         APP_STATE.value.customPeriods = [...(APP_STATE.value.customPeriods || []), p]
-        persistAppState()
       }
-      selectedPeriod.value = p
+      setTaskPeriod(p)
       newPeriodInput.value = ''
     }
+
+    const saveGuanghe = (pid, value) => {
+      const num = parseFloat(String(value).replace(/,/g,'')) || 0
+      if (!APP_STATE.value.guangheTraffic) APP_STATE.value.guangheTraffic = {}
+      if (!APP_STATE.value.guangheTraffic[pid]) APP_STATE.value.guangheTraffic[pid] = {}
+      APP_STATE.value.guangheTraffic[pid][activePeriod.value] = num
+      persistAppState()
+    }
+
+    const allTasks = computed(() => {
+      // 使用任务周期对应的实际日期，而非顶栏日期
+      const s = taskPeriodDates.value.start, e = taskPeriodDates.value.end
+      const period = activePeriod.value
+      // 上一等长周期用于环比
+      const days = Math.round((new Date(e) - new Date(s)) / 86400000) + 1
+      const pe = new Date(s); pe.setDate(pe.getDate() - 1)
+      const ps = new Date(pe); ps.setDate(ps.getDate() - days + 1)
+      const prevS = ps.toISOString().slice(0,10), prevE = pe.toISOString().slice(0,10)
+      // 近 7 天笔记窗口（以 e 为终点）
+      const noteStartD = new Date(e); noteStartD.setDate(noteStartD.getDate() - 6)
+      const noteS = noteStartD.toISOString().slice(0,10)
+      const prevNoteE = new Date(noteS); prevNoteE.setDate(prevNoteE.getDate() - 1)
+      const prevNoteS = new Date(prevNoteE); prevNoteS.setDate(prevNoteS.getDate() - 6)
+      const pNoteS = prevNoteS.toISOString().slice(0,10), pNoteE = prevNoteE.toISOString().slice(0,10)
+
+      return Object.entries(APP_STATE.value.tasksByPid || {}).flatMap(([pid, list]) => {
+        // 只显示 RAW 商品目录中存在的商品，过滤旧数据残留 PID
+        const p = RAW.products?.[pid]
+        if (!p) return []
+        let gmv=0, spend=0, cart=0, ctrSum=0, ctrN=0
+        let pgmv=0, pspend=0, pcart=0, pctrSum=0, pctrN=0
+        // 近 7 天 XHS 笔记
+        const xhsNotes  = (RAW.xhs_notes||[]).filter(n=>n.pid===pid&&n.date>=noteS&&n.date<=e).length
+        const pXhsNotes = (RAW.xhs_notes||[]).filter(n=>n.pid===pid&&n.date>=pNoteS&&n.date<=pNoteE).length
+        // 光合渠道流量（人工录入）
+        const guanghe = (APP_STATE.value.guangheTraffic||{})[pid]?.[period] ?? null
+        if (p) {
+          for (let i=0; i<p.dates.length; i++) {
+            const d = p.dates[i]
+            if (d >= s && d <= e) {
+              gmv   += p.pay?.[i]   || 0; spend += p.spend?.[i] || 0
+              cart  += p.cart?.[i]  || 0
+              if ((p.ctr?.[i]||0)>0) { ctrSum+=p.ctr[i]*100; ctrN++ }
+            }
+            if (d >= prevS && d <= prevE) {
+              pgmv   += p.pay?.[i]   || 0; pspend += p.spend?.[i] || 0
+              pcart  += p.cart?.[i]  || 0
+              if ((p.ctr?.[i]||0)>0) { pctrSum+=p.ctr[i]*100; pctrN++ }
+            }
+          }
+        }
+        const pct = (a, b) => b > 0 ? +((a-b)/b*100).toFixed(1) : null
+        const ctr  = ctrN  > 0 ? +(ctrSum /ctrN ).toFixed(2) : null
+        const pctr = pctrN > 0 ? +(pctrSum/pctrN).toFixed(2) : null
+        return (list||[]).map(t => ({ ...t, pid, image: imgSrc(pid),
+          metrics: {
+            gmv:   +gmv.toFixed(2),   gmv_chg:   pct(gmv,  pgmv),
+            spend: +spend.toFixed(2), spend_chg: pct(spend, pspend),
+            cart:  Math.round(cart),  cart_chg:  pct(cart,  pcart),
+            ctr,  ctr_chg: (ctr!=null&&pctr!=null) ? pct(ctr, pctr) : null,
+            roi:  spend>0 ? +(gmv/spend).toFixed(2) : null,
+            xhs_notes: xhsNotes, xhs_notes_chg: pct(xhsNotes, pXhsNotes),
+            guanghe,
+          }
+        }))
+      })
+    })
 
     const currentUser = computed(() => currentUserObj())
     const canEditTask = (task) => canEditOwnTask(currentUser.value, task)
@@ -185,10 +253,7 @@ const AdsPage = defineComponent({
       const byPid = {}
       const period = activePeriod.value
       for (const t of allTasks.value) {
-        // Tasks with period_notes entries are period-scoped; only show in their periods.
-        // Tasks with no period_notes keys (legacy/raw tasks) show in all periods.
-        const periodKeys = Object.keys(t.period_notes || {})
-        if (period && periodKeys.length > 0 && !periodKeys.includes(period)) continue
+        // 任务始终显示，周期只影响备注列显示哪一条笔记
         const product = RAW.products?.[t.pid]
         const productName = product?.name || RAW.short_names?.[t.pid] || t.pid
         if (teamFilters.value.owner && t.owner !== teamFilters.value.owner) continue
@@ -213,15 +278,32 @@ const AdsPage = defineComponent({
     const latestMeeting = computed(() => meetings.value[0] || null)
     const toggleChannel = key => { openChannel.value[key] = !openChannel.value[key] }
 
-    const taskModal = ref({ show:false, mode:'edit', pid:'', id:'', detail:'', owner:'', category:'', status:'待开始', note:'' })
+    const taskTemplates = computed(() => {
+      const base = defaultTaskTemplates ? defaultTaskTemplates() : []
+      const saved = APP_STATE.value.taskTemplates || []
+      const seen = new Set(base.map(t => t.detail))
+      const custom = saved.filter(t => !seen.has(t.detail))
+      return [...base, ...custom]
+    })
+    const taskModal = ref({ show:false, mode:'edit', pid:'', id:'', detail:'', owner:'', category:'', status:'待开始', note:'', templateKey:'' })
+    const onTemplateSelect = (e) => {
+      const key = e.target.value
+      taskModal.value.templateKey = key
+      if (!key || key === '__custom__') return
+      const tpl = taskTemplates.value.find(t => t.detail === key)
+      if (!tpl) return
+      taskModal.value.detail = tpl.detail
+      taskModal.value.category = tpl.category
+      if (!taskModal.value.owner && tpl.defaultOwner) taskModal.value.owner = tpl.defaultOwner
+    }
     const openEditTask = (item, task) => {
       if (!canEditTask(task)) return
-      Object.assign(taskModal.value, { show:true, mode:'edit', pid:item.pid, id:task.id, detail:task.detail, owner:task.owner, category:task.category, status:task.status||'待开始', note:task.note||'' })
+      Object.assign(taskModal.value, { show:true, mode:'edit', pid:item.pid, id:task.id, detail:task.detail, owner:task.owner, category:task.category, status:task.status||'待开始', note:task.note||'', templateKey:'' })
     }
     const openAddTask = (item) => {
       const u = currentUser.value
       if (!u) return
-      Object.assign(taskModal.value, { show:true, mode:'add', pid:item.pid, id:'', detail:'', owner: u.role==='admin'?'':(u.display_name||''), category:'', status:'待开始', note:'' })
+      Object.assign(taskModal.value, { show:true, mode:'add', pid:item.pid, id:'', detail:'', owner: u.role==='admin'?'':(u.display_name||''), category:'', status:'待开始', note:'', templateKey:'' })
     }
     const saveTaskModal = () => {
       const { pid, id, mode, detail, owner, category, status, note } = taskModal.value
@@ -229,6 +311,12 @@ const AdsPage = defineComponent({
       if (!APP_STATE.value.tasksByPid) APP_STATE.value.tasksByPid = {}
       if (!APP_STATE.value.tasksByPid[pid]) APP_STATE.value.tasksByPid[pid] = []
       const list = APP_STATE.value.tasksByPid[pid]
+      // 如果是全新自定义任务，保存到模板库
+      const knownDetails = new Set((APP_STATE.value.taskTemplates || []).concat(defaultTaskTemplates ? defaultTaskTemplates() : []).map(t => t.detail))
+      if (!knownDetails.has(detail.trim())) {
+        if (!APP_STATE.value.taskTemplates) APP_STATE.value.taskTemplates = []
+        APP_STATE.value.taskTemplates.push({ category: category || '', detail: detail.trim(), defaultOwner: owner || '' })
+      }
       if (mode === 'add') {
         const newTask = { id: makeId('task'), detail: detail.trim(), owner, category, status, period_notes: {} }
         newTask.period_notes[activePeriod.value] = note
@@ -258,6 +346,12 @@ const AdsPage = defineComponent({
       const list = APP_STATE.value.tasksByPid[pid]
       const t = list?.find(x => x.id === taskId)
       if (t) { t.status = newStatus; persistAppState() }
+    }
+    const updateTaskOwner = (pid, taskId, newOwner, task) => {
+      if (!canEditTask(task || {})) return
+      const list = APP_STATE.value.tasksByPid[pid]
+      const t = list?.find(x => x.id === taskId)
+      if (t) { t.owner = newOwner; persistAppState() }
     }
     const saveInlineNote = (pid, taskId, value) => {
       const list = APP_STATE.value.tasksByPid?.[pid]
@@ -296,12 +390,13 @@ const AdsPage = defineComponent({
     return {
       activeTab, openChannel, periodLabel, audienceSpend, keywordSpend, videoSpend, videoGmv,
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
-      channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod,
-      newPeriodInput, addPeriod, canEditTask,
+      channelRows, trendRows, meetings, latestMeeting, taskGroups,
+      taskPeriods, activePeriod, setTaskPeriod, newPeriodInput, addPeriod, canEditTask,
       teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,
       channelCatData,
-      taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, saveInlineNote, userOptions,
+      taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, updateTaskOwner, saveInlineNote, saveGuanghe, userOptions,
+      taskTemplates, onTemplateSelect, taskPeriodDates,
     }
   },
   template: `
@@ -310,7 +405,7 @@ const AdsPage = defineComponent({
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px">
       <div>
         <div style="font-size:16px;font-weight:700;margin-bottom:4px">投放面板</div>
-        <div style="font-size:11px;color:var(--muted)">{{ periodLabel }}</div>
+        <div style="font-size:11px;color:var(--muted)">{{ activeTab==='team' ? (activePeriod || taskPeriodDates.label) : periodLabel }}</div>
       </div>
       <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fafaf9">
         <button @click="activeTab='delivery'" :style="{padding:'6px 14px',fontSize:'12px',border:'none',cursor:'pointer',background:activeTab==='delivery'?'var(--accent)':'transparent',color:activeTab==='delivery'?'#fff':'var(--muted)'}">投放</button>
@@ -331,21 +426,6 @@ const AdsPage = defineComponent({
       <div class="kpi-card"><div class="kpi-label">短视频<span class="info-btn">?<span class="tooltip">内容报表「短视频」类型花费，与搜推报表独立统计，不叠加在人群/关键词中。来源：推广报表→内容报表。</span></span></div><div class="kpi-value">{{ fmtMoney(videoSpend) }}</div><div class="kpi-footer"><span>内容报表口径</span></div></div>
       <div class="kpi-card"><div class="kpi-label">类目拆分额<span class="info-btn">?<span class="tooltip">商品报表口径的各品类投放花费，直接来自商品级数据累加，不经渠道比例换算，用于类目计划 vs 实际对比。</span></span></div><div class="kpi-value">¥{{ totalProductSpendWan }}万</div><div class="kpi-footer"><span>商品报表口径</span></div></div>
       <div class="kpi-card"><div class="kpi-label">推广 CTR<span class="info-btn">?<span class="tooltip">万象台商品报表 CTR 字段均值（点击量 ÷ 展现量 × 100%）。仅统计有曝光的商品，按商品数取算术均值。</span></span></div><div class="kpi-value">{{ adsCtr != null ? adsCtr.toFixed(2)+'%' : '—' }}</div><div class="kpi-footer"><span>万象台均值</span></div></div>
-    </div>
-
-    <div class="card" style="padding:16px">
-      <div class="card-header" style="margin-bottom:12px"><span class="card-title">投放趋势</span><span class="card-sub">当前周期按日</span></div>
-      <div style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow:auto">
-        <div style="display:grid;grid-template-columns:84px repeat(3,1fr);gap:10px;padding:0 4px 6px;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
-          <div>日期</div><div style="text-align:right">花费</div><div style="text-align:right">成交额</div><div style="text-align:right">ROI / 收藏加购</div>
-        </div>
-        <div v-for="row in trendRows" :key="row.d" style="display:grid;grid-template-columns:84px repeat(3,1fr);gap:10px;padding:6px 4px;border-bottom:1px solid #f1f5f9;font-size:11px;align-items:center">
-          <div style="color:var(--muted)">{{ row.d.slice(5) }}</div>
-          <div style="text-align:right;font-weight:600">{{ fmtMoney(row.spend) }}</div>
-          <div style="text-align:right;font-weight:600">{{ fmtMoney(row.gmv) }}</div>
-          <div style="text-align:right;color:var(--muted)">{{ row.roi == null ? '—' : 'ROI ' + row.roi }} / {{ row.collect }}</div>
-        </div>
-      </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -489,12 +569,12 @@ const AdsPage = defineComponent({
           <div style="font-size:13px;font-weight:700;color:var(--text);margin-right:4px">任务周期</div>
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod }}</span>
-            <select v-if="taskPeriods.length>1" :value="activePeriod" @change="selectedPeriod=$event.target.value"
+            <select v-if="taskPeriods.length>1" :value="activePeriod" @change="setTaskPeriod($event.target.value)"
               style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;cursor:pointer;color:var(--muted)">
               <option v-for="p in taskPeriods" :key="p" :value="p">{{ p }}</option>
             </select>
-            <input v-model="newPeriodInput" placeholder="新时间段名称" @keydown.enter="addPeriod"
-              style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;width:120px;background:#fff">
+            <input v-model="newPeriodInput" placeholder="新周期名称（如 4.23-25）" @keydown.enter="addPeriod"
+              style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;width:150px;background:#fff">
             <button @click="addPeriod"
               style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer">+ 新增</button>
           </div>
@@ -548,23 +628,34 @@ const AdsPage = defineComponent({
                   </button>
                 </div>
                 <div>
-                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计时间：{{ periodLabel }}</div>
-                  <div style="display:flex;gap:24px;flex-wrap:wrap">
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">成交额</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ fmtMoney(item.metrics.gmv) }}</span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">花费</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ fmtMoney(item.metrics.spend) }}</span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">ROI</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ item.metrics.roi == null ? '—' : item.metrics.roi }}</span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">收藏加购</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ item.metrics.collect }}</span>
+                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计：{{ taskPeriodDates.label }}</div>
+                  <div style="display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:8px;overflow:hidden">
+                    <template v-for="(m,mi) in [
+                      {label:'销售金额', val:fmtMoney(item.metrics.gmv), chg:item.metrics.gmv_chg},
+                      {label:'CTR',      val:item.metrics.ctr!=null?item.metrics.ctr+\`%\`:\`—\`, chg:item.metrics.ctr_chg},
+                      {label:'花费',     val:fmtMoney(item.metrics.spend), chg:item.metrics.spend_chg},
+                      {label:'加购量',   val:item.metrics.cart, chg:item.metrics.cart_chg},
+                      {label:'发布笔记量 (近7天)', val:item.metrics.xhs_notes, chg:item.metrics.xhs_notes_chg},
+                    ]" :key="mi">
+                      <div :style="{padding:'8px 12px',background:'#fafaf9',borderRight:'1px solid var(--border)',borderBottom:'1px solid var(--border)'}">
+                        <div style="font-size:10px;color:var(--muted);margin-bottom:3px">{{ m.label }}</div>
+                        <div style="font-size:15px;font-weight:700">{{ m.val }}</div>
+                        <div style="font-size:10px;margin-top:2px">
+                          <span style="color:var(--muted)">环比上周期 </span>
+                          <span :style="{fontWeight:'600',color:m.chg==null?'var(--muted)':m.chg>=0?'#16a34a':'#dc2626'}">
+                            {{ m.chg==null ? '—' : (m.chg>0?'↑':'↓')+Math.abs(m.chg)+'%' }}
+                          </span>
+                        </div>
+                      </div>
+                    </template>
+                    <!-- 光合渠道流量（可内联录入） -->
+                    <div style="padding:8px 12px;background:#fafaf9;border-bottom:1px solid var(--border)">
+                      <div style="font-size:10px;color:var(--muted);margin-bottom:3px">光合渠道流量</div>
+                      <input :value="item.metrics.guanghe ?? ''"
+                        type="text" placeholder="点击录入"
+                        @blur="saveGuanghe(item.pid, $event.target.value)"
+                        style="width:100%;border:none;outline:none;background:transparent;font-size:15px;font-weight:700;color:var(--text);padding:0;cursor:text">
+                      <div style="font-size:10px;margin-top:2px;color:var(--muted)">环比上周期 —</div>
                     </div>
                   </div>
                 </div>
@@ -581,7 +672,7 @@ const AdsPage = defineComponent({
             <!-- 任务行列表 -->
             <div style="display:flex;flex-direction:column">
               <div v-for="(task, ti) in item.tasks" :key="task.id"
-                :style="{display:'grid',gridTemplateColumns:'100px 1fr 110px 90px 1fr',gap:'0',alignItems:'stretch',
+                :style="{display:'grid',gridTemplateColumns:'100px 1fr 110px 90px 1fr',gap:'0',alignItems:'start',
                   borderBottom: ti < item.tasks.length-1 ? '1px solid var(--border)' : 'none',
                   background: ti%2===0 ? '#fff' : '#fafaf9'}">
                 <!-- 任务标签 -->
@@ -596,9 +687,15 @@ const AdsPage = defineComponent({
                   <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                     :style="{color:canEditTask(task)?'var(--accent)':'var(--text)'}">{{ task.detail }}</div>
                 </div>
-                <!-- 负责人 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
-                  <span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.owner">{{ task.owner || '—' }}</span>
+                <!-- 负责人（可直接下拉选择） -->
+                <div style="padding:6px 8px;display:flex;align-items:center;border-right:1px solid var(--border)">
+                  <select :value="task.owner" @change="updateTaskOwner(item.pid, task.id, $event.target.value, task)"
+                    :disabled="!canEditTask(task)"
+                    style="width:100%;border:1px solid var(--border);border-radius:6px;padding:3px 4px;font-size:11px;background:#fff"
+                    :style="{cursor:canEditTask(task)?'pointer':'default',color:'var(--text)'}">
+                    <option value="">— 未分配 —</option>
+                    <option v-for="u in userOptions" :key="u.id" :value="u.display_name">{{ u.display_name }}</option>
+                  </select>
                 </div>
                 <!-- 任务状态 -->
                 <div style="padding:6px 8px;display:flex;align-items:center;border-right:1px solid var(--border)">
@@ -648,8 +745,18 @@ const AdsPage = defineComponent({
 
   <!-- 任务编辑 Modal -->
   <div v-if="taskModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="taskModal.show=false">
-    <div style="background:#fff;border-radius:14px;padding:24px;width:420px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:440px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
       <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ taskModal.mode==='add' ? '新增任务' : '编辑任务' }}</div>
+      <!-- 新增模式：先选模板 -->
+      <div v-if="taskModal.mode==='add'" style="margin-bottom:12px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">选择任务模板（可选）</div>
+        <select :value="taskModal.templateKey" @change="onTemplateSelect"
+          style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff;box-sizing:border-box;color:var(--text)">
+          <option value="">— 从模板选择 —</option>
+          <option v-for="tpl in taskTemplates" :key="tpl.detail" :value="tpl.detail">【{{ tpl.category }}】{{ tpl.detail }}</option>
+          <option value="__custom__">+ 自定义任务（新建）</option>
+        </select>
+      </div>
       <div style="margin-bottom:12px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务名称 <span style="color:#e55">*</span></div>
         <input v-model="taskModal.detail" placeholder="任务描述" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">

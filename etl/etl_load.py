@@ -28,24 +28,53 @@ SPU_MAP = {
 
 def _load_product_ids():
     path = os.path.join(DATA_DIR, '优化商品ID清单.xlsx')
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"找不到优化商品ID清单.xlsx: {path}")
-    zf = zipfile.ZipFile(path)
-    sh_xml = zf.read('xl/worksheets/sheet1.xml').decode('utf-8')
-    sr = ET.fromstring(sh_xml)
-    ns = {'n': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
-    ids = set()
-    for i, row in enumerate(sr.findall('.//n:row', ns)):
-        if i == 0:
-            continue
-        cells = row.findall('n:c', ns)
-        if not cells:
-            continue
-        v = cells[0].find('n:v', ns)
-        if v is not None and v.text:
-            ids.add(str(v.text).strip())
-    print(f"  [优化商品ID清单] 加载 {len(ids)} 个商品ID")
-    return ids
+    if os.path.exists(path):
+        # existing xlsx loading code...
+        zf = zipfile.ZipFile(path)
+        sh_xml = zf.read('xl/worksheets/sheet1.xml').decode('utf-8')
+        sr = ET.fromstring(sh_xml)
+        ns = {'n': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+        ids = set()
+        for i, row in enumerate(sr.findall('.//n:row', ns)):
+            if i == 0:
+                continue
+            cells = row.findall('n:c', ns)
+            if not cells:
+                continue
+            v = cells[0].find('n:v', ns)
+            if v is not None and v.text:
+                ids.add(str(v.text).strip())
+        print(f"  [优化商品ID清单] 加载 {len(ids)} 个商品ID")
+        return ids
+    else:
+        # Fallback: read from dim_product in the database
+        print("  [优化商品ID清单] 文件未找到，从数据库 dim_product 读取")
+        try:
+            conn = get_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT product_id FROM dim_product")
+            ids = {r[0] for r in cur.fetchall()}
+            conn.close()
+            if ids:
+                print(f"  [dim_product] 加载 {len(ids)} 个商品ID")
+                return ids
+        except Exception as e:
+            print(f"  [WARN] 无法从数据库读取商品ID: {e}")
+        # Last resort: read from dashboard.html static RAW
+        html_path = os.path.join(DATA_DIR, 'dashboard.html')
+        if os.path.exists(html_path):
+            import json
+            html = open(html_path, encoding='utf-8').read()
+            try:
+                start = html.index('const RAW = ')
+                end   = html.index('const OFFICIAL = new Set(RAW.official_pids)')
+                raw   = json.loads(html[start + len('const RAW = '):end].strip())
+                ids   = set(raw.get('cat_map', {}).keys())
+                print(f"  [dashboard.html] 加载 {len(ids)} 个商品ID")
+                return ids
+            except Exception as e2:
+                print(f"  [WARN] 无法从 dashboard.html 读取: {e2}")
+        raise FileNotFoundError("无法获取商品ID列表（xlsx/db/html 均不可用）")
 
 PRODUCT_IDS = _load_product_ids()
 
@@ -82,6 +111,7 @@ def init_db(conn, reset=False):
             DROP TABLE IF EXISTS
                 fact_xhs_note_product, fact_xhs_note,
                 fact_paid_promo, fact_traffic,
+                fact_wxst_kw_product, fact_wxst_rq_product,
                 fact_wxst_keyword, fact_wxst_audience, fact_wxst_product,
                 fact_syzt_product, dim_date, dim_product
             CASCADE
@@ -446,6 +476,56 @@ def load_wxst_keyword(conn):
     conn.commit()
     print(f"  fact_wxst_keyword: {total} rows")
 
+def _load_wxst_channel_product(conn, subdir, table_name):
+    """通用：读取渠道商品报表（人群推广商品报表 / 关键词商品报表）"""
+    import csv
+    matches = glob.glob(os.path.join(DATA_DIR, '推广报表', subdir, '*.csv'))
+    if not matches:
+        print(f"  [SKIP] {subdir} not found")
+        return
+    cur = conn.cursor()
+    total = 0
+    for fpath in sorted(matches):
+        fname = os.path.basename(fpath)
+        with open(fpath, 'rb') as f:
+            raw_bytes = f.read()
+        for enc in ('gbk', 'utf-8-sig', 'utf-8'):
+            try:
+                text = raw_bytes.decode(enc); break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = raw_bytes.decode('gbk', errors='replace')
+        rows_csv = list(csv.DictReader(text.splitlines()))
+        for row in rows_csv:
+            pid = str(row.get('主体ID', '')).strip()
+            if not pid or pid not in PRODUCT_IDS:
+                continue
+            stat_date = str(row.get('日期', '')).strip()[:10]
+            if not stat_date:
+                continue
+            spend = safe_float(row.get('花费')) or 0
+            imps  = safe_float(row.get('展现量')) or 0
+            ctr   = safe_pct(row.get('点击率')) or 0
+            roi   = safe_float(row.get('投入产出比')) or 0
+            gmv   = safe_float(row.get('总成交金额')) or 0
+            cur.execute(f"""
+                INSERT INTO {table_name} (stat_date, product_id, spend, impressions, ctr, roi, total_gmv, source_file)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(stat_date, product_id) DO UPDATE SET
+                    spend=EXCLUDED.spend, impressions=EXCLUDED.impressions,
+                    ctr=EXCLUDED.ctr, roi=EXCLUDED.roi, total_gmv=EXCLUDED.total_gmv
+            """, (stat_date, pid, spend, imps, ctr, roi, gmv, fname))
+            total += 1
+    conn.commit()
+    print(f"  {table_name}: {total} rows")
+
+def load_wxst_rq_product(conn):
+    _load_wxst_channel_product(conn, '人群推广商品报表', 'fact_wxst_rq_product')
+
+def load_wxst_kw_product(conn):
+    _load_wxst_channel_product(conn, '关键词商品报表', 'fact_wxst_kw_product')
+
 # ─────────────────────────────────────────────
 # 无限店铺流量
 # ─────────────────────────────────────────────
@@ -566,6 +646,12 @@ def main():
 
     print("[6] 万象台关键词报表")
     load_wxst_keyword(conn)
+
+    print("[8] 万象台人群推广商品报表")
+    load_wxst_rq_product(conn)
+
+    print("[9] 万象台关键词商品报表")
+    load_wxst_kw_product(conn)
 
     print("[7] 无限店铺流量")
     load_traffic(conn)

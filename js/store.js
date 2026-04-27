@@ -46,6 +46,21 @@ function defaultUsers() {
     { id:'u_admin', display_name:'管理员', role:'admin', permissions:['*'] },
     { id:'u_ops', display_name:'晓东（运营）', role:'ops', permissions:['task.view_all','task.create','task.edit_all','meeting.view','meeting.create','meeting.edit','action.view','action.create','action.edit','metric.view'] },
     { id:'u_design', display_name:'豆豆（设计）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','action.view','meeting.view','metric.view'] },
+    { id:'u_content', display_name:'Jas team（内容）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','meeting.view','metric.view'] },
+    { id:'u_product', display_name:'刘婷（商品）', role:'member', permissions:['task.view_all','task.edit_own','task.view_own','meeting.view','metric.view'] },
+  ]
+}
+function defaultTaskTemplates() {
+  return [
+    { category:'标题优化', detail:'结合小红书/淘宝热搜词，优化链接标题', defaultOwner:'Jas team（内容）' },
+    { category:'评价与问大家', detail:'梳理每个链接中差评（如有），分类问题', defaultOwner:'Jas team（内容）' },
+    { category:'评价与问大家', detail:'针对共性问题，制作3条带图/视频好评进行覆盖', defaultOwner:'Jas team（内容）' },
+    { category:'评价与问大家', detail:'优化问大家回复', defaultOwner:'Jas team（内容）' },
+    { category:'淘内内容宣发', detail:'光合内容制作、上线', defaultOwner:'Jas team（内容）' },
+    { category:'详情页优化', detail:'迭代初版详情页', defaultOwner:'豆豆（设计）' },
+    { category:'竞品分析', detail:'竞品动作关注、价格策略调整', defaultOwner:'刘婷（商品）' },
+    { category:'妈妈计划迭代', detail:'确认推广金额及提出素材需求', defaultOwner:'晓东（运营）' },
+    { category:'售卖复盘', detail:'对流量、收藏加购情况做分析', defaultOwner:'晓东（运营）' },
   ]
 }
 function createInitialAppState() {
@@ -62,18 +77,92 @@ function createInitialAppState() {
     productOverrides: {},
     imageOverrides: {},
     manualDailyData: {},
+    selectedTaskPeriod: '',
+    guangheTraffic: {},
+    taskTemplates: defaultTaskTemplates(),
+    stateVersion: 3,
   }
 }
+// 旧数据迁移：统一周期格式 + 修正用户名
+const PERIOD_RENAMES = {
+  '3月23日～3月29日':'3.23-29','3月30日～4月5日':'3.30-4.5',
+  '4月6日～4月12日':'4.6-12','4月13日～4月19日':'4.13-19',
+  '4月20日～4月22日':'4.20-22','4月20日～22日':'4.20-22',
+}
+const STATUS_VALS = new Set(['待开始','进行中','已完成','待完成'])
+function migrateState(state) {
+  if (!state) return state
+  // 迁移 customPeriods
+  if (state.customPeriods)
+    state.customPeriods = state.customPeriods.map(p => PERIOD_RENAMES[p] || p)
+  // 迁移 tasksByPid
+  if (state.tasksByPid) {
+    for (const tasks of Object.values(state.tasksByPid)) {
+      for (const t of tasks) {
+        if (t.owner === 'Jas（内容）') t.owner = 'Jas team（内容）'
+        if (t.period_notes) {
+          const n = {}
+          for (const [k, v] of Object.entries(t.period_notes)) {
+            const rk = PERIOD_RENAMES[k] || k
+            if (STATUS_VALS.has(v)) {
+              // 纯状态值存在了备注里 → 移到 status 字段
+              if (!t.status || t.status === '待开始') t.status = v === '待完成' ? '待开始' : v
+            } else {
+              n[rk] = v
+            }
+          }
+          t.period_notes = n
+        }
+      }
+    }
+  }
+  // 始终以 RAW 任务为结构基础（保证 detail/category/owner/status 正确），叠加用户编辑
+  const rawByPid = (typeof RAW !== 'undefined' && RAW.tasks_by_pid) ? RAW.tasks_by_pid : {}
+  if (!state.tasksByPid) state.tasksByPid = {}
+  // stateVersion<3 时强制用 RAW status（清除旧版错误默认值）
+  // stateVersion<3：服务器旧数据 status/owner 不可信，强制使用 RAW 值
+  const forceFromRaw = !state.stateVersion || state.stateVersion < 3
+  for (const [pid, rawList] of Object.entries(rawByPid)) {
+    const saved = state.tasksByPid[pid] || []
+    const savedByDetail = {}
+    for (const t of saved) { if (t.detail) savedByDetail[t.detail] = t }
+    const merged = rawList.map(raw => {
+      const sv = savedByDetail[raw.detail]
+      if (!sv) return { ...raw }
+      const status = forceFromRaw ? raw.status : (sv.status || raw.status)
+      const owner  = forceFromRaw ? raw.owner  : (sv.owner  || raw.owner)
+      return {
+        ...raw,
+        id: sv.id || raw.id,
+        status,
+        owner,
+        period_notes: { ...(raw.period_notes || {}), ...(sv.period_notes || {}) },
+      }
+    })
+    const rawDetails = new Set(rawList.map(t => t.detail))
+    const custom = saved.filter(t => t.detail && !rawDetails.has(t.detail))
+    state.tasksByPid[pid] = [...merged, ...custom]
+  }
+  state.stateVersion = 3
+  return state
+}
+
 // APP_STATE 初始化在 dashboard.html 内联脚本中（需要 RAW 和 ref 均已就绪后执行）
 // let APP_STATE  ← 由内联脚本声明：const APP_STATE = Vue.ref(createInitialAppState())
 function loadAppState() {
   const saved = readStore(APP_STORAGE_KEY, null)
   if (!saved) return
   const initial = createInitialAppState()
+  const savedTaskJson = JSON.stringify((saved && saved.tasksByPid) || {})
   APP_STATE.value = {
     ...initial,
-    ...saved,
+    ...migrateState(saved),
     permissionGroups: initial.permissionGroups,
+    users: initial.users,
+  }
+  // 若迁移修复了任务数据，回写服务器
+  if (savedTaskJson !== JSON.stringify(APP_STATE.value.tasksByPid || {})) {
+    pushStateToServer(APP_STATE.value)
   }
 }
 let _lastServerStateAt = null
@@ -87,8 +176,14 @@ async function syncStateFromServer() {
     if (_lastServerStateAt === updated_at) return
     _lastServerStateAt = updated_at
     const initial = createInitialAppState()
-    APP_STATE.value = { ...initial, ...state, permissionGroups: initial.permissionGroups }
+    const serverTaskJson = JSON.stringify((state && state.tasksByPid) || {})
+    const migrated = migrateState(state)
+    APP_STATE.value = { ...initial, ...migrated, permissionGroups: initial.permissionGroups, users: initial.users }
     writeStore(APP_STORAGE_KEY, APP_STATE.value)
+    // 若迁移修复了任务数据，立即回写服务器，防止下次同步再覆盖
+    if (serverTaskJson !== JSON.stringify(APP_STATE.value.tasksByPid || {})) {
+      pushStateToServer(APP_STATE.value)
+    }
   } catch {}
 }
 

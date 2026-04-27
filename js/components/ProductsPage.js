@@ -180,7 +180,10 @@ const ProductsPage = defineComponent({
     const guideKeys = ['gmv','vis','cart_rate','conv_rate','ad_roi','fav_cart','new_buyers','refund','ad_ctr','pv','dwell_time','bounce_rate','fav_cart_users','search_vis','xhs_inter']
     const guideItems = guideKeys.map(k => ({ key:k, label:METRIC_TIPS[k]?.label||k, tip:METRIC_TIPS[k]?.tip||'' }))
 
-    return { filterCat, filterXhs, searchQ, sortBy, displayMode, periodLabel, sortOpts, products, summaryMetrics, chartMetricGroups, selectedChartMetrics, toggleChartMetric, isChartMetricSelected, filteredSummaryMetrics, fmt, fchg, chgCls, imgSrc, miniChart, productChartSeries, getCardTab, setCardTab, showMetricGuide, guideItems }
+    // 与投放面板共用同一个任务周期（存储在 APP_STATE）
+    const activePeriod = computed(() => APP_STATE.value.selectedTaskPeriod || '')
+
+    return { filterCat, filterXhs, searchQ, sortBy, displayMode, periodLabel, sortOpts, products, summaryMetrics, chartMetricGroups, selectedChartMetrics, toggleChartMetric, isChartMetricSelected, filteredSummaryMetrics, fmt, fchg, chgCls, imgSrc, miniChart, productChartSeries, getCardTab, setCardTab, showMetricGuide, guideItems, activePeriod }
   },
   template: `
 <div style="display:flex;flex-direction:column;height:100%;gap:0">
@@ -261,15 +264,19 @@ const ProductsPage = defineComponent({
             </div>
           </template>
           <template v-else-if="getCardTab(p.pid)==='tasks'">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:6px">周期：{{ activePeriod || '全部' }}</div>
             <div style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto">
-              <div v-for="task in p.allTasks" :key="task.id" style="padding:6px 0;border-bottom:1px solid #f4f4f5;font-size:11px">
+              <div v-for="task in p.allTasks"
+                   :key="task.id" style="padding:6px 0;border-bottom:1px solid #f4f4f5;font-size:11px">
                 <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap">
                   <span style="font-size:10px;color:var(--muted);border:1px solid var(--border);border-radius:99px;padding:1px 5px;flex-shrink:0;white-space:nowrap">{{ task.category }}</span>
                   <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">{{ task.detail }}</span>
                 </div>
-                <div style="margin-top:2px;color:var(--muted);display:flex;gap:8px">
-                  <span>{{ task.owner }}</span><span style="font-size:10px;padding:1px 5px;border-radius:99px;background:#f3f4f6">{{ task.status||'—' }}</span>
+                <div style="margin-top:2px;color:var(--muted);display:flex;gap:8px;align-items:center">
+                  <span>{{ task.owner }}</span>
+                  <span style="font-size:10px;padding:1px 5px;border-radius:99px;background:#f3f4f6">{{ task.status||'—' }}</span>
                 </div>
+                <div v-if="activePeriod && (task.period_notes||{})[activePeriod]" style="margin-top:2px;font-size:10px;color:var(--text);background:#f8f8f7;border-radius:4px;padding:2px 5px">{{ task.period_notes[activePeriod] }}</div>
               </div>
             </div>
           </template>
