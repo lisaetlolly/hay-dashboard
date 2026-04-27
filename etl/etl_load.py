@@ -255,10 +255,10 @@ def load_dim_product(conn):
                 products[pid] = (title, inv)
 
     # ── 3. 把 SPU_MAP 里的副 SKU 也写入 dim_product，让 syzt/wxst 能 join 上 ──
+    # 副 SKU 用主 SKU 的 title（前端按 spu_id 聚合，不会单独展示副 SKU 标题）
     for sub_pid, main_pid in SPU_MAP.items():
         if sub_pid not in products and main_pid in products:
-            main_title = products[main_pid][0]
-            products[sub_pid] = (f"{main_title}（同款）", 0)
+            products[sub_pid] = products[main_pid]  # 直接共用 title + inv
 
     # ── 4. 写库 ──
     cur = conn.cursor()
@@ -386,9 +386,6 @@ def load_wxst_product(conn):
     if not matches:
         print("  [SKIP] 万象台商品报表 not found")
         return
-    latest = sorted(matches)[-1]
-    fname = os.path.basename(latest)
-    _, rs = read_csv_gbk(latest)
     cur = conn.cursor()
     sql = """
         INSERT INTO fact_wxst_product (
@@ -403,47 +400,59 @@ def load_wxst_product(conn):
         ON CONFLICT(stat_date, product_id) DO NOTHING
     """
     seen = set()
-    batch = []
-    for row in rs:
-        pid = str(row.get('主体ID', '')).strip()
-        if not pid or pid not in PRODUCT_IDS:
+    total = 0
+    print(f"  万象台商品报表：开始处理 {len(matches)} 个 CSV 文件")
+    for fi, fpath in enumerate(sorted(matches), 1):
+        fname = os.path.basename(fpath)
+        try:
+            _, rs = read_csv_gbk(fpath)
+        except Exception as e:
+            print(f"  [WARN] {fname}: {e}")
             continue
-        stat_date = str(row.get('日期', '')).strip()[:10]
-        if not stat_date:
-            continue
-        key = (stat_date, pid)
-        if key in seen: continue
-        seen.add(key)
-        def g(k):  return safe_float(row.get(k))
-        def gp(k): return safe_pct(row.get(k))
-        batch.append((
-            stat_date, pid, str(row.get('主体名称', '')),
-            g('展现量'), g('点击量'), g('花费'),
-            gp('点击率'), g('平均点击花费'), g('千次展现花费'),
-            g('总成交金额'), g('直接成交金额'), g('间接成交金额'),
-            gp('点击转化率'), g('投入产出比'),
-            gp('加购率'), g('总购物车数'),
-            g('收藏宝贝数'), g('收藏店铺数'),
-            g('总收藏加购数'), g('宝贝收藏加购数'),
-            g('引导访问量'), g('平均访问页面数'),
-            g('成交人数'), g('成交新客数'),
-            g('自然流量转化金额'), g('自然流量曝光量'),
-            fname
-        ))
-    if batch:
-        psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
-        conn.commit()
-    print(f"  fact_wxst_product: {len(batch)} rows")
+        batch = []
+        for row in rs:
+            pid = str(row.get('主体ID', '')).strip()
+            if not pid or pid not in PRODUCT_IDS:
+                continue
+            stat_date = str(row.get('日期', '')).strip()[:10]
+            if not stat_date:
+                continue
+            key = (stat_date, pid)
+            if key in seen: continue
+            seen.add(key)
+            def g(k):  return safe_float(row.get(k))
+            def gp(k): return safe_pct(row.get(k))
+            batch.append((
+                stat_date, pid, str(row.get('主体名称', '')),
+                g('展现量'), g('点击量'), g('花费'),
+                gp('点击率'), g('平均点击花费'), g('千次展现花费'),
+                g('总成交金额'), g('直接成交金额'), g('间接成交金额'),
+                gp('点击转化率'), g('投入产出比'),
+                gp('加购率'), g('总购物车数'),
+                g('收藏宝贝数'), g('收藏店铺数'),
+                g('总收藏加购数'), g('宝贝收藏加购数'),
+                g('引导访问量'), g('平均访问页面数'),
+                g('成交人数'), g('成交新客数'),
+                g('自然流量转化金额'), g('自然流量曝光量'),
+                fname
+            ))
+        if batch:
+            psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
+            conn.commit()
+        total += len(batch)
+        print(f"    [{fi}/{len(matches)}] {fname}: +{len(batch)}（累计 {total}）")
+    print(f"  fact_wxst_product: {total} rows ({len(matches)} files)")
 
 def load_wxst_audience(conn):
+    """
+    循环所有 CSV 合并去重（最新一份只覆盖近 2-3 天，历史数据需要从老 CSV 拼）
+    去重 key = (stat_date, audience_name)
+    """
     matches = (glob.glob(os.path.join(DATA_DIR, '推广报表', '人群报表', '*.csv'))
             or glob.glob(os.path.join(DATA_DIR, '推广报表', '人群报表*.csv')))
     if not matches:
         print("  [SKIP] 万象台人群报表 not found")
         return
-    latest = sorted(matches)[-1]
-    fname = os.path.basename(latest)
-    _, rs = read_csv_gbk(latest)
     cur = conn.cursor()
     sql = """
         INSERT INTO fact_wxst_audience (
@@ -458,45 +467,54 @@ def load_wxst_audience(conn):
         ON CONFLICT(stat_date, audience_name) DO NOTHING
     """
     seen = set()
-    batch = []
-    for row in rs:
-        stat_date = str(row.get('日期', '')).strip()[:10]
-        aname = str(row.get('人群名字', '')).strip()
-        if not stat_date or not aname:
+    total = 0
+    print(f"  万象台人群报表：开始处理 {len(matches)} 个 CSV 文件")
+    for fi, fpath in enumerate(sorted(matches), 1):
+        fname = os.path.basename(fpath)
+        try:
+            _, rs = read_csv_gbk(fpath)
+        except Exception as e:
+            print(f"  [WARN] {fname}: {e}")
             continue
-        key = (stat_date, aname)
-        if key in seen: continue
-        seen.add(key)
-        def g(k):  return safe_float(row.get(k))
-        def gp(k): return safe_pct(row.get(k))
-        batch.append((
-            stat_date, aname, str(row.get('主体名称', '')),
-            g('展现量'), g('点击量'), g('花费'),
-            gp('点击率'), g('平均点击花费'), g('千次展现花费'),
-            g('总成交金额'), g('直接成交金额'), g('间接成交金额'),
-            gp('点击转化率'), g('投入产出比'),
-            gp('加购率'), g('总购物车数'),
-            g('收藏宝贝数'), g('收藏店铺数'),
-            g('总收藏加购数'), g('宝贝收藏加购数'),
-            g('引导访问量'), g('平均访问页面数'),
-            g('成交新客数'),
-            g('自然流量转化金额'), g('自然流量曝光量'),
-            fname
-        ))
-    if batch:
-        psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
-        conn.commit()
-    print(f"  fact_wxst_audience: {len(batch)} rows")
+        batch = []
+        for row in rs:
+            stat_date = str(row.get('日期', '')).strip()[:10]
+            aname = str(row.get('人群名字', '')).strip()
+            if not stat_date or not aname:
+                continue
+            key = (stat_date, aname)
+            if key in seen: continue
+            seen.add(key)
+            def g(k):  return safe_float(row.get(k))
+            def gp(k): return safe_pct(row.get(k))
+            batch.append((
+                stat_date, aname, str(row.get('主体名称', '')),
+                g('展现量'), g('点击量'), g('花费'),
+                gp('点击率'), g('平均点击花费'), g('千次展现花费'),
+                g('总成交金额'), g('直接成交金额'), g('间接成交金额'),
+                gp('点击转化率'), g('投入产出比'),
+                gp('加购率'), g('总购物车数'),
+                g('收藏宝贝数'), g('收藏店铺数'),
+                g('总收藏加购数'), g('宝贝收藏加购数'),
+                g('引导访问量'), g('平均访问页面数'),
+                g('成交新客数'),
+                g('自然流量转化金额'), g('自然流量曝光量'),
+                fname
+            ))
+        if batch:
+            psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
+            conn.commit()
+        total += len(batch)
+        print(f"    [{fi}/{len(matches)}] {fname}: +{len(batch)}（累计 {total}）")
+    print(f"  fact_wxst_audience: {total} rows ({len(matches)} files)")
 
 def load_wxst_keyword(conn):
+    """循环所有 CSV 合并去重（同 audience，去重 key=(stat_date, keyword_name)）"""
     matches = (glob.glob(os.path.join(DATA_DIR, '推广报表', '关键词报表', '*.csv'))
             or glob.glob(os.path.join(DATA_DIR, '推广报表', '关键词报表*.csv')))
     if not matches:
         print("  [SKIP] 万象台关键词报表 not found")
         return
-    latest = sorted(matches)[-1]
-    fname = os.path.basename(latest)
-    _, rs = read_csv_gbk(latest)
     cur = conn.cursor()
     sql = """
         INSERT INTO fact_wxst_keyword (
@@ -511,39 +529,50 @@ def load_wxst_keyword(conn):
         ON CONFLICT(stat_date, keyword_name) DO NOTHING
     """
     seen = set()
-    batch = []
-    for row in rs:
-        stat_date = str(row.get('日期', '')).strip()[:10]
-        kname = str(row.get('词名字/词包名字', '')).strip()
-        if not stat_date or not kname:
+    total = 0
+    print(f"  万象台关键词报表：开始处理 {len(matches)} 个 CSV 文件")
+    for fi, fpath in enumerate(sorted(matches), 1):
+        fname = os.path.basename(fpath)
+        try:
+            _, rs = read_csv_gbk(fpath)
+        except Exception as e:
+            print(f"  [WARN] {fname}: {e}")
             continue
-        key = (stat_date, kname)
-        if key in seen: continue
-        seen.add(key)
-        def g(k):  return safe_float(row.get(k))
-        def gp(k): return safe_pct(row.get(k))
-        batch.append((
-            stat_date, kname,
-            str(row.get('词ID/词包ID', row.get('词 ID/词包ID', ''))),
-            str(row.get('词类型', '')),
-            str(row.get('场景名字', '')),
-            str(row.get('主体名称', '')),
-            g('展现量'), g('点击量'), g('花费'),
-            gp('点击率'), g('平均点击花费'), g('千次展现花费'),
-            g('总成交金额'), g('直接成交金额'), g('间接成交金额'),
-            gp('点击转化率'), g('投入产出比'),
-            gp('加购率'), g('总购物车数'),
-            g('收藏宝贝数'), g('收藏店铺数'),
-            g('总收藏加购数'), g('宝贝收藏加购数'),
-            g('引导访问量'), g('平均访问页面数'),
-            g('成交新客数'),
-            g('自然流量转化金额'), g('自然流量曝光量'),
-            fname
-        ))
-    if batch:
-        psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
-        conn.commit()
-    print(f"  fact_wxst_keyword: {len(batch)} rows")
+        batch = []
+        for row in rs:
+            stat_date = str(row.get('日期', '')).strip()[:10]
+            kname = str(row.get('词名字/词包名字', '')).strip()
+            if not stat_date or not kname:
+                continue
+            key = (stat_date, kname)
+            if key in seen: continue
+            seen.add(key)
+            def g(k):  return safe_float(row.get(k))
+            def gp(k): return safe_pct(row.get(k))
+            batch.append((
+                stat_date, kname,
+                str(row.get('词ID/词包ID', row.get('词 ID/词包ID', ''))),
+                str(row.get('词类型', '')),
+                str(row.get('场景名字', '')),
+                str(row.get('主体名称', '')),
+                g('展现量'), g('点击量'), g('花费'),
+                gp('点击率'), g('平均点击花费'), g('千次展现花费'),
+                g('总成交金额'), g('直接成交金额'), g('间接成交金额'),
+                gp('点击转化率'), g('投入产出比'),
+                gp('加购率'), g('总购物车数'),
+                g('收藏宝贝数'), g('收藏店铺数'),
+                g('总收藏加购数'), g('宝贝收藏加购数'),
+                g('引导访问量'), g('平均访问页面数'),
+                g('成交新客数'),
+                g('自然流量转化金额'), g('自然流量曝光量'),
+                fname
+            ))
+        if batch:
+            psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
+            conn.commit()
+        total += len(batch)
+        print(f"    [{fi}/{len(matches)}] {fname}: +{len(batch)}（累计 {total}）")
+    print(f"  fact_wxst_keyword: {total} rows ({len(matches)} files)")
 
 # ─────────────────────────────────────────────
 # 万象台内容报表（短视频/直播花费数据源）

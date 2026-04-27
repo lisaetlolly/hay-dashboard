@@ -185,16 +185,19 @@ def get_raw_data():
     try:
         with db() as conn:
             # 1. dim_product → 25 主链 + 副 SKU
+            #    ORDER 让主 SKU(product_id == spu_id) 排前，使 spu_meta 用主 SKU title
             dim = rows(conn, """
-                SELECT product_id, spu_id, title, category_l1, category_l2, inventory
+                SELECT product_id, spu_id, title, category_l1, category_l2, inventory,
+                       (product_id = spu_id) AS is_main
                 FROM dim_product
-                ORDER BY spu_id, product_id
+                ORDER BY spu_id, is_main DESC, product_id
             """)
             spu_to_pids = {}  # spu_id → list of product_id (主+副)
             spu_meta = {}     # spu_id → {title, cat}
             for d in dim:
                 sid = d["spu_id"]
                 spu_to_pids.setdefault(sid, []).append(d["product_id"])
+                # 主 SKU 优先（is_main=TRUE 排在前面），首次遇到即记录
                 if sid not in spu_meta:
                     spu_meta[sid] = {
                         "title": d["title"],
@@ -927,6 +930,185 @@ def get_tasks(
     sql += " ORDER BY t.time_range_label DESC, t.product_id, t.id"
     with db() as conn:
         return rows(conn, sql, tuple(params))
+
+
+@app.get("/api/tasks/with-metrics")
+def get_tasks_with_metrics(period_label: Optional[str] = None):
+    """
+    专为投放面板"任务面板"设计：
+    - 按 product_id 分组任务，每组返回任务列表 + 当期 10 个指标 + 上期对比
+    - period_label 不传时取 task_period.is_current=TRUE 的当前周期
+    - 上期 = task_period.start_date < 当前周期.start_date 的最近一个
+
+    返回 metrics 含：gmv, vis, cart, cart_rate, pay_cvr, ctr, spend,
+                     dwell_time, content_visits（光合渠道流量）,
+                     xhs_count（小红书笔记数）
+    """
+    with db() as conn:
+        # 1. 当前周期
+        if period_label:
+            cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period WHERE label = %s", (period_label,))
+        else:
+            cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period WHERE is_current = TRUE ORDER BY start_date DESC LIMIT 1")
+        if not cur_period:
+            return {"error": "no current period found", "groups": []}
+        # 2. 上期：start_date 小于当前的最近一个
+        prev_period = row(conn, """
+            SELECT label, start_date::text AS start_date, end_date::text AS end_date
+            FROM task_period
+            WHERE start_date < %s::date
+            ORDER BY start_date DESC LIMIT 1
+        """, (cur_period["start_date"],))
+
+        # 3. 当前周期的所有任务，按 product_id 分组
+        tasks = rows(conn, """
+            SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
+                   t.category, t.time_range_label, t.execution_note,
+                   t.template_id
+            FROM tasks t
+            WHERE t.time_range_label = %s
+              AND t.product_id IS NOT NULL
+            ORDER BY t.product_id, t.id
+        """, (cur_period["label"],))
+
+        # 4. 涉及到的 product_id 列表
+        pids = sorted({t["product_id"] for t in tasks})
+        if not pids:
+            return {
+                "period": cur_period,
+                "prev_period": prev_period,
+                "groups": [],
+            }
+
+        # 5. 每个 product_id 当期 + 上期的 metrics
+        def calc_metrics(start, end):
+            if not start or not end:
+                return {}
+            result = {}
+            # syzt：gmv / vis / cart / cart_rate / pay_cvr / dwell_time
+            syzt = rows(conn, """
+                SELECT p.spu_id AS pid,
+                       COALESCE(SUM(s.pay_amount), 0)        AS gmv,
+                       COALESCE(SUM(s.visitors), 0)          AS vis,
+                       COALESCE(SUM(s.cart_users), 0)        AS cart,
+                       COALESCE(SUM(s.cart_users)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS cart_rate,
+                       COALESCE(SUM(s.pay_new_buyers + s.pay_old_buyers)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS pay_cvr,
+                       COALESCE(SUM(s.avg_stay_duration * s.visitors)::numeric / NULLIF(SUM(s.visitors),0), 0) AS dwell_time
+                FROM fact_syzt_product s
+                JOIN dim_product p ON s.product_id = p.product_id
+                WHERE s.stat_date BETWEEN %s AND %s
+                  AND p.spu_id = ANY(%s)
+                GROUP BY p.spu_id
+            """, (start, end, pids))
+            for r in syzt:
+                result[r["pid"]] = {
+                    "gmv": float(r["gmv"] or 0),
+                    "vis": int(r["vis"] or 0),
+                    "cart": int(r["cart"] or 0),
+                    "cart_rate": round(float(r["cart_rate"] or 0), 2),
+                    "pay_cvr": round(float(r["pay_cvr"] or 0), 2),
+                    "dwell_time": round(float(r["dwell_time"] or 0), 1),
+                }
+            # wxst：spend / ctr
+            wxst = rows(conn, """
+                SELECT p.spu_id AS pid,
+                       COALESCE(SUM(w.spend), 0)         AS spend,
+                       COALESCE(SUM(w.clicks)::numeric / NULLIF(SUM(w.impressions),0) * 100, 0) AS ctr
+                FROM fact_wxst_product w
+                JOIN dim_product p ON w.product_id = p.product_id
+                WHERE w.stat_date BETWEEN %s AND %s
+                  AND p.spu_id = ANY(%s)
+                GROUP BY p.spu_id
+            """, (start, end, pids))
+            for r in wxst:
+                m = result.setdefault(r["pid"], {})
+                m["spend"] = round(float(r["spend"] or 0), 2)
+                m["ctr"] = round(float(r["ctr"] or 0), 2)
+            # 光合渠道流量（来自 fact_wxst_content - 内容报表的引导访问）
+            try:
+                vc = rows(conn, """
+                    SELECT
+                        COALESCE(SUM(c.guided_visits), 0) AS content_visits
+                    FROM fact_wxst_content c
+                    WHERE c.stat_date BETWEEN %s AND %s
+                """, (start, end))
+                # 注意：内容报表是视频维度，不是商品维度，无法精确归到商品。
+                # 暂时取全店的"内容引导访问量"展示在每个商品的卡片上（同一值），
+                # 等"内容→商品"明细数据补齐后再细化。
+                shared_content = int(vc[0]["content_visits"] or 0) if vc else 0
+                for pid in pids:
+                    result.setdefault(pid, {})["content_visits"] = shared_content
+            except Exception:
+                pass
+            # 小红书笔记数（按 publish_time 落在周期内 + 关联商品）
+            try:
+                xhs = rows(conn, """
+                    SELECT np.product_id AS pid, COUNT(DISTINCT n.id) AS xhs_count
+                    FROM fact_xhs_note n
+                    JOIN fact_xhs_note_product np ON np.note_id = n.id
+                    WHERE n.publish_time BETWEEN %s AND %s
+                      AND np.product_id = ANY(%s)
+                    GROUP BY np.product_id
+                """, (start, end, pids))
+                xhs_by_pid = {r["pid"]: int(r["xhs_count"] or 0) for r in xhs}
+                for pid in pids:
+                    result.setdefault(pid, {})["xhs_count"] = xhs_by_pid.get(pid, 0)
+            except Exception:
+                for pid in pids:
+                    result.setdefault(pid, {})["xhs_count"] = 0
+            # 补齐缺失字段为 0
+            for pid in pids:
+                m = result.setdefault(pid, {})
+                for k in ("gmv", "vis", "cart", "cart_rate", "pay_cvr",
+                          "dwell_time", "spend", "ctr", "content_visits", "xhs_count"):
+                    m.setdefault(k, 0)
+            return result
+
+        cur_metrics = calc_metrics(cur_period["start_date"], cur_period["end_date"])
+        prev_metrics = calc_metrics(prev_period["start_date"], prev_period["end_date"]) if prev_period else {}
+
+        # 6. 商品名 / 分类 / 图片
+        prod_info = rows(conn, """
+            SELECT spu_id, MAX(title) AS title, MAX(category_l1) AS category_l1
+            FROM dim_product
+            WHERE spu_id = ANY(%s)
+            GROUP BY spu_id
+        """, (pids,))
+        info_by_pid = {r["spu_id"]: r for r in prod_info}
+
+        # 7. 组装 groups
+        def diff_pct(cur, prev):
+            if not prev or prev == 0:
+                return None
+            return round((cur - prev) / prev * 100, 1)
+
+        groups = []
+        tasks_by_pid = {}
+        for t in tasks:
+            tasks_by_pid.setdefault(t["product_id"], []).append(t)
+        for pid in pids:
+            cur_m = cur_metrics.get(pid, {})
+            prev_m = prev_metrics.get(pid, {})
+            diff = {k: diff_pct(cur_m.get(k, 0), prev_m.get(k, 0))
+                    for k in cur_m}
+            info = info_by_pid.get(pid, {})
+            groups.append({
+                "product_id":     pid,
+                "product_name":   info.get("title") or pid,
+                "category_l1":    info.get("category_l1") or "",
+                "tasks":          tasks_by_pid.get(pid, []),
+                "current_metrics": cur_m,
+                "prev_metrics":   prev_m,
+                "diff_pct":       diff,
+            })
+        # 按当期 GMV 从高到低
+        groups.sort(key=lambda g: g["current_metrics"].get("gmv", 0), reverse=True)
+
+        return {
+            "period":      cur_period,
+            "prev_period": prev_period,
+            "groups":      groups,
+        }
 
 
 @app.get("/api/tasks/mine")
@@ -2042,11 +2224,34 @@ def get_overview_ranking(
                 "change_pct":  change_pct,
                 "bar_pct":     round(cur_val / max_val * 100, 1) if max_val else 0,
             })
+        # 上期 Top10：用同样的 sql_prev 但限制 LIMIT，并按 value 排序
+        # （sql_prev 没有 LIMIT/ORDER BY，所以这里 Python 处理）
+        prev_top = sorted(prev_rows, key=lambda r: r.get("value") or 0, reverse=True)[:limit]
+        prev_top_with_meta = []
+        prev_pids = [r["spu_id"] for r in prev_top]
+        if prev_pids:
+            with db() as conn2:
+                meta = rows(conn2, """
+                    SELECT spu_id, MAX(title) AS title, MAX(category_l1) AS category_l1
+                    FROM dim_product WHERE spu_id = ANY(%s) GROUP BY spu_id
+                """, (prev_pids,))
+                meta_by_pid = {r["spu_id"]: r for r in meta}
+            for rank, r in enumerate(prev_top, 1):
+                m = meta_by_pid.get(r["spu_id"], {})
+                prev_top_with_meta.append({
+                    "rank":        rank,
+                    "spu_id":      r["spu_id"],
+                    "title":       m.get("title") or r["spu_id"],
+                    "category_l1": m.get("category_l1") or "",
+                    "value":       r["value"],
+                })
+
         return {
             "metric":     metric,
             "period":     {"start": s, "end": e},
             "prev_period":{"start": ps, "end": pe},
             "items":      result,
+            "prev_top":   prev_top_with_meta,
         }
     except Exception as exc:
         # 兜底：不让 500 出去，返回空结果 + 错误信息

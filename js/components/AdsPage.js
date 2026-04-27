@@ -237,49 +237,108 @@ const AdsPage = defineComponent({
       }))
     })
 
-    const allTasks = computed(() => Object.entries(RAW.tasks_by_pid || {}).flatMap(([pid, list]) => {
-      const p = RAW.products?.[pid]
-      let gmv = 0, spend = 0, collect = 0, vis = 0
-      if (p) {
-        for (let i=0;i<p.dates.length;i++) {
-          const d = p.dates[i]
-          if (d >= periodStart.value && d <= periodEnd.value) {
-            gmv += p.pay?.[i] || 0; spend += p.spend?.[i] || 0
-            collect += (p.collect?.[i]||0)+(p.cart?.[i]||0); vis += p.vis?.[i] || 0
-          }
-        }
-      }
-      return (list||[]).map(t => ({ ...t, pid, image: imgSrc(pid),
-        metrics: { gmv:+gmv.toFixed(2), spend:+spend.toFixed(2), collect:Math.round(collect),
-          visitors:Math.round(vis), roi: spend>0 ? +(gmv/spend).toFixed(2) : null }
-      }))
-    }))
-
-    const taskPeriods = computed(() => RAW.task_periods || [])
+    // ── 任务面板：从 Neon 拉真实任务（含周期 + 当期/上期 metrics）──
+    const apiTasksData = ref({ groups: [], period: null, prev_period: null })
+    const apiTaskPeriods = ref([])
     const selectedPeriod = ref('')
-    const activePeriod = computed(() =>
-      selectedPeriod.value || taskPeriods.value[taskPeriods.value.length-1] || ''
-    )
-    const teamFilters = ref({ owner:'', category:'', productKeyword:'', status:'' })
-    const ownerOptions = computed(() => [...new Set(allTasks.value.map(t => t.owner).filter(Boolean))])
-    const categoryOptions = computed(() => [...new Set(allTasks.value.map(t => RAW.products?.[t.pid]?.cat).filter(Boolean))])
-    const statusOptions = ['待开始','进行中','已完成']
-    const taskGroups = computed(() => {
-      const byPid = {}
-      const period = activePeriod.value
-      for (const t of allTasks.value) {
-        const product = RAW.products?.[t.pid]
-        const productName = product?.name || RAW.short_names?.[t.pid] || t.pid
-        if (teamFilters.value.owner && t.owner !== teamFilters.value.owner) continue
-        if (teamFilters.value.category && (product?.cat||'') !== teamFilters.value.category) continue
-        if (teamFilters.value.productKeyword && !productName.toLowerCase().includes(teamFilters.value.productKeyword.toLowerCase())) continue
-        if (teamFilters.value.status && (t.status||'') !== teamFilters.value.status) continue
-        if (!byPid[t.pid]) byPid[t.pid] = { pid:t.pid, name:productName, image:t.image, metrics:t.metrics, tasks:[] }
-        const note = (t.period_notes||{})[period] || ''
-        byPid[t.pid].tasks.push({ id:t.id, detail:t.detail, owner:t.owner||'', category:t.category||'', note, status:t.status||'' })
+
+    const loadTaskPeriods = async () => {
+      try {
+        const res = await fetch('/api/task-periods')
+        if (res.ok) apiTaskPeriods.value = await res.json()
+      } catch {}
+    }
+    const loadTasksWithMetrics = async () => {
+      const params = selectedPeriod.value ? `?period_label=${encodeURIComponent(selectedPeriod.value)}` : ''
+      try {
+        const res = await fetch('/api/tasks/with-metrics' + params)
+        if (res.ok) apiTasksData.value = await res.json()
+      } catch {
+        apiTasksData.value = { groups: [], period: null, prev_period: null }
       }
-      return Object.values(byPid).filter(p => p.tasks.length)
+    }
+    onMounted(() => { loadTaskPeriods(); loadTasksWithMetrics() })
+    watch(selectedPeriod, loadTasksWithMetrics)
+
+    const taskPeriods = computed(() => apiTaskPeriods.value.map(p => p.label))
+    const activePeriod = computed(() => apiTasksData.value.period?.label || selectedPeriod.value)
+    const activePeriodRange = computed(() => {
+      const p = apiTasksData.value.period
+      return p ? `${p.start_date} ~ ${p.end_date}` : ''
     })
+    const prevPeriodLabel = computed(() => apiTasksData.value.prev_period?.label || '—')
+    const prevPeriodRange = computed(() => {
+      const p = apiTasksData.value.prev_period
+      return p ? `${p.start_date} ~ ${p.end_date}` : ''
+    })
+
+    const teamFilters = ref({ owner:'', category:'', productKeyword:'', status:'' })
+    const ownerOptions = computed(() => {
+      const s = new Set()
+      for (const g of apiTasksData.value.groups || [])
+        for (const t of g.tasks || []) if (t.owner) s.add(t.owner)
+      return [...s]
+    })
+    const categoryOptions = computed(() => {
+      const s = new Set()
+      for (const g of apiTasksData.value.groups || []) if (g.category_l1) s.add(g.category_l1)
+      return [...s]
+    })
+    const statusOptions = ['待开始','进行中','已完成']
+
+    // 应用前端过滤（owner / 分类 / 商品名 / 状态）
+    const taskGroups = computed(() => {
+      const out = []
+      for (const g of apiTasksData.value.groups || []) {
+        if (teamFilters.value.category && g.category_l1 !== teamFilters.value.category) continue
+        if (teamFilters.value.productKeyword
+            && !(g.product_name||'').toLowerCase().includes(teamFilters.value.productKeyword.toLowerCase())) continue
+        const filteredTasks = (g.tasks || []).filter(t => {
+          if (teamFilters.value.owner && t.owner !== teamFilters.value.owner) return false
+          if (teamFilters.value.status && (t.status||'') !== teamFilters.value.status) return false
+          return true
+        })
+        if (!filteredTasks.length) continue
+        out.push({
+          pid: g.product_id,
+          name: g.product_name,
+          image: imgSrc(g.product_id),
+          tasks: filteredTasks.map(t => ({
+            id: t.id, detail: t.detail, owner: t.owner || '',
+            category: t.category || '', status: t.status || '',
+            note: t.execution_note || '',
+          })),
+          metrics: g.current_metrics || {},
+          prev_metrics: g.prev_metrics || {},
+          diff_pct: g.diff_pct || {},
+        })
+      }
+      return out
+    })
+
+    // 指标定义（卡片上展示的 10 个 KPI）
+    const taskMetricDefs = [
+      { k:'gmv',            l:'销售金额',  fmt:'money' },
+      { k:'cart',           l:'加购量',    fmt:'num' },
+      { k:'cart_rate',      l:'加购率',    fmt:'pct' },
+      { k:'pay_cvr',        l:'支付转化率', fmt:'pct' },
+      { k:'ctr',            l:'CTR',       fmt:'pct' },
+      { k:'spend',          l:'花费',      fmt:'money' },
+      { k:'dwell_time',     l:'停留时长',  fmt:'sec' },
+      { k:'content_visits', l:'光合渠道流量', fmt:'num' },
+      { k:'xhs_count',      l:'笔记发布量', fmt:'num' },
+      { k:'vis',            l:'访客数',    fmt:'num' },
+    ]
+    const fmtMetric = (v, type) => {
+      if (v == null) return '—'
+      const n = Number(v)
+      if (type === 'money') return n >= 10000 ? '¥' + (n/10000).toFixed(1) + '万' : '¥' + n.toFixed(0)
+      if (type === 'pct') return n.toFixed(2) + '%'
+      if (type === 'sec') return n >= 60 ? (n/60).toFixed(1) + 'min' : Math.round(n) + 's'
+      return Math.round(n).toLocaleString()
+    }
+    const fmtDiffPct = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%'
+    const diffCls = v => v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'dn' : 'flat'
 
     const meetings = computed(() => {
       const byWeek = {}
@@ -323,6 +382,9 @@ const AdsPage = defineComponent({
       channelCatData,
       // ── 新增：API 数据状态 + 品类计划
       apiSpend, apiVideo, apiPlan, audiencePlanByCat, dataSourceTag,
+      // 任务面板新指标
+      taskMetricDefs, fmtMetric, fmtDiffPct, diffCls,
+      activePeriodRange, prevPeriodLabel, prevPeriodRange,
     }
   },
   template: `
@@ -508,12 +570,18 @@ const AdsPage = defineComponent({
       <div class="card" style="padding:14px 16px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <div style="font-size:13px;font-weight:700;color:var(--text);margin-right:4px">任务周期</div>
-          <div style="display:flex;align-items:center;gap:6px">
-            <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod }}</span>
-            <select v-if="taskPeriods.length>1" v-model="selectedPeriod"
-              style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;cursor:pointer;color:var(--muted)">
-              <option v-for="p in taskPeriods" :key="p" :value="p">{{ p }}</option>
-            </select>
+          <div style="display:flex;align-items:center;gap:6px;flex-direction:column;align-items:flex-start">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod || '—' }}</span>
+              <select v-if="taskPeriods.length>0" v-model="selectedPeriod"
+                style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;cursor:pointer;color:var(--muted)">
+                <option value="">默认（当前周期）</option>
+                <option v-for="p in taskPeriods" :key="p" :value="p">{{ p }}</option>
+              </select>
+            </div>
+            <span style="font-size:11px;color:var(--muted)">
+              当期：{{ activePeriodRange || '—' }}　·　对比上期：{{ prevPeriodLabel }} ({{ prevPeriodRange || '—' }})
+            </span>
           </div>
           <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
             <select v-model="teamFilters.owner" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
@@ -559,23 +627,16 @@ const AdsPage = defineComponent({
                   <div style="font-size:11px;color:var(--muted)">{{ item.pid }}</div>
                 </div>
                 <div>
-                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计时间：{{ periodLabel }}</div>
-                  <div style="display:flex;gap:24px;flex-wrap:wrap">
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">成交额</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ fmtMoney(item.metrics.gmv) }}</span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">花费</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ fmtMoney(item.metrics.spend) }}</span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">ROI</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ item.metrics.roi == null ? '—' : item.metrics.roi }}</span>
-                    </div>
-                    <div style="display:flex;flex-direction:column;gap:2px">
-                      <span style="font-size:10px;color:var(--muted)">收藏加购</span>
-                      <span style="font-size:16px;font-weight:700;color:var(--text)">{{ item.metrics.collect }}</span>
+                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
+                    当期：{{ activePeriodRange || '—' }}　·　环比 {{ prevPeriodLabel }}
+                  </div>
+                  <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px 12px">
+                    <div v-for="m in taskMetricDefs" :key="m.k" style="display:flex;flex-direction:column;gap:2px;min-width:0">
+                      <span style="font-size:10px;color:var(--muted)">{{ m.l }}</span>
+                      <div style="display:flex;align-items:baseline;gap:5px">
+                        <span style="font-size:14px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ fmtMetric(item.metrics[m.k], m.fmt) }}</span>
+                        <span :class="['chg', diffCls(item.diff_pct[m.k])]" style="font-size:10px">{{ fmtDiffPct(item.diff_pct[m.k]) }}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
