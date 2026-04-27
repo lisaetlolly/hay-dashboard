@@ -1357,14 +1357,32 @@ def update_task_template(tpl_id: int, body: TaskTemplateUpdate):
 
 
 @app.get("/api/task-periods")
-def list_task_periods():
+def list_task_periods(include_empty: bool = Query(default=False,
+        description="是否包含没有任务的周期；默认 False，前端隐藏没任务的旧周期")):
+    """
+    返回任务周期列表，附带任务条数 task_count（默认隐藏 task_count=0 的周期）。
+    """
     with db() as conn:
         try:
-            return rows(conn, """
-                SELECT id, label, start_date::text AS start_date,
-                       end_date::text AS end_date, is_current
-                FROM task_period ORDER BY start_date DESC
-            """)
+            sql = """
+                SELECT tp.id, tp.label,
+                       tp.start_date::text AS start_date,
+                       tp.end_date::text AS end_date,
+                       tp.is_current,
+                       COALESCE(c.cnt, 0) AS task_count
+                FROM task_period tp
+                LEFT JOIN (
+                    SELECT time_range_label AS label, COUNT(*) AS cnt
+                    FROM tasks WHERE time_range_label IS NOT NULL AND time_range_label <> ''
+                    GROUP BY time_range_label
+                ) c ON c.label = tp.label
+                ORDER BY tp.start_date DESC
+            """
+            data = rows(conn, sql)
+            if not include_empty:
+                # 当前周（is_current）即使 0 任务也保留，免得新建空周看不到
+                data = [r for r in data if (r.get("task_count") or 0) > 0 or r.get("is_current")]
+            return data
         except Exception:
             return []
 

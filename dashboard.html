@@ -120,7 +120,13 @@ async function _loadRawFromAPI() {
     const data = await res.json()
     if (data._error) { RAW_LOAD_ERROR = data._error; console.warn('[RAW] DB unavailable:', data._error); return }
     Object.assign(RAW, data)
-    console.log('[RAW] loaded in', RAW_LOAD_MS, 'ms; products=', Object.keys(data.products || {}).length, 'syzt=', (data.syzt||[]).length, 'wxst=', (data.wxst||[]).length)
+    // OFFICIAL Set 是页面加载时基于 RAW 快照建的；API 拉到新的 official_pids（如 typo 修正后的 1020815058332）必须刷一遍，
+    // 否则 ProductsPage / ComparePage 用 OFFICIAL.has() 过滤会把新 PID 漏掉（症状：商品管理只剩 24 个）。
+    if (Array.isArray(RAW.official_pids)) {
+      OFFICIAL.clear()
+      for (const p of RAW.official_pids) OFFICIAL.add(p)
+    }
+    console.log('[RAW] loaded in', RAW_LOAD_MS, 'ms; products=', Object.keys(data.products || {}).length, 'syzt=', (data.syzt||[]).length, 'wxst=', (data.wxst||[]).length, 'official=', OFFICIAL.size)
   } catch(e) {
     RAW_LOAD_MS = Date.now() - t0
     RAW_LOAD_ERROR = e.name === 'AbortError' ? '请求超时（>35s，Neon DB 唤醒失败）' : String(e)
