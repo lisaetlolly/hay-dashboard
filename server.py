@@ -1672,7 +1672,20 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
             if "wxst=" in line:
                 try: wxst = int(line.split("wxst=")[1].split()[0])
                 except: pass
-        return {"ok": True, "saved_files": saved, "data_end": data_end, "syzt": syzt, "wxst": wxst, "log": result.stdout[-600:]}
+        # 将更新后的 dashboard.html 提交并推送，防止服务重启后数据回滚
+        git_log = ""
+        try:
+            commit_msg = f"data: ETL更新数据 data_end={data_end} syzt={syzt} wxst={wxst}"
+            git_add = subprocess.run(["git", "add", "dashboard.html"], cwd=base_dir, capture_output=True, text=True, timeout=30)
+            git_commit = subprocess.run(["git", "commit", "-m", commit_msg], cwd=base_dir, capture_output=True, text=True, timeout=30)
+            if git_commit.returncode == 0:
+                git_push = subprocess.run(["git", "push", "origin", "main"], cwd=base_dir, capture_output=True, text=True, timeout=60)
+                git_log = f"git commit OK; push {'OK' if git_push.returncode==0 else 'WARN:'+git_push.stderr[-200:]}"
+            else:
+                git_log = f"git commit skip: {git_commit.stdout.strip()}"
+        except Exception as ge:
+            git_log = f"git warn: {ge}"
+        return {"ok": True, "saved_files": saved, "data_end": data_end, "syzt": syzt, "wxst": wxst, "log": result.stdout[-600:], "git": git_log}
     except subprocess.TimeoutExpired:
         raise HTTPException(500, "ETL 超时（>120s）")
 
