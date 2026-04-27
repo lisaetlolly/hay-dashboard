@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 NEON_DSN = os.environ.get(
     "DATABASE_URL",
-    "postgresql://neondb_owner:npg_vJrIahw5N0gO@ep-steep-poetry-ao6yf96a-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+    "postgresql://neondb_owner:npg_vJrIahw5N0gO@ep-steep-poetry-ao6yf96a-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 )
 
 DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -96,16 +96,23 @@ app.add_middleware(
 
 @contextmanager
 def db():
-    try:
-        conn = psycopg2.connect(NEON_DSN, connect_timeout=5)
-        conn.autocommit = False
+    # Neon serverless 冷启动可能需要 5-15s，给 30s 超时；连接失败时重试一次
+    last_err = None
+    for attempt in range(2):
         try:
-            yield conn
-        finally:
-            conn.close()
-    except Exception:
-        # Fallback: yield a dummy that will cause API calls to use SQLite path
-        raise
+            conn = psycopg2.connect(NEON_DSN, connect_timeout=30)
+            conn.autocommit = False
+            try:
+                yield conn
+                return
+            finally:
+                conn.close()
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                import time; time.sleep(1)
+                continue
+            raise
 
 
 def rows(conn, sql, params=()):
@@ -1395,104 +1402,111 @@ def get_overview_ranking(
     metric: gmv=销售额  ctr=点击率  visitors=进店UV
     """
     s, e = start or CAMPAIGN_START, end or date.today().isoformat()
-    ps, pe = _prev_range(s, e)
+    try:
+        ps, pe = _prev_range(s, e)
+    except Exception as ex:
+        return {"metric": metric, "period": {"start": s, "end": e}, "items": [], "_error": f"日期解析失败: {ex}"}
 
-    with db() as conn:
-        if metric == "ctr":
-            sql_cur = """
-                SELECT p.spu_id,
-                       MAX(p.title) AS title,
-                       MAX(p.category_l1) AS category_l1,
-                       ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100, 4) AS value,
-                       SUM(w.impressions) AS impressions,
-                       SUM(w.clicks)      AS clicks
-                FROM fact_wxst_product w
-                JOIN dim_product p ON w.product_id = p.product_id
-                WHERE w.stat_date BETWEEN %s AND %s
-                GROUP BY p.spu_id
-                HAVING SUM(w.impressions) > 0
-                ORDER BY value DESC LIMIT %s
-            """
-            sql_prev = """
-                SELECT p.spu_id,
-                       ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100, 4) AS value
-                FROM fact_wxst_product w
-                JOIN dim_product p ON w.product_id = p.product_id
-                WHERE w.stat_date BETWEEN %s AND %s
-                GROUP BY p.spu_id
-            """
-            cur_rows  = rows(conn, sql_cur,  (s, e, limit))
-            prev_rows = rows(conn, sql_prev, (ps, pe))
-        elif metric == "visitors":
-            sql_cur = """
-                SELECT p.spu_id,
-                       MAX(p.title) AS title,
-                       MAX(p.category_l1) AS category_l1,
-                       SUM(s.visitors) AS value
-                FROM fact_syzt_product s
-                JOIN dim_product p ON s.product_id = p.product_id
-                WHERE s.stat_date BETWEEN %s AND %s
-                GROUP BY p.spu_id
-                ORDER BY value DESC LIMIT %s
-            """
-            sql_prev = """
-                SELECT p.spu_id, SUM(s.visitors) AS value
-                FROM fact_syzt_product s
-                JOIN dim_product p ON s.product_id = p.product_id
-                WHERE s.stat_date BETWEEN %s AND %s
-                GROUP BY p.spu_id
-            """
-            cur_rows  = rows(conn, sql_cur,  (s, e, limit))
-            prev_rows = rows(conn, sql_prev, (ps, pe))
-        else:  # gmv
-            sql_cur = """
-                SELECT p.spu_id,
-                       MAX(p.title) AS title,
-                       MAX(p.category_l1) AS category_l1,
-                       ROUND(SUM(s.pay_amount), 2) AS value
-                FROM fact_syzt_product s
-                JOIN dim_product p ON s.product_id = p.product_id
-                WHERE s.stat_date BETWEEN %s AND %s
-                GROUP BY p.spu_id
-                ORDER BY value DESC LIMIT %s
-            """
-            sql_prev = """
-                SELECT p.spu_id, ROUND(SUM(s.pay_amount), 2) AS value
-                FROM fact_syzt_product s
-                JOIN dim_product p ON s.product_id = p.product_id
-                WHERE s.stat_date BETWEEN %s AND %s
-                GROUP BY p.spu_id
-            """
-            cur_rows  = rows(conn, sql_cur,  (s, e, limit))
-            prev_rows = rows(conn, sql_prev, (ps, pe))
+    try:
+        with db() as conn:
+            if metric == "ctr":
+                sql_cur = """
+                    SELECT p.spu_id,
+                           MAX(p.title) AS title,
+                           MAX(p.category_l1) AS category_l1,
+                           ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100, 4) AS value,
+                           SUM(w.impressions) AS impressions,
+                           SUM(w.clicks)      AS clicks
+                    FROM fact_wxst_product w
+                    JOIN dim_product p ON w.product_id = p.product_id
+                    WHERE w.stat_date BETWEEN %s AND %s
+                    GROUP BY p.spu_id
+                    HAVING SUM(w.impressions) > 0
+                    ORDER BY value DESC LIMIT %s
+                """
+                sql_prev = """
+                    SELECT p.spu_id,
+                           ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100, 4) AS value
+                    FROM fact_wxst_product w
+                    JOIN dim_product p ON w.product_id = p.product_id
+                    WHERE w.stat_date BETWEEN %s AND %s
+                    GROUP BY p.spu_id
+                """
+                cur_rows  = rows(conn, sql_cur,  (s, e, limit))
+                prev_rows = rows(conn, sql_prev, (ps, pe))
+            elif metric == "visitors":
+                sql_cur = """
+                    SELECT p.spu_id,
+                           MAX(p.title) AS title,
+                           MAX(p.category_l1) AS category_l1,
+                           SUM(s.visitors) AS value
+                    FROM fact_syzt_product s
+                    JOIN dim_product p ON s.product_id = p.product_id
+                    WHERE s.stat_date BETWEEN %s AND %s
+                    GROUP BY p.spu_id
+                    ORDER BY value DESC LIMIT %s
+                """
+                sql_prev = """
+                    SELECT p.spu_id, SUM(s.visitors) AS value
+                    FROM fact_syzt_product s
+                    JOIN dim_product p ON s.product_id = p.product_id
+                    WHERE s.stat_date BETWEEN %s AND %s
+                    GROUP BY p.spu_id
+                """
+                cur_rows  = rows(conn, sql_cur,  (s, e, limit))
+                prev_rows = rows(conn, sql_prev, (ps, pe))
+            else:  # gmv
+                sql_cur = """
+                    SELECT p.spu_id,
+                           MAX(p.title) AS title,
+                           MAX(p.category_l1) AS category_l1,
+                           ROUND(SUM(s.pay_amount), 2) AS value
+                    FROM fact_syzt_product s
+                    JOIN dim_product p ON s.product_id = p.product_id
+                    WHERE s.stat_date BETWEEN %s AND %s
+                    GROUP BY p.spu_id
+                    ORDER BY value DESC LIMIT %s
+                """
+                sql_prev = """
+                    SELECT p.spu_id, ROUND(SUM(s.pay_amount), 2) AS value
+                    FROM fact_syzt_product s
+                    JOIN dim_product p ON s.product_id = p.product_id
+                    WHERE s.stat_date BETWEEN %s AND %s
+                    GROUP BY p.spu_id
+                """
+                cur_rows  = rows(conn, sql_cur,  (s, e, limit))
+                prev_rows = rows(conn, sql_prev, (ps, pe))
 
-        prev_map = {r["spu_id"]: r["value"] for r in prev_rows}
-        max_val = max((r["value"] or 0 for r in cur_rows), default=1)
+            prev_map = {r["spu_id"]: r["value"] for r in prev_rows}
+            max_val = max((r["value"] or 0 for r in cur_rows), default=1)
 
-        result = []
-        for rank, r in enumerate(cur_rows, 1):
-            cur_val  = r["value"] or 0
-            prev_val = prev_map.get(r["spu_id"])
-            if prev_val and prev_val > 0:
-                change_pct = round((cur_val - prev_val) / prev_val * 100, 1)
-            else:
-                change_pct = None
-            result.append({
-                "rank":        rank,
-                "spu_id":      r["spu_id"],
-                "title":       r["title"],
-                "category_l1": r["category_l1"],
-                "value":       cur_val,
-                "prev_value":  prev_val,
-                "change_pct":  change_pct,
-                "bar_pct":     round(cur_val / max_val * 100, 1) if max_val else 0,
-            })
-        return {
-            "metric":     metric,
-            "period":     {"start": s, "end": e},
-            "prev_period":{"start": ps, "end": pe},
-            "items":      result,
-        }
+            result = []
+            for rank, r in enumerate(cur_rows, 1):
+                cur_val  = r["value"] or 0
+                prev_val = prev_map.get(r["spu_id"])
+                if prev_val and prev_val > 0:
+                    change_pct = round((cur_val - prev_val) / prev_val * 100, 1)
+                else:
+                    change_pct = None
+                result.append({
+                    "rank":        rank,
+                    "spu_id":      r["spu_id"],
+                    "title":       r["title"],
+                    "category_l1": r["category_l1"],
+                    "value":       cur_val,
+                    "prev_value":  prev_val,
+                    "change_pct":  change_pct,
+                    "bar_pct":     round(cur_val / max_val * 100, 1) if max_val else 0,
+                })
+            return {
+                "metric":     metric,
+                "period":     {"start": s, "end": e},
+                "prev_period":{"start": ps, "end": pe},
+                "items":      result,
+            }
+    except Exception as ex:
+        import traceback; traceback.print_exc()
+        return {"metric": metric, "period": {"start": s, "end": e}, "items": [], "_error": str(ex)}
 
 
 @app.get("/api/overview/kpi")
