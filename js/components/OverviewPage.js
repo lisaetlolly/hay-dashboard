@@ -106,12 +106,38 @@ const OverviewPage = defineComponent({
         ? d
         : localRank(rankMetric.value, s, e, rankCategory.value)
       rankData.value = valid || { items: [] }
-      // 总是重写 prevTopData：API 没返回 prev_top 也用本地算一份兜底
-      if (valid && Array.isArray(valid.prev_top) && valid.prev_top.length) {
-        prevTopData.value = valid.prev_top
+      // 上期 prev_top 三层兜底：
+      //   1) API 返回非空 + 至少有一项 value > 0 → 用 API
+      //   2) 否则用 RAW.products 本地算
+      //   3) 本地也算不出 → 把上期当作"当期"再请求一次 API（彻底绕开 SQL 上期口径 bug）
+      const apiPrev = (valid && Array.isArray(valid.prev_top)) ? valid.prev_top : []
+      const apiPrevHasValue = apiPrev.some(r => (r.value || 0) > 0)
+      if (apiPrevHasValue) {
+        prevTopData.value = apiPrev
       } else {
         const fallbackPrev = localRank(rankMetric.value, s, e, rankCategory.value).prev_top
-        prevTopData.value = fallbackPrev || []
+        if (fallbackPrev && fallbackPrev.length && fallbackPrev.some(r => (r.value || 0) > 0)) {
+          prevTopData.value = fallbackPrev
+        } else if (valid && valid.prev_period && valid.prev_period.start && valid.prev_period.end) {
+          // 第三层兜底：用上期日期再请求一次 ranking API（当期=上期），把 items 当成上期 top
+          try {
+            const prevParams = { metric: rankMetric.value, start: valid.prev_period.start, end: valid.prev_period.end }
+            if (rankCategory.value !== '全部') prevParams.category = rankCategory.value
+            const d2 = await api('/api/overview/ranking', prevParams)
+            if (d2 && Array.isArray(d2.items) && d2.items.length) {
+              prevTopData.value = d2.items.map(r => ({
+                rank: r.rank, spu_id: r.spu_id, title: r.title,
+                category_l1: r.category_l1, value: r.value,
+              }))
+            } else {
+              prevTopData.value = apiPrev || []
+            }
+          } catch {
+            prevTopData.value = apiPrev || []
+          }
+        } else {
+          prevTopData.value = apiPrev || []
+        }
       }
       rankLoading.value = false
     }

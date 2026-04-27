@@ -354,6 +354,11 @@ def get_raw_data():
 
             # 9a. img_map —— 实际扫描 25个商品图片/ 目录，避免幽灵路径
             img_map = {}
+            # 已知 PID typo 别名（来源：etl/etl_load.py PID_FIX）。
+            # 即使 ETL 还没重跑，前端用旧 PID 查图也能命中正确文件。
+            PID_TYPO_ALIASES = {
+                '7660181033346': '1020815058332',  # Barro Bowl & Plate
+            }
             try:
                 img_dir = os.path.join(DASHBOARD_DIR, "25个商品图片")
                 if os.path.exists(img_dir):
@@ -367,6 +372,10 @@ def get_raw_data():
                     pid = d["product_id"]; sid = d["spu_id"]
                     if pid != sid and sid in img_map and pid not in img_map:
                         img_map[pid] = img_map[sid]
+                # typo PID 别名：把错误 PID 也指向正确 PID 的图
+                for typo_pid, real_pid in PID_TYPO_ALIASES.items():
+                    if real_pid in img_map and typo_pid not in img_map:
+                        img_map[typo_pid] = img_map[real_pid]
             except Exception:
                 pass
 
@@ -382,6 +391,12 @@ def get_raw_data():
                 if sid != pid:
                     cat_map.setdefault(sid, d["category_l1"] or "其他")
                     short_names.setdefault(sid, d["title"] or sid)
+            # typo PID 别名：让旧 PID 也能 lookup 到分类/名称（前端 RAW 快照里残留的 typo）
+            for typo_pid, real_pid in PID_TYPO_ALIASES.items():
+                if real_pid in cat_map:
+                    cat_map.setdefault(typo_pid, cat_map[real_pid])
+                if real_pid in short_names:
+                    short_names.setdefault(typo_pid, short_names[real_pid])
 
             # 10. tasks_by_pid（从 tasks 表读，按 product_id 分组）
             tasks_by_pid = {}
