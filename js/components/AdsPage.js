@@ -232,10 +232,7 @@ const AdsPage = defineComponent({
       const byPid = {}
       const period = activePeriod.value
       for (const t of allTasks.value) {
-        // Tasks with period_notes entries are period-scoped; only show in their periods.
-        // Tasks with no period_notes keys (legacy/raw tasks) show in all periods.
-        const periodKeys = Object.keys(t.period_notes || {})
-        if (period && periodKeys.length > 0 && !periodKeys.includes(period)) continue
+        // 任务始终显示，周期只影响备注列显示哪一条笔记
         const product = RAW.products?.[t.pid]
         const productName = product?.name || RAW.short_names?.[t.pid] || t.pid
         if (teamFilters.value.owner && t.owner !== teamFilters.value.owner) continue

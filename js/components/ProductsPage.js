@@ -266,7 +266,7 @@ const ProductsPage = defineComponent({
           <template v-else-if="getCardTab(p.pid)==='tasks'">
             <div style="font-size:10px;color:var(--muted);margin-bottom:6px">周期：{{ activePeriod || '全部' }}</div>
             <div style="display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto">
-              <div v-for="task in p.allTasks.filter(t => { const keys=Object.keys(t.period_notes||{}); return !activePeriod || keys.length===0 || keys.includes(activePeriod) })"
+              <div v-for="task in p.allTasks"
                    :key="task.id" style="padding:6px 0;border-bottom:1px solid #f4f4f5;font-size:11px">
                 <div style="display:flex;align-items:baseline;gap:6px;flex-wrap:nowrap">
                   <span style="font-size:10px;color:var(--muted);border:1px solid var(--border);border-radius:99px;padding:1px 5px;flex-shrink:0;white-space:nowrap">{{ task.category }}</span>
