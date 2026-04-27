@@ -1,5 +1,25 @@
 // ── api.js ────────────────────────────────────────────────────
 // HTTP 请求层 + offline fallback。依赖：compute.js（computeAll）、RAW（内联全局）。
+//
+// 全局 fetch 拦截：自动注入 X-Username header
+//   后端写权限校验靠这个 header 找当前用户；登录后 user 会被
+//   写入 localStorage('hay_current_user')，下面这层包装读出来塞到 header 里。
+//   未登录或权限不够的写操作会被后端 401/403。
+;(function setupAuthHeader() {
+  if (window.__hayFetchPatched) return
+  window.__hayFetchPatched = true
+  const _origFetch = window.fetch.bind(window)
+  window.fetch = function(input, init) {
+    init = init || {}
+    init.headers = new Headers(init.headers || {})
+    try {
+      const u = JSON.parse(localStorage.getItem('hay_current_user') || 'null')
+      if (u && u.username) init.headers.set('X-Username', u.username)
+    } catch {}
+    return _origFetch(input, init)
+  }
+})()
+
 const api = (path, params) => {
   const s = params?.start || '2026-04-15'
   const e = params?.end   || RAW.data_end

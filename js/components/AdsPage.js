@@ -40,6 +40,12 @@ const AdsPage = defineComponent({
       try {
         const res = await fetch(`/api/settings/audience-plan`)
         apiPlan.value = res.ok ? await res.json() : []
+        // 把实时计划写入 window，让 compute.js 也能用上（替换老的 RAW.plan_pct 静态值）
+        if (apiPlan.value && apiPlan.value.length) {
+          const livePlan = {}
+          for (const r of apiPlan.value) livePlan[r.category] = r.plan_pct
+          window.LIVE_AUDIENCE_PLAN = livePlan
+        }
       } catch { apiPlan.value = [] }
     }
     onMounted(loadApiData)

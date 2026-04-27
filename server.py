@@ -11,7 +11,7 @@ from datetime import date
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -103,6 +103,48 @@ def db():
         raise
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 权限校验：FastAPI Dependency
+# ══════════════════════════════════════════════════════════════════════
+# 前端在所有写操作 fetch 中带 X-Username header（在 js/api.js 统一注入）
+# 后端按用户名查 users 表 → 返回 user dict 给业务函数检查 permissions
+# 注意：这是"信任前端 header"的简化方案，适用于内部团队工具，
+#       不替代真正的 Bearer Token / OAuth。
+def get_current_user(x_username: Optional[str] = Header(default=None, alias="X-Username")):
+    """读 header 拿当前用户。未带 header → 返回 None（公开 endpoint 兼容）"""
+    if not x_username:
+        return None
+    try:
+        with db() as conn:
+            return row(conn, """
+                SELECT id, username, display_name, role, permissions
+                FROM users WHERE username = %s
+            """, (x_username,))
+    except Exception:
+        return None
+
+
+def require_permission(perm_code: str):
+    """
+    Decorator-like dependency。给写 endpoint 加 Depends(require_permission('task.create'))，
+    会自动从 X-Username 找用户并校验权限。
+    'admin' 或 permissions 含 '*' → 通过所有；
+    permissions 含 perm_code → 通过该 code；
+    否则 → 403。
+    """
+    def _checker(user: Optional[dict] = Depends(get_current_user)):
+        if not user:
+            raise HTTPException(401, "未登录或缺少 X-Username header")
+        perms = user.get("permissions") or []
+        if isinstance(perms, dict):
+            # 兼容旧 jsonb={} 默认值
+            perms = []
+        if user.get("role") == "admin" or "*" in perms or perm_code in perms:
+            return user
+        raise HTTPException(403, f"无 {perm_code} 权限（当前角色 {user.get('role')}）")
+    return _checker
+
+
 def rows(conn, sql, params=()):
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     cur.execute(sql, params)
@@ -127,6 +169,250 @@ def default_range():
 # ══════════════════════════════════════════════════
 # 商品维度
 # ══════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════
+# /api/raw-data — 给 dashboard.html 启动时一次性拉的"大包"数据
+# 前端会 Object.assign(RAW, data)，所以返回的 key 直接覆盖到 RAW.* 上。
+# 关键字段：products / syzt / wxst / pid_daily_spend / video_daily / data_end
+# ══════════════════════════════════════════════════════════════════════
+@app.get("/api/raw-data")
+def get_raw_data():
+    """
+    一次性返回前端 RAW 需要的所有数据（products 时序 + syzt/wxst 明细
+    + 各种映射表）。前端启动时 fetch 这个，失败时回退到内嵌 RAW（仅元数据）。
+    """
+    from datetime import datetime
+    try:
+        with db() as conn:
+            # 1. dim_product → 25 主链 + 副 SKU
+            dim = rows(conn, """
+                SELECT product_id, spu_id, title, category_l1, category_l2, inventory
+                FROM dim_product
+                ORDER BY spu_id, product_id
+            """)
+            spu_to_pids = {}  # spu_id → list of product_id (主+副)
+            spu_meta = {}     # spu_id → {title, cat}
+            for d in dim:
+                sid = d["spu_id"]
+                spu_to_pids.setdefault(sid, []).append(d["product_id"])
+                if sid not in spu_meta:
+                    spu_meta[sid] = {
+                        "title": d["title"],
+                        "cat": d["category_l1"] or "其他",
+                        "category_l2": d["category_l2"] or "",
+                        "inventory": d["inventory"] or 0,
+                    }
+
+            # 2. 取所有有数据的日期范围
+            dates_row = row(conn, """
+                SELECT MIN(stat_date) AS s, MAX(stat_date) AS e
+                FROM fact_syzt_product
+            """) or {}
+            data_start = dates_row.get("s") or "2026-02-01"
+            data_end   = dates_row.get("e") or date.today().isoformat()
+
+            # 3. 拉所有 syzt 明细（按 SPU 聚合，副 SKU 合并到主）
+            syzt_data = rows(conn, """
+                SELECT p.spu_id,
+                       s.stat_date AS d,
+                       SUM(s.pay_amount)        AS pay,
+                       SUM(s.visitors)          AS vis,
+                       SUM(s.cart_users)        AS cart,
+                       SUM(s.collect_users)     AS collect,
+                       SUM(s.refund_amount)     AS refund,
+                       SUM(s.pay_new_buyers)    AS new_buyers,
+                       SUM(s.page_views)        AS pv,
+                       SUM(s.search_visitors)   AS search_vis,
+                       SUM(s.avg_stay_duration * s.visitors)::numeric/NULLIF(SUM(s.visitors),0) AS dwell_time,
+                       SUM(s.bounce_rate * s.visitors)::numeric/NULLIF(SUM(s.visitors),0)        AS bounce_rate,
+                       SUM(s.pay_old_buyers)    AS old_buyers,
+                       SUM(s.pay_new_buyers + s.pay_old_buyers) AS pay_buyers
+                FROM fact_syzt_product s
+                JOIN dim_product p ON s.product_id = p.product_id
+                GROUP BY p.spu_id, s.stat_date
+                ORDER BY p.spu_id, s.stat_date
+            """)
+            # 4. 拉所有 wxst 商品级（按 SPU 聚合）
+            wxst_data = rows(conn, """
+                SELECT p.spu_id,
+                       w.stat_date AS d,
+                       SUM(w.spend)        AS spend,
+                       SUM(w.total_gmv)    AS ad_gmv,
+                       SUM(w.impressions)  AS imps,
+                       SUM(w.clicks)       AS clicks,
+                       SUM(w.clicks)::numeric / NULLIF(SUM(w.impressions),0) AS ctr,
+                       SUM(w.total_gmv)::numeric / NULLIF(SUM(w.spend),0)    AS roi
+                FROM fact_wxst_product w
+                JOIN dim_product p ON w.product_id = p.product_id
+                GROUP BY p.spu_id, w.stat_date
+                ORDER BY p.spu_id, w.stat_date
+            """)
+
+            # 5. 把数据按 SPU 组装成时序（products 结构）
+            from collections import defaultdict
+            syzt_by_spu = defaultdict(list)
+            for r in syzt_data:
+                syzt_by_spu[r["spu_id"]].append(r)
+            wxst_by_spu = defaultdict(dict)
+            for r in wxst_data:
+                wxst_by_spu[r["spu_id"]][r["d"]] = r
+
+            products = {}
+            for spu_id, meta in spu_meta.items():
+                # 该 SPU 的所有有数据日期
+                syzt_rows = syzt_by_spu.get(spu_id, [])
+                wxst_rows = wxst_by_spu.get(spu_id, {})
+                if not syzt_rows and not wxst_rows:
+                    continue
+                all_dates = sorted({r["d"] for r in syzt_rows} | set(wxst_rows.keys()))
+                # 构建 dates 数组 + 各列时序
+                arr_pay, arr_vis, arr_cart, arr_collect, arr_refund = [], [], [], [], []
+                arr_new_buyers, arr_pay_buyers, arr_old_buyers = [], [], []
+                arr_pv, arr_search_vis, arr_dwell, arr_bounce = [], [], [], []
+                arr_spend, arr_ctr, arr_roi = [], [], []
+                syzt_idx = {r["d"]: r for r in syzt_rows}
+                for d in all_dates:
+                    sy = syzt_idx.get(d, {})
+                    wx = wxst_rows.get(d, {})
+                    arr_pay.append(float(sy.get("pay") or 0))
+                    arr_vis.append(int(sy.get("vis") or 0))
+                    arr_cart.append(int(sy.get("cart") or 0))
+                    arr_collect.append(int(sy.get("collect") or 0))
+                    arr_refund.append(float(sy.get("refund") or 0))
+                    arr_new_buyers.append(int(sy.get("new_buyers") or 0))
+                    arr_old_buyers.append(int(sy.get("old_buyers") or 0))
+                    arr_pay_buyers.append(int(sy.get("pay_buyers") or 0))
+                    arr_pv.append(int(sy.get("pv") or 0))
+                    arr_search_vis.append(int(sy.get("search_vis") or 0))
+                    arr_dwell.append(float(sy.get("dwell_time") or 0))
+                    arr_bounce.append(float(sy.get("bounce_rate") or 0))
+                    arr_spend.append(float(wx.get("spend") or 0))
+                    arr_ctr.append(float(wx.get("ctr") or 0))
+                    arr_roi.append(float(wx.get("roi") or 0))
+                products[spu_id] = {
+                    "pid": spu_id,
+                    "name": meta["title"],
+                    "cat": meta["cat"],
+                    "category_l2": meta["category_l2"],
+                    "inventory": meta["inventory"],
+                    "dates": all_dates,
+                    "pay": arr_pay, "vis": arr_vis, "cart": arr_cart,
+                    "collect": arr_collect, "refund": arr_refund,
+                    "new_buyers": arr_new_buyers, "old_buyers": arr_old_buyers,
+                    "pay_buyers": arr_pay_buyers,
+                    "pv": arr_pv, "search_vis": arr_search_vis,
+                    "dwell_time": arr_dwell, "bounce_rate": arr_bounce,
+                    "spend": arr_spend, "ctr": arr_ctr, "roi": arr_roi,
+                }
+
+            # 6. 扁平 syzt / wxst 数组（兼容老 compute.js）
+            syzt_flat = [{"d": r["d"], "pid": r["spu_id"],
+                          "pay": float(r.get("pay") or 0),
+                          "vis": int(r.get("vis") or 0),
+                          "cart": int(r.get("cart") or 0)} for r in syzt_data]
+            wxst_flat = [{"d": r["d"], "pid": r["spu_id"],
+                          "spend": float(r.get("spend") or 0),
+                          "ctr": float(r.get("ctr") or 0),
+                          "imps": int(r.get("imps") or 0)} for r in wxst_data]
+
+            # 7. pid_daily_spend：每个 SPU 每天的 spend/ctr/roi
+            pid_daily_spend = {}
+            for r in wxst_data:
+                pid_daily_spend.setdefault(r["spu_id"], {})[r["d"]] = {
+                    "spend": float(r.get("spend") or 0),
+                    "ctr":   float(r.get("ctr") or 0),
+                    "roi":   float(r.get("roi") or 0),
+                }
+
+            # 8. video_daily：从 fact_wxst_content（短视频）按日聚合
+            try:
+                vd_rows = rows(conn, """
+                    SELECT stat_date AS d,
+                           SUM(spend)        AS spend,
+                           SUM(total_gmv)    AS gmv,
+                           SUM(clicks)       AS clicks,
+                           SUM(impressions)  AS imps
+                    FROM fact_wxst_content
+                    WHERE content_type = '短视频'
+                    GROUP BY stat_date ORDER BY stat_date
+                """)
+                video_daily = {r["d"]: {
+                    "spend": float(r["spend"] or 0),
+                    "gmv":   float(r["gmv"] or 0),
+                    "clicks": int(r["clicks"] or 0),
+                    "imps":   int(r["imps"] or 0),
+                } for r in vd_rows}
+            except Exception:
+                video_daily = {}
+
+            # 9. official_pids = 主链 SPU 列表（dim_product 里 spu_id == product_id 的）
+            official_pids = sorted({d["spu_id"] for d in dim
+                                    if d["spu_id"] == d["product_id"]})
+
+            # 10. tasks_by_pid（从 tasks 表读，按 product_id 分组）
+            tasks_by_pid = {}
+            try:
+                t_rows = rows(conn, """
+                    SELECT id, product_id, detail, owner, status, priority,
+                           category, time_range_label, execution_note
+                    FROM tasks
+                    WHERE product_id IS NOT NULL
+                    ORDER BY product_id, id
+                """)
+                for t in t_rows:
+                    pid = t["product_id"]
+                    tasks_by_pid.setdefault(pid, []).append(t)
+            except Exception:
+                pass
+
+            # 11. meetings
+            try:
+                meetings = rows(conn, """
+                    SELECT id, week_label, meeting_date, title, content,
+                           important_level, created_by_name
+                    FROM meeting_notes ORDER BY meeting_date DESC
+                """)
+                for m in meetings:
+                    if m.get("meeting_date"):
+                        m["meeting_date"] = str(m["meeting_date"])
+            except Exception:
+                meetings = []
+
+            # 12. plan_pct（从 category_audience_plan 读）
+            try:
+                pl_rows = rows(conn, """
+                    SELECT category, plan_pct FROM category_audience_plan
+                """)
+                plan_pct = {r["category"]: float(r["plan_pct"]) for r in pl_rows}
+            except Exception:
+                plan_pct = {"家具": 63, "配饰": 30, "灯具": 5, "其他": 2}
+
+            return {
+                "products":        products,
+                "syzt":            syzt_flat,
+                "wxst":            wxst_flat,
+                "pid_daily_spend": pid_daily_spend,
+                "video_daily":     video_daily,
+                "official_pids":   official_pids,
+                "tasks_by_pid":    tasks_by_pid,
+                "meetings":        meetings,
+                "plan_pct":        plan_pct,
+                "data_start":      data_start,
+                "data_end":        data_end,
+                "loaded_at":       datetime.now().strftime("%m-%d %H:%M"),
+                "_source":         "neon",
+            }
+    except Exception as e:
+        import traceback
+        return {
+            "_error":   str(e),
+            "_traceback": traceback.format_exc()[:2000],
+            "products": {}, "syzt": [], "wxst": [],
+            "pid_daily_spend": {}, "video_daily": {},
+            "official_pids": [], "tasks_by_pid": {}, "meetings": [],
+            "plan_pct": {"家具": 63, "配饰": 30, "灯具": 5, "其他": 2},
+        }
+
 
 @app.get("/api/products")
 def get_products():
@@ -468,7 +754,7 @@ class AudiencePlanUpdate(BaseModel):
 
 
 @app.put("/api/settings/audience-plan")
-def update_audience_plan(body: AudiencePlanUpdate):
+def update_audience_plan(body: AudiencePlanUpdate, _user=Depends(require_permission('metric.edit'))):
     """
     替换 4 行人群品类计划。允许总和 ≠ 100（前端给个 warning，但不强制）。
     谁改的记到 updated_by。
@@ -804,7 +1090,7 @@ def bulk_instantiate_tasks(body: TasksBulkInstantiate):
 
 
 @app.post("/api/tasks", status_code=201)
-def create_task(task: TaskCreate):
+def create_task(task: TaskCreate, _user=Depends(require_permission('task.create'))):
     with db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
@@ -818,10 +1104,32 @@ def create_task(task: TaskCreate):
 
 
 @app.patch("/api/tasks/{task_id}")
-def update_task(task_id: int, task: TaskUpdate):
+def update_task(task_id: int, task: TaskUpdate, user: Optional[dict] = Depends(get_current_user)):
+    """
+    任务编辑：admin/edit_all 通过；edit_own 仅当 task.owner 命中当前用户。
+    """
     fields = {k: v for k, v in task.model_dump().items() if v is not None}
     if not fields:
         raise HTTPException(400, "no fields to update")
+    if not user:
+        raise HTTPException(401, "未登录")
+    perms = user.get("permissions") or []
+    if isinstance(perms, dict): perms = []
+    is_admin = user.get("role") == "admin" or "*" in perms or "task.edit_all" in perms
+    if not is_admin:
+        # 必须有 edit_own 权限 + 任务归属当前用户
+        if "task.edit_own" not in perms:
+            raise HTTPException(403, "无 task.edit_own 权限")
+        with db() as conn:
+            t = row(conn, "SELECT owner FROM tasks WHERE id = %s", (task_id,))
+            if not t:
+                raise HTTPException(404, "任务不存在")
+            owner = t.get("owner") or ""
+            display = user.get("display_name") or ""
+            # 用 isTaskOwner 同样的逻辑：精确或前缀包含
+            name_prefix = display.split("（")[0].split("(")[0].strip()
+            if owner != display and not (len(name_prefix) >= 2 and name_prefix in owner):
+                raise HTTPException(403, "只能编辑自己的任务")
     set_clause = ", ".join(f"{k} = %s" for k in fields)
     with db() as conn:
         cur = conn.cursor()
@@ -833,8 +1141,65 @@ def update_task(task_id: int, task: TaskUpdate):
         return row(conn, "SELECT * FROM tasks WHERE id = %s", (task_id,))
 
 
+class TasksBulkUpdate(BaseModel):
+    task_ids: list  # [int, ...]
+    status: Optional[str] = None
+    owner: Optional[str] = None
+    priority: Optional[str] = None
+
+
+@app.patch("/api/tasks/bulk-update")
+def bulk_update_tasks(body: TasksBulkUpdate,
+                      user: Optional[dict] = Depends(get_current_user)):
+    """
+    批量改任务（status / owner / priority）。
+    需要 task.edit_all 权限（防止 edit_own 用户误改别人的）。
+    """
+    if not user:
+        raise HTTPException(401, "未登录")
+    perms = user.get("permissions") or []
+    if isinstance(perms, dict): perms = []
+    is_admin = user.get("role") == "admin" or "*" in perms or "task.edit_all" in perms
+    if not is_admin:
+        raise HTTPException(403, "批量操作需要 task.edit_all 权限")
+    if not body.task_ids:
+        raise HTTPException(400, "task_ids 不能为空")
+    fields = {k: v for k, v in body.model_dump().items()
+              if v is not None and k != "task_ids"}
+    if not fields:
+        raise HTTPException(400, "没有要更新的字段")
+    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE tasks SET {set_clause}, updated_at = now() "
+            f"WHERE id = ANY(%s)",
+            (*fields.values(), body.task_ids)
+        )
+        affected = cur.rowcount
+        conn.commit()
+        return {"updated": affected, "task_ids": body.task_ids}
+
+
+class TasksBulkDelete(BaseModel):
+    task_ids: list
+
+
+@app.post("/api/tasks/bulk-delete")
+def bulk_delete_tasks(body: TasksBulkDelete,
+                      _user=Depends(require_permission('task.delete'))):
+    if not body.task_ids:
+        raise HTTPException(400, "task_ids 不能为空")
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM tasks WHERE id = ANY(%s)", (body.task_ids,))
+        affected = cur.rowcount
+        conn.commit()
+        return {"deleted": affected}
+
+
 @app.delete("/api/tasks/{task_id}")
-def delete_task(task_id: int):
+def delete_task(task_id: int, _user=Depends(require_permission('task.delete'))):
     with db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
@@ -862,7 +1227,7 @@ def get_meeting_notes():
 
 
 @app.post("/api/meeting-notes", status_code=201)
-def create_meeting_note(note: NoteCreate):
+def create_meeting_note(note: NoteCreate, _user=Depends(require_permission('meeting.create'))):
     with db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
@@ -900,7 +1265,7 @@ def update_meeting_note(note_id: int, note: NoteUpdate):
 
 
 @app.delete("/api/meeting-notes/{note_id}")
-def delete_meeting_note(note_id: int):
+def delete_meeting_note(note_id: int, _user=Depends(require_permission('meeting.delete'))):
     with db() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM meeting_notes WHERE id = %s", (note_id,))
@@ -1104,7 +1469,8 @@ class UserPermissionsUpdate(BaseModel):
 
 
 @app.patch("/api/users/{user_id}/permissions")
-def update_user_permissions(user_id: int, body: UserPermissionsUpdate):
+def update_user_permissions(user_id: int, body: UserPermissionsUpdate,
+                             _user=Depends(require_permission('permission.assign'))):
     import json
     with db() as conn:
         cur = conn.cursor()
@@ -1585,7 +1951,8 @@ def get_overview_ranking(
     cat_clause = " AND p.category_l1 = %s" if category else ""
     cat_params = (category,) if category else ()
 
-    with db() as conn:
+    try:
+      with db() as conn:
         if metric == "ctr":
             sql_cur = f"""
                 SELECT p.spu_id,
@@ -1680,6 +2047,17 @@ def get_overview_ranking(
             "period":     {"start": s, "end": e},
             "prev_period":{"start": ps, "end": pe},
             "items":      result,
+        }
+    except Exception as exc:
+        # 兜底：不让 500 出去，返回空结果 + 错误信息
+        import traceback
+        return {
+            "metric": metric,
+            "period": {"start": s, "end": e},
+            "prev_period": {"start": ps, "end": pe},
+            "items": [],
+            "_error": str(exc),
+            "_traceback": traceback.format_exc()[:1500],
         }
 
 

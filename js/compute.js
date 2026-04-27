@@ -317,7 +317,11 @@ function _computeChannelCatTable(s, e) {
   const audienceRows = catOrder.map(cat => {
     const actual = catTotals[cat] || 0
     const actual_pct = +((actual / grandTotal) * 100).toFixed(1)
-    const plan_pct = RAW.plan_pct?.[cat] || 0
+    // 优先用 AdsPage 拉到的实时品类计划（window.LIVE_AUDIENCE_PLAN），
+    // 没拉到时回退 RAW.plan_pct（旧版静态快照）
+    const plan_pct = (typeof window !== 'undefined' && window.LIVE_AUDIENCE_PLAN?.[cat] != null)
+      ? window.LIVE_AUDIENCE_PLAN[cat]
+      : (RAW.plan_pct?.[cat] || 0)
     const diff = +(actual_pct - plan_pct).toFixed(1)
     const products = pidList.filter(p => (p.cat || '其他') === cat)
     return Vue.reactive({
