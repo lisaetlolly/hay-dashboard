@@ -47,12 +47,16 @@ const ComparePage = defineComponent({
       const gmv = p.pay[i] || 0
       const spend = p.spend?.[i] || 0
       const d = p.dates[i]
+      // 支付买家 = pay_buyers 字段；缺则回退到 new + old
+      const payBuyers = (p.pay_buyers?.[i] != null) ? p.pay_buyers[i]
+                      : ((p.new_buyers?.[i]||0) + (p.old_buyers?.[i]||0))
       const xhsInter = (RAW.xhs_notes||[]).filter(n => n.pid===p.pid && n.date===d).reduce((a,n)=>a+(n.inter||0),0)
       return {
         gmv,
         vis,
         cart_rate: vis > 0 ? cart / vis * 100 : null,
-        conv_rate: vis > 0 && gmv > 0 ? cart / vis * 100 : null,
+        // 转化率 = 支付买家 / UV，不是加购率
+        conv_rate: vis > 0 ? payBuyers / vis * 100 : null,
         ad_roi: spend > 0 ? gmv / spend : null,
         fav_cart: (p.collect?.[i] || 0) + cart,
         new_buyers: p.new_buyers?.[i] || 0,

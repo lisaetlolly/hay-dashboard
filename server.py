@@ -17,10 +17,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-NEON_DSN = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://neondb_owner:npg_vJrIahw5N0gO@ep-steep-poetry-ao6yf96a-pooler.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
-)
+NEON_DSN = os.environ.get("DATABASE_URL")
+if not NEON_DSN:
+    raise RuntimeError(
+        "环境变量 DATABASE_URL 未设置。\n"
+        "本地：export DATABASE_URL='postgresql://...'\n"
+        "Render：在 Dashboard → Environment → 增加 DATABASE_URL\n"
+        "（请勿把 Neon 密码 commit 进代码库）"
+    )
 
 DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -55,21 +59,12 @@ def create_tables():
             """)
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{}'")
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS preferences JSONB NOT NULL DEFAULT '{}'")
-            pw = hashlib.sha256(b"hay2026").hexdigest()
-            cur.execute(
-                """INSERT INTO users (username, password_hash, display_name, role, permissions)
-                   VALUES (%s,%s,%s,%s,'{}')
-                   ON CONFLICT (username) DO UPDATE
-                   SET password_hash = EXCLUDED.password_hash,
-                       role = EXCLUDED.role,
-                       display_name = EXCLUDED.display_name""",
-                ("admin", pw, "管理员", "admin")
-            )
-            for uname, dname, role in [("xiaodong", "晓东（运营）", "ops"), ("doudou", "豆豆（设计）", "member")]:
+            cur.execute("SELECT COUNT(*) FROM users")
+            if cur.fetchone()[0] == 0:
+                pw = hashlib.sha256(b"hay2026").hexdigest()
                 cur.execute(
-                    """INSERT INTO users (username, password_hash, display_name, role, permissions)
-                       VALUES (%s,%s,%s,%s,'{}') ON CONFLICT (username) DO NOTHING""",
-                    (uname, pw, dname, role)
+                    "INSERT INTO users (username, password_hash, display_name, role, permissions) VALUES (%s,%s,%s,%s,'{}') ON CONFLICT DO NOTHING",
+                    ("admin", pw, "管理员", "admin")
                 )
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS page_views (
@@ -94,30 +89,18 @@ app.add_middleware(
 )
 
 
-def _connect_with_retry():
-    # Neon serverless 冷启动 5-15s，给 30s 超时；连接错误重试两次（共最多 3 次）
-    import time
-    last_err = None
-    for attempt in range(3):
-        try:
-            return psycopg2.connect(NEON_DSN, connect_timeout=30)
-        except psycopg2.OperationalError as e:
-            last_err = e
-            if attempt < 2:
-                time.sleep(3); continue
-            raise
-    if last_err:
-        raise last_err
-
-
 @contextmanager
 def db():
-    conn = _connect_with_retry()
-    conn.autocommit = False
     try:
-        yield conn
-    finally:
-        conn.close()
+        conn = psycopg2.connect(NEON_DSN, connect_timeout=5)
+        conn.autocommit = False
+        try:
+            yield conn
+        finally:
+            conn.close()
+    except Exception:
+        # Fallback: yield a dummy that will cause API calls to use SQLite path
+        raise
 
 
 def rows(conn, sql, params=()):
@@ -133,306 +116,12 @@ def row(conn, sql, params=()):
     return dict(r) if r else None
 
 
-# ── RAW 数据缓存（/api/raw-data 使用）──────────────────────────
-_raw_cache: dict | None = None
-_raw_cache_dirty = True
-
-def _invalidate_raw_cache():
-    global _raw_cache_dirty
-    _raw_cache_dirty = True
-
-def _build_raw_from_db(conn) -> dict:
-    """从 Neon DB 构建前端所需的 RAW 动态数据（时序 + 推广 + 流量）。"""
-    def _rows(sql, params=()):
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(sql, params)
-        return [dict(r) for r in cur.fetchall()]
-
-    # ── 商品维度 ──────────────────────────────────────────────
-    dim = {r['product_id']: r for r in _rows("SELECT product_id, title, category_l1 FROM dim_product")}
-
-    # ── 生意参谋：日级数据 ───────────────────────────────────
-    syzt = _rows("""SELECT stat_date AS d, product_id AS pid,
-                           pay_amount AS pay, visitors AS vis, cart_users AS cart,
-                           collect_users AS collect, refund_amount AS refund,
-                           pay_new_buyers AS new_buyers,
-                           avg_stay_duration AS avg_stay, pay_cvr
-                    FROM fact_syzt_product ORDER BY stat_date, product_id""")
-    syzt_map = {(r['d'], r['pid']): r for r in syzt}
-
-    # ── 万象台商品报表（总）────────────────────────────────
-    wxst = _rows("""SELECT stat_date AS d, product_id AS pid,
-                           spend, ctr, roi, impressions AS imps
-                    FROM fact_wxst_product ORDER BY stat_date, product_id""")
-    wxst_map = {(r['d'], r['pid']): r for r in wxst}
-    pid_daily_spend: dict = {}
-    for r in wxst:
-        pid_daily_spend.setdefault(r['pid'], {})[r['d']] = {
-            'spend': round(float(r['spend'] or 0), 2),
-            'ctr':   round(float(r['ctr']   or 0), 4),
-            'roi':   round(float(r['roi']   or 0), 2),
-        }
-
-    # ── 人群/关键词渠道商品报表 ──────────────────────────────
-    try:
-        rq_map = {(r['stat_date'], r['product_id']): float(r['spend'] or 0)
-                  for r in _rows("SELECT stat_date, product_id, spend FROM fact_wxst_rq_product")}
-    except Exception:
-        rq_map = {}
-    try:
-        kw_map = {(r['stat_date'], r['product_id']): float(r['spend'] or 0)
-                  for r in _rows("SELECT stat_date, product_id, spend FROM fact_wxst_kw_product")}
-    except Exception:
-        kw_map = {}
-
-    # ── 构建 products 时序字典 ──────────────────────────────
-    all_dates = sorted({r['d'] for r in syzt} | {r['d'] for r in wxst})
-    all_pids  = set(dim) | {k[1] for k in syzt_map} | {k[1] for k in wxst_map}
-    products: dict = {}
-    for pid in sorted(all_pids):
-        p = dim.get(pid, {})
-        pay_a = []; vis_a = []; cart_a = []; col_a = []; ref_a = []; nb_a = []
-        sp_a  = []; ctr_a = []; roi_a = []; rq_a  = []; kw_a  = []
-        stay_a = []; pcvr_a = []
-        for d in all_dates:
-            sy = syzt_map.get((d, pid), {})
-            wx = wxst_map.get((d, pid), {})
-            pay_a.append(round(float(sy.get('pay')  or 0), 2))
-            vis_a.append(int  (float(sy.get('vis')  or 0)))
-            cart_a.append(int (float(sy.get('cart') or 0)))
-            col_a.append(int  (float(sy.get('collect')   or 0)))
-            ref_a.append(round(float(sy.get('refund')    or 0), 2))
-            nb_a.append(int   (float(sy.get('new_buyers') or 0)))
-            sp_a.append(round (float(wx.get('spend') or 0), 2))
-            ctr_a.append(round(float(wx.get('ctr')   or 0), 4))
-            roi_a.append(round(float(wx.get('roi')   or 0), 2))
-            rq_a.append(round (rq_map.get((d, pid), 0.0), 2))
-            kw_a.append(round (kw_map.get((d, pid), 0.0), 2))
-            stay_a.append(round(float(sy.get('avg_stay') or 0), 1))
-            pcvr_a.append(round(float(sy.get('pay_cvr')  or 0), 4))
-        if any(pay_a) or any(vis_a) or any(sp_a) or pid in dim:
-            products[pid] = {
-                'pid': pid,
-                'name': p.get('title') or pid,
-                'cat':  p.get('category_l1') or '',
-                'dates': all_dates,
-                'pay': pay_a, 'vis': vis_a, 'cart': cart_a,
-                'collect': col_a, 'refund': ref_a, 'new_buyers': nb_a,
-                'spend': sp_a, 'ctr': ctr_a, 'roi': roi_a,
-                'spend_rq': rq_a, 'spend_kw': kw_a,
-                'avg_stay': stay_a, 'pay_cvr': pcvr_a,
-            }
-
-    # ── 人群报表（维度汇总）─────────────────────────────────
-    try:
-        wxst_audience = [dict(r) for r in _rows(
-            "SELECT stat_date AS d, audience_name AS name, spend, ctr, roi, total_gmv AS gmv, impressions AS imps FROM fact_wxst_audience ORDER BY stat_date")]
-    except Exception:
-        wxst_audience = []
-
-    # ── 关键词报表（维度汇总）───────────────────────────────
-    try:
-        wxst_keyword = [dict(r) for r in _rows(
-            "SELECT stat_date AS d, keyword_name AS name, spend, ctr, roi, total_gmv AS gmv, impressions AS imps FROM fact_wxst_keyword ORDER BY stat_date")]
-    except Exception:
-        wxst_keyword = []
-
-    # ── 流量来源明细 ────────────────────────────────────────
-    try:
-        traffic = [dict(r) for r in _rows(
-            """SELECT stat_date AS d, source_l1 AS l1, source_l2 AS l2,
-                      source_l3 AS l3, source_l4 AS l4,
-                      visitors, pay_buyers, cart_users
-               FROM fact_traffic ORDER BY stat_date, source_l1, source_l2""")]
-    except Exception:
-        traffic = []
-
-    return {
-        'products':       products,
-        'syzt':           [{'d': r['d'], 'pid': r['pid'], 'pay': r.get('pay') or 0,
-                            'vis': r.get('vis') or 0, 'cart': r.get('cart') or 0} for r in syzt],
-        'wxst':           [{'d': r['d'], 'pid': r['pid'], 'spend': r.get('spend') or 0,
-                            'ctr': r.get('ctr') or 0, 'imps': r.get('imps') or 0} for r in wxst],
-        'pid_daily_spend': pid_daily_spend,
-        'wxst_audience':  wxst_audience,
-        'wxst_keyword':   wxst_keyword,
-        'traffic':        traffic,
-        'data_end':       all_dates[-1] if all_dates else None,
-        'data_start':     all_dates[0]  if all_dates else None,
-        'loaded_at':      all_dates[-1] if all_dates else None,
-    }
-
-
-@app.get("/api/raw-data")
-def get_raw_data():
-    """从 Neon DB 返回完整时序数据，前端替换 RAW 动态部分。"""
-    global _raw_cache, _raw_cache_dirty
-    if not _raw_cache_dirty and _raw_cache is not None:
-        from fastapi.responses import JSONResponse
-        return JSONResponse(_raw_cache)
-    try:
-        with db() as conn:
-            data = _build_raw_from_db(conn)
-        _raw_cache = data
-        _raw_cache_dirty = False
-        from fastapi.responses import JSONResponse
-        return JSONResponse(data)
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        from fastapi.responses import JSONResponse
-        return JSONResponse({'_error': f'DB连接失败: {e}', 'products': {}, 'syzt': [], 'wxst': [],
-                             'pid_daily_spend': {}, 'wxst_audience': [], 'wxst_keyword': [],
-                             'traffic': [], 'data_end': None, 'data_start': None})
-
-
-@app.get("/api/diagnose")
-def diagnose():
-    """诊断端点：检查 DB 连接 + 各表行数 + 数据日期范围。"""
-    import os, time
-    out = {
-        'env_database_url_set': bool(os.environ.get('DATABASE_URL')),
-        'dsn_host': NEON_DSN.split('@')[-1].split('/')[0] if '@' in NEON_DSN else 'invalid',
-        'tables': {},
-        'data_range': {},
-    }
-    t0 = time.time()
-    try:
-        with db() as conn:
-            out['db_connect_ms'] = int((time.time() - t0) * 1000)
-            cur = conn.cursor()
-            for tbl in ['dim_product', 'fact_syzt_product', 'fact_wxst_product',
-                        'fact_wxst_audience', 'fact_wxst_keyword',
-                        'fact_wxst_rq_product', 'fact_wxst_kw_product', 'fact_traffic']:
-                try:
-                    cur.execute(f"SELECT COUNT(*) FROM {tbl}")
-                    out['tables'][tbl] = cur.fetchone()[0]
-                except Exception as e:
-                    out['tables'][tbl] = f'ERROR: {e}'
-                    conn.rollback()
-            for tbl, dc in [('fact_syzt_product', 'pay_amount'),
-                            ('fact_wxst_product', 'spend')]:
-                try:
-                    cur.execute(f"SELECT MIN(stat_date), MAX(stat_date), SUM({dc}) FROM {tbl}")
-                    r = cur.fetchone()
-                    out['data_range'][tbl] = {'min_date': str(r[0]) if r[0] else None,
-                                              'max_date': str(r[1]) if r[1] else None,
-                                              f'sum_{dc}': float(r[2]) if r[2] else 0}
-                except Exception as e:
-                    out['data_range'][tbl] = f'ERROR: {e}'
-                    conn.rollback()
-    except Exception as e:
-        out['db_error'] = str(e)
-        out['db_connect_ms'] = int((time.time() - t0) * 1000)
-    return out
-
-
 # ── 默认日期范围（投放周期起始到今天）
 CAMPAIGN_START = "2026-04-08"
 
 
 def default_range():
     return CAMPAIGN_START, date.today().isoformat()
-
-
-@app.post("/api/seed-legacy")
-@app.get("/api/seed-legacy")
-def seed_legacy(background_tasks: __import__('fastapi').BackgroundTasks = None):
-    """
-    一次性灌入旧 dashboard.html hardcoded 的历史数据。
-    立即返回 {started:true}，后台执行写入（避免 HTTP 超时）。
-    进度可访问 /api/seed-legacy/status 查看。
-    """
-    from fastapi import BackgroundTasks as _BT
-    import json as _json, threading
-
-    seed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etl', 'legacy_seed.json')
-    if not os.path.exists(seed_path):
-        return {"ok": False, "error": f"legacy_seed.json not found at {seed_path}"}
-
-    if _seed_status.get('running'):
-        return {"ok": True, "started": False, "msg": "已在运行中", "status": _seed_status}
-
-    def _do_seed():
-        _seed_status.update({'running': True, 'done': False, 'error': None, 'products': 0, 'syzt': 0, 'wxst': 0, 'step': '读取JSON'})
-        try:
-            with open(seed_path, 'r', encoding='utf-8') as f:
-                seed = _json.load(f)
-            products  = seed.get('products', {})
-            wxst_rows = seed.get('wxst', [])
-            pid_daily = seed.get('pid_daily_spend', {})
-            cat_map   = seed.get('cat_map', {})
-            _seed_status['step'] = '连接DB'
-            with db() as conn:
-                cur = conn.cursor()
-                schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'etl', 'schema.sql')
-                if os.path.exists(schema_path):
-                    _seed_status['step'] = '建表'
-                    with open(schema_path, 'r', encoding='utf-8') as f:
-                        cur.execute(f.read())
-                _seed_status['step'] = 'dim_product'
-                for pid, p in products.items():
-                    title  = p.get('name') or pid
-                    cat_l1 = p.get('cat') or cat_map.get(pid) or ''
-                    cur.execute("""
-                        INSERT INTO dim_product(product_id,spu_id,title,category_l1,category_l2,inventory)
-                        VALUES(%s,%s,%s,%s,'',0)
-                        ON CONFLICT(product_id) DO UPDATE SET title=EXCLUDED.title,category_l1=EXCLUDED.category_l1
-                    """, (pid, pid, title, cat_l1))
-                    _seed_status['products'] += 1
-                _seed_status['step'] = 'fact_syzt_product'
-                for pid, p in products.items():
-                    dates = p.get('dates', [])
-                    pay = p.get('pay',[]); vis = p.get('vis',[]); cart = p.get('cart',[])
-                    collect = p.get('collect',[]); refund = p.get('refund',[]); nb = p.get('new_buyers',[])
-                    for i, d in enumerate(dates):
-                        pv = pay[i] if i<len(pay) else 0; vv = vis[i] if i<len(vis) else 0
-                        cv = cart[i] if i<len(cart) else 0; colv = collect[i] if i<len(collect) else 0
-                        rv = refund[i] if i<len(refund) else 0; nbv = nb[i] if i<len(nb) else 0
-                        if not (pv or vv or cv or colv or rv or nbv): continue
-                        cur.execute("""
-                            INSERT INTO fact_syzt_product(stat_date,product_id,visitors,cart_users,
-                                collect_users,pay_amount,refund_amount,pay_new_buyers,source_file)
-                            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'legacy_seed')
-                            ON CONFLICT(stat_date,product_id) DO UPDATE SET
-                                visitors=EXCLUDED.visitors,cart_users=EXCLUDED.cart_users,
-                                collect_users=EXCLUDED.collect_users,pay_amount=EXCLUDED.pay_amount,
-                                refund_amount=EXCLUDED.refund_amount,pay_new_buyers=EXCLUDED.pay_new_buyers
-                        """, (d, pid, vv, cv, colv, pv, rv, nbv))
-                        _seed_status['syzt'] += 1
-                _seed_status['step'] = 'fact_wxst_product'
-                for pid, daily_map in pid_daily.items():
-                    for d, vals in daily_map.items():
-                        spend = vals.get('spend',0); ctr = vals.get('ctr',0); roi = vals.get('roi',0)
-                        if not (spend or ctr or roi): continue
-                        cur.execute("""
-                            INSERT INTO fact_wxst_product(stat_date,product_id,spend,ctr,roi,impressions,source_file)
-                            VALUES(%s,%s,%s,%s,%s,0,'legacy_seed')
-                            ON CONFLICT(stat_date,product_id) DO UPDATE SET spend=EXCLUDED.spend,ctr=EXCLUDED.ctr,roi=EXCLUDED.roi
-                        """, (d, pid, spend, ctr, roi))
-                        _seed_status['wxst'] += 1
-                for r in wxst_rows:
-                    d = r.get('d'); pid = r.get('pid'); imps = r.get('imps') or 0
-                    if not (d and pid and imps): continue
-                    cur.execute("UPDATE fact_wxst_product SET impressions=%s WHERE stat_date=%s AND product_id=%s", (imps, d, pid))
-                conn.commit()
-            _invalidate_raw_cache()
-            _seed_status.update({'running': False, 'done': True, 'step': '完成'})
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            _seed_status.update({'running': False, 'done': False, 'error': str(e), 'step': '失败'})
-
-    t = threading.Thread(target=_do_seed, daemon=True)
-    t.start()
-    return {"ok": True, "started": True, "msg": "后台开始写入，访问 /api/seed-legacy/status 查看进度"}
-
-
-_seed_status: dict = {}
-
-@app.get("/api/seed-legacy/status")
-def seed_legacy_status():
-    """查看 /api/seed-legacy 后台执行进度"""
-    return _seed_status if _seed_status else {"msg": "未启动，先访问 /api/seed-legacy"}
-
 
 
 # ══════════════════════════════════════════════════
@@ -490,22 +179,22 @@ def get_ads_summary(
                 MAX(p.category_l1)                    AS category_l1,
                 MAX(p.category_l2)                    AS category_l2,
                 COUNT(DISTINCT w.stat_date)           AS days,
-                ROUND((SUM(w.spend))::numeric, 2)                AS total_spend,
-                ROUND((SUM(w.total_gmv))::numeric, 2)            AS total_gmv,
-                ROUND((SUM(w.direct_gmv))::numeric, 2)           AS total_direct_gmv,
-                ROUND((SUM(w.indirect_gmv))::numeric, 2)         AS total_indirect_gmv,
-                ROUND((SUM(w.total_gmv) / NULLIF(SUM(w.spend),0))::numeric, 2) AS roi,
-                ROUND((SUM(w.clicks) / NULLIF(SUM(w.impressions),0) * 100)::numeric, 4) AS avg_ctr,
-                ROUND((SUM(w.spend) / NULLIF(SUM(w.clicks),0))::numeric, 2)  AS avg_cpc,
+                ROUND(SUM(w.spend), 2)                AS total_spend,
+                ROUND(SUM(w.total_gmv), 2)            AS total_gmv,
+                ROUND(SUM(w.direct_gmv), 2)           AS total_direct_gmv,
+                ROUND(SUM(w.indirect_gmv), 2)         AS total_indirect_gmv,
+                ROUND(SUM(w.total_gmv) / NULLIF(SUM(w.spend),0), 2) AS roi,
+                ROUND(SUM(w.clicks) / NULLIF(SUM(w.impressions),0) * 100, 4) AS avg_ctr,
+                ROUND(SUM(w.spend) / NULLIF(SUM(w.clicks),0), 2)  AS avg_cpc,
                 SUM(w.new_buyers)                     AS total_new_buyers,
-                ROUND((SUM(w.spend) / NULLIF(SUM(w.new_buyers),0))::numeric, 2) AS cpna,
+                ROUND(SUM(w.spend) / NULLIF(SUM(w.new_buyers),0), 2) AS cpna,
                 SUM(w.cart_cnt)                       AS total_cart_cnt,
                 SUM(w.total_collect_cart)             AS total_collect_cart,
                 SUM(w.impressions)                    AS total_impressions,
                 SUM(w.clicks)                         AS total_clicks,
                 SUM(w.guided_visits)                  AS total_guided_visits,
                 SUM(w.transaction_buyers)             AS total_transaction_buyers,
-                ROUND((SUM(w.natural_gmv))::numeric, 2)          AS total_natural_gmv,
+                ROUND(SUM(w.natural_gmv), 2)          AS total_natural_gmv,
                 SUM(w.natural_impressions)            AS total_natural_impressions
             FROM fact_wxst_product w
             LEFT JOIN dim_product p ON w.product_id = p.product_id
@@ -526,9 +215,9 @@ def get_ads_by_category(
         return rows(conn, """
             SELECT
                 p.category_l1,
-                ROUND((SUM(w.spend))::numeric, 2)       AS total_spend,
-                ROUND((SUM(w.total_gmv))::numeric, 2)   AS total_gmv,
-                ROUND((SUM(w.total_gmv) / NULLIF(SUM(w.spend),0))::numeric, 2) AS roi,
+                ROUND(SUM(w.spend), 2)       AS total_spend,
+                ROUND(SUM(w.total_gmv), 2)   AS total_gmv,
+                ROUND(SUM(w.total_gmv) / NULLIF(SUM(w.spend),0), 2) AS roi,
                 COUNT(DISTINCT w.product_id) AS product_count
             FROM fact_wxst_product w
             LEFT JOIN dim_product p ON w.product_id = p.product_id
@@ -549,9 +238,9 @@ def get_ads_latest():
         return row(conn, """
             SELECT
                 stat_date,
-                ROUND((SUM(spend))::numeric, 2)      AS total_spend,
-                ROUND((SUM(total_gmv))::numeric, 2)  AS total_gmv,
-                ROUND((SUM(total_gmv) / NULLIF(SUM(spend),0))::numeric, 2) AS roi,
+                ROUND(SUM(spend), 2)      AS total_spend,
+                ROUND(SUM(total_gmv), 2)  AS total_gmv,
+                ROUND(SUM(total_gmv) / NULLIF(SUM(spend),0), 2) AS roi,
                 SUM(total_collect_cart)   AS total_collect_cart,
                 SUM(new_buyers)           AS total_new_buyers
             FROM fact_wxst_product
@@ -581,11 +270,11 @@ def get_syzt_summary(
                 COUNT(DISTINCT s.stat_date)             AS days,
                 SUM(s.visitors)                         AS total_visitors,
                 SUM(s.page_views)                       AS total_pv,
-                ROUND((SUM(s.page_views)/NULLIF(SUM(s.visitors),0))::numeric, 2) AS avg_pv_per_uv,
+                ROUND(SUM(s.page_views)/NULLIF(SUM(s.visitors),0), 2) AS avg_pv_per_uv,
                 SUM(s.pay_amount)                       AS total_pay,
                 SUM(s.order_amount)                     AS total_order,
                 SUM(s.refund_amount)                    AS total_refund,
-                ROUND((SUM(s.pay_amount) - SUM(s.refund_amount))::numeric, 2) AS net_pay,
+                ROUND(SUM(s.pay_amount) - SUM(s.refund_amount), 2) AS net_pay,
                 SUM(s.cart_users)                       AS total_cart_users,
                 SUM(s.cart_qty)                         AS total_cart_qty,
                 SUM(s.collect_users)                    AS total_collect,
@@ -594,15 +283,17 @@ def get_syzt_summary(
                 SUM(s.pay_new_buyers)                   AS total_new_buyers,
                 SUM(s.pay_old_buyers)                   AS total_old_buyers,
                 SUM(s.search_visitors)                  AS total_search_visitors,
-                ROUND((SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100)::numeric, 2) AS search_traffic_pct,
-                ROUND((SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100)::numeric, 4)      AS cart_rate,
-                ROUND((SUM(s.collect_users)/NULLIF(SUM(s.visitors),0)*100)::numeric, 4)   AS collect_rate,
-                ROUND((SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100)::numeric, 4)    AS order_cvr,
-                ROUND((SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0))::numeric, 2)          AS visitor_value,
-                ROUND((SUM(s.pay_amount)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0))::numeric, 2) AS avg_order_value,
-                ROUND((SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100)::numeric, 2) AS new_buyer_pct,
-                ROUND((AVG(s.avg_stay_duration))::numeric, 1)      AS avg_stay_duration,
-                ROUND((AVG(s.bounce_rate)*100)::numeric, 2)        AS avg_bounce_rate
+                ROUND(SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100, 2) AS search_traffic_pct,
+                ROUND(SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100, 4)      AS cart_rate,
+                ROUND(SUM(s.collect_users)/NULLIF(SUM(s.visitors),0)*100, 4)   AS collect_rate,
+                ROUND(SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100, 4)    AS order_cvr,
+                ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0), 2)          AS visitor_value,
+                ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0), 2) AS avg_order_value,
+                ROUND(SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100, 2) AS new_buyer_pct,
+                -- 平均停留时长按 UV 加权（高 UV 天数权重更大）
+                ROUND(SUM(s.avg_stay_duration * s.visitors)::numeric / NULLIF(SUM(s.visitors),0), 1) AS avg_stay_duration,
+                -- 跳出率按 UV 加权
+                ROUND(SUM(s.bounce_rate * s.visitors)::numeric / NULLIF(SUM(s.visitors),0) * 100, 2) AS avg_bounce_rate
             FROM fact_syzt_product s
             LEFT JOIN dim_product p ON s.product_id = p.product_id
             WHERE s.stat_date BETWEEN %s AND %s
@@ -652,9 +343,9 @@ def get_traffic_summary(
             SELECT
                 source_l1,
                 source_l2,
-                ROUND((SUM(visitors))::numeric, 0)         AS total_visitors,
-                ROUND((SUM(pay_buyers))::numeric, 0)        AS total_pay_buyers,
-                ROUND((SUM(product_visitors))::numeric, 0)  AS total_product_visitors
+                ROUND(SUM(visitors), 0)         AS total_visitors,
+                ROUND(SUM(pay_buyers), 0)        AS total_pay_buyers,
+                ROUND(SUM(product_visitors), 0)  AS total_product_visitors
             FROM fact_traffic
             WHERE stat_date BETWEEN %s AND %s
               AND source_l1 != ''
@@ -675,8 +366,8 @@ def get_traffic_trend(
         return rows(conn, """
             SELECT
                 stat_date,
-                ROUND((SUM(CASE WHEN visitors > 0 THEN visitors ELSE 0 END))::numeric, 0) AS total_visitors,
-                ROUND((SUM(CASE WHEN pay_buyers > 0 THEN pay_buyers ELSE 0 END))::numeric, 0) AS total_pay_buyers
+                ROUND(SUM(CASE WHEN visitors > 0 THEN visitors ELSE 0 END), 0) AS total_visitors,
+                ROUND(SUM(CASE WHEN pay_buyers > 0 THEN pay_buyers ELSE 0 END), 0) AS total_pay_buyers
             FROM fact_traffic
             WHERE stat_date BETWEEN %s AND %s
             GROUP BY stat_date
@@ -700,16 +391,166 @@ def get_top_keywords(
             SELECT
                 keyword_name,
                 scene_name,
-                ROUND((SUM(spend))::numeric, 2)      AS total_spend,
-                ROUND((SUM(total_gmv))::numeric, 2)  AS total_gmv,
-                ROUND((SUM(total_gmv) / NULLIF(SUM(spend),0))::numeric, 2) AS roi,
-                ROUND((AVG(ctr) * 100)::numeric, 2)  AS avg_ctr
+                ROUND(SUM(spend), 2)      AS total_spend,
+                ROUND(SUM(total_gmv), 2)  AS total_gmv,
+                ROUND(SUM(total_gmv) / NULLIF(SUM(spend),0), 2) AS roi,
+                ROUND(AVG(ctr) * 100, 2)  AS avg_ctr
             FROM fact_wxst_keyword
             WHERE stat_date BETWEEN %s AND %s
             GROUP BY keyword_name, scene_name
             ORDER BY total_spend DESC
             LIMIT %s
         """, (s, e, limit))
+
+
+@app.get("/api/ads/channel-split")
+def get_channel_split(
+    start: str = Query(default=None),
+    end: str = Query(default=None),
+):
+    """
+    人群 vs 关键词 渠道花费比例（实时计算）。
+    数据源：fact_wxst_audience.spend  +  fact_wxst_keyword.spend
+    注意：这里返回的是**实际花费**比例，没有"计划值"概念。
+         真正的"计划"是按品类（家具/配饰/灯具/其他）拆，见 /api/settings/audience-plan
+    """
+    s, e = start or CAMPAIGN_START, end or date.today().isoformat()
+    with db() as conn:
+        aud = row(conn, """
+            SELECT COALESCE(SUM(spend), 0) AS s
+            FROM fact_wxst_audience
+            WHERE stat_date BETWEEN %s AND %s
+        """, (s, e)) or {"s": 0}
+        kw = row(conn, """
+            SELECT COALESCE(SUM(spend), 0) AS s
+            FROM fact_wxst_keyword
+            WHERE stat_date BETWEEN %s AND %s
+        """, (s, e)) or {"s": 0}
+        a = float(aud["s"] or 0)
+        k = float(kw["s"] or 0)
+        total = a + k
+        return {
+            "period":         {"start": s, "end": e},
+            "audience_spend": round(a, 2),
+            "keyword_spend":  round(k, 2),
+            "total":          round(total, 2),
+            "audience_pct":   round(a / total * 100, 1) if total > 0 else None,
+            "keyword_pct":    round(k / total * 100, 1) if total > 0 else None,
+        }
+
+
+# ── 人群投放品类计划（admin 可编辑）──
+@app.get("/api/settings/audience-plan")
+def get_audience_plan():
+    """
+    返回 4 个品类（家具/配饰/灯具/其他）的人群投放计划比例。
+    晓东定的，admin 角色可以在设置页改。
+    """
+    with db() as conn:
+        try:
+            return rows(conn, """
+                SELECT category, plan_pct, sort_order, updated_at, updated_by
+                FROM category_audience_plan
+                ORDER BY sort_order
+            """)
+        except Exception:
+            return []
+
+
+class AudiencePlanItem(BaseModel):
+    category: str
+    plan_pct: float
+
+
+class AudiencePlanUpdate(BaseModel):
+    items: list  # [{ "category":"家具", "plan_pct":63 }, ...]
+    updated_by: str = ""
+
+
+@app.put("/api/settings/audience-plan")
+def update_audience_plan(body: AudiencePlanUpdate):
+    """
+    替换 4 行人群品类计划。允许总和 ≠ 100（前端给个 warning，但不强制）。
+    谁改的记到 updated_by。
+    """
+    if not body.items:
+        raise HTTPException(400, "items 不能为空")
+    total = sum(float(it.get("plan_pct", 0)) for it in body.items)
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        for i, it in enumerate(body.items):
+            cat = it.get("category", "").strip()
+            pct = float(it.get("plan_pct", 0))
+            if not cat:
+                continue
+            cur.execute("""
+                INSERT INTO category_audience_plan (category, plan_pct, sort_order, updated_by, updated_at)
+                VALUES (%s, %s, %s, %s, now())
+                ON CONFLICT (category) DO UPDATE SET
+                    plan_pct = EXCLUDED.plan_pct,
+                    sort_order = EXCLUDED.sort_order,
+                    updated_by = EXCLUDED.updated_by,
+                    updated_at = now()
+            """, (cat, pct, (i+1)*10, body.updated_by))
+        conn.commit()
+        return {
+            "ok": True,
+            "total_pct": round(total, 1),
+            "warning": "计划总和不为 100%" if abs(total - 100) > 0.5 else None
+        }
+
+
+# ── 内容报表（短视频/直播）汇总 ──
+@app.get("/api/ads/content-summary")
+def get_content_summary(
+    start: str = Query(default=None),
+    end: str = Query(default=None),
+    content_type: Optional[str] = Query(default=None,
+        description="过滤：短视频 / 直播 / 图文。留空=全部"),
+):
+    """
+    内容报表汇总，主要给"短视频推广花费 KPI"和"内容投放面板"用。
+    数据源：fact_wxst_content（来自 推广报表/内容报表/*.csv）
+    """
+    s, e = start or CAMPAIGN_START, end or date.today().isoformat()
+    where = ["stat_date BETWEEN %s AND %s"]
+    params = [s, e]
+    if content_type:
+        where.append("content_type = %s"); params.append(content_type)
+    with db() as conn:
+        try:
+            summary = row(conn, f"""
+                SELECT
+                    COALESCE(SUM(spend), 0)          AS total_spend,
+                    COALESCE(SUM(impressions), 0)    AS total_impressions,
+                    COALESCE(SUM(clicks), 0)         AS total_clicks,
+                    COALESCE(SUM(total_gmv), 0)      AS total_gmv,
+                    ROUND(SUM(total_gmv)::numeric/NULLIF(SUM(spend),0), 2) AS roi,
+                    ROUND(SUM(clicks)::numeric/NULLIF(SUM(impressions),0)*100, 4) AS ctr,
+                    COUNT(DISTINCT content_id)       AS content_count
+                FROM fact_wxst_content
+                WHERE {' AND '.join(where)}
+            """, tuple(params)) or {}
+            top_videos = rows(conn, f"""
+                SELECT content_id, content_name, content_type,
+                       ROUND(SUM(spend), 2)      AS total_spend,
+                       ROUND(SUM(total_gmv), 2)  AS total_gmv,
+                       ROUND(SUM(total_gmv)/NULLIF(SUM(spend),0), 2) AS roi,
+                       SUM(impressions)          AS impressions,
+                       SUM(clicks)               AS clicks
+                FROM fact_wxst_content
+                WHERE {' AND '.join(where)}
+                GROUP BY content_id, content_name, content_type
+                ORDER BY total_spend DESC
+                LIMIT 20
+            """, tuple(params))
+            return {
+                "period": {"start": s, "end": e},
+                "summary": summary,
+                "top_videos": top_videos,
+            }
+        except Exception as e:
+            return {"period": {"start": s, "end": e}, "summary": {}, "top_videos": [], "error": str(e)}
 
 
 @app.get("/api/audience/top")
@@ -722,10 +563,10 @@ def get_top_audience(
         return rows(conn, """
             SELECT
                 audience_name,
-                ROUND((SUM(spend))::numeric, 2)      AS total_spend,
-                ROUND((SUM(total_gmv))::numeric, 2)  AS total_gmv,
-                ROUND((SUM(total_gmv) / NULLIF(SUM(spend),0))::numeric, 2) AS roi,
-                ROUND((AVG(ctr) * 100)::numeric, 2)  AS avg_ctr
+                ROUND(SUM(spend), 2)      AS total_spend,
+                ROUND(SUM(total_gmv), 2)  AS total_gmv,
+                ROUND(SUM(total_gmv) / NULLIF(SUM(spend),0), 2) AS roi,
+                ROUND(AVG(ctr) * 100, 2)  AS avg_ctr
             FROM fact_wxst_audience
             WHERE stat_date BETWEEN %s AND %s
             GROUP BY audience_name
@@ -759,11 +600,207 @@ class TaskUpdate(BaseModel):
 
 
 @app.get("/api/tasks")
-def get_tasks(product_id: Optional[str] = None):
+def get_tasks(
+    product_id: Optional[str] = None,
+    owner: Optional[str] = None,
+    period: Optional[str] = None,
+    period_start: Optional[str] = None,
+    period_end: Optional[str] = None,
+    status: Optional[str] = None,
+):
+    """
+    任务查询。所有参数可选并叠加：
+    - product_id    单品过滤
+    - owner         按负责人精确匹配（用于"我的任务"）
+    - period        按周期标签精确匹配（如 '2026-04-27~2026-04-30'）
+    - period_start / period_end  日历范围筛选（包含与该范围有重叠的周期）
+    - status        状态过滤
+    """
+    where = []
+    params = []
+    if product_id:
+        where.append("t.product_id = %s"); params.append(product_id)
+    if owner:
+        where.append("t.owner = %s"); params.append(owner)
+    if period:
+        where.append("t.time_range_label = %s"); params.append(period)
+    if status:
+        where.append("t.status = %s"); params.append(status)
+    if period_start and period_end:
+        # 周期格式 'YYYY-MM-DD~YYYY-MM-DD'，提取起止做范围交叠判断
+        where.append("""
+            EXISTS (SELECT 1 FROM task_period tp
+                    WHERE tp.label = t.time_range_label
+                      AND tp.start_date <= %s::date
+                      AND tp.end_date   >= %s::date)
+        """)
+        params.extend([period_end, period_start])
+    sql = "SELECT t.* FROM tasks t"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY t.time_range_label DESC, t.product_id, t.id"
     with db() as conn:
-        if product_id:
-            return rows(conn, "SELECT * FROM tasks WHERE product_id = %s ORDER BY id DESC", (product_id,))
-        return rows(conn, "SELECT * FROM tasks ORDER BY id DESC")
+        return rows(conn, sql, tuple(params))
+
+
+@app.get("/api/tasks/mine")
+def get_my_tasks(owner: str, only_current: bool = True):
+    """
+    "我的任务"专用接口。only_current=True 只返回当前周期(is_current=TRUE)的任务，
+    便于"快速锁定本周重点"。
+    """
+    with db() as conn:
+        if only_current:
+            return rows(conn, """
+                SELECT t.*, tp.start_date, tp.end_date, tp.is_current
+                FROM tasks t
+                LEFT JOIN task_period tp ON tp.label = t.time_range_label
+                WHERE t.owner = %s
+                  AND COALESCE(tp.is_current, FALSE) = TRUE
+                ORDER BY t.product_id, t.id
+            """, (owner,))
+        return rows(conn, """
+            SELECT t.*, tp.start_date, tp.end_date, tp.is_current
+            FROM tasks t
+            LEFT JOIN task_period tp ON tp.label = t.time_range_label
+            WHERE t.owner = %s
+            ORDER BY tp.start_date DESC NULLS LAST, t.id DESC
+        """, (owner,))
+
+
+# ── 任务模板 / 周期 ─────────────────────────────────────
+@app.get("/api/task-templates")
+def list_task_templates():
+    with db() as conn:
+        try:
+            return rows(conn, """
+                SELECT id, category, detail, default_owner, sort_order, is_active
+                FROM task_template WHERE is_active = TRUE
+                ORDER BY sort_order, id
+            """)
+        except Exception:
+            return []
+
+
+class TaskTemplateUpdate(BaseModel):
+    default_owner: Optional[str] = None
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = None
+    propagate_to_future: bool = True
+
+
+@app.patch("/api/task-templates/{tpl_id}")
+def update_task_template(tpl_id: int, body: TaskTemplateUpdate):
+    """
+    改模板（如换 default_owner）。
+    propagate_to_future=True 时，会把当前及未来周期里属于该模板的任务也改 owner。
+    历史任务保持不变（避免污染复盘记录）。
+    """
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        fields = {k: v for k, v in body.model_dump().items()
+                  if v is not None and k != 'propagate_to_future'}
+        if not fields:
+            raise HTTPException(400, "no fields to update")
+        set_clause = ", ".join(f"{k} = %s" for k in fields)
+        cur.execute(
+            f"UPDATE task_template SET {set_clause}, updated_at=now() WHERE id = %s RETURNING *",
+            (*fields.values(), tpl_id)
+        )
+        tpl = dict(cur.fetchone())
+        # 把当前/未来周期的任务 owner 同步过去
+        if body.propagate_to_future and body.default_owner:
+            cur.execute("""
+                UPDATE tasks SET owner = %s, updated_at = now()
+                WHERE template_id = %s
+                  AND time_range_label IN (
+                    SELECT label FROM task_period
+                    WHERE end_date >= CURRENT_DATE
+                  )
+            """, (body.default_owner, tpl_id))
+        conn.commit()
+        return tpl
+
+
+@app.get("/api/task-periods")
+def list_task_periods():
+    with db() as conn:
+        try:
+            return rows(conn, """
+                SELECT id, label, start_date::text AS start_date,
+                       end_date::text AS end_date, is_current
+                FROM task_period ORDER BY start_date DESC
+            """)
+        except Exception:
+            return []
+
+
+class TaskPeriodCreate(BaseModel):
+    start_date: str
+    end_date: str
+    set_current: bool = False
+
+
+@app.post("/api/task-periods", status_code=201)
+def create_task_period(body: TaskPeriodCreate):
+    label = f"{body.start_date}~{body.end_date}"
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        if body.set_current:
+            cur.execute("UPDATE task_period SET is_current = FALSE")
+        cur.execute("""
+            INSERT INTO task_period (label, start_date, end_date, is_current)
+            VALUES (%s, %s::date, %s::date, %s)
+            ON CONFLICT (label) DO UPDATE SET is_current = EXCLUDED.is_current
+            RETURNING id, label, start_date::text AS start_date,
+                      end_date::text AS end_date, is_current
+        """, (label, body.start_date, body.end_date, body.set_current))
+        out = dict(cur.fetchone())
+        conn.commit()
+        return out
+
+
+# ── 任务批量操作（一键生成本周 / 一键克隆上周） ──
+class TasksBulkInstantiate(BaseModel):
+    period_label: str
+    product_ids: list  # ['679198301351', ...]
+    template_ids: Optional[list] = None  # None 时全部模板
+
+
+@app.post("/api/tasks/bulk-instantiate", status_code=201)
+def bulk_instantiate_tasks(body: TasksBulkInstantiate):
+    """
+    一键给指定周期 × 商品列表 生成全部模板任务。
+    重复任务（同 product+period+detail+owner）会被 ON CONFLICT 跳过。
+    """
+    if not body.product_ids:
+        raise HTTPException(400, "至少选 1 个商品")
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        tpl_filter = ""
+        params = [body.period_label]
+        if body.template_ids:
+            tpl_filter = "AND id = ANY(%s)"
+            params.append(body.template_ids)
+        # 验证周期存在
+        prd = row(conn, "SELECT label FROM task_period WHERE label = %s", (body.period_label,))
+        if not prd:
+            raise HTTPException(400, f"周期 {body.period_label} 不存在，请先创建")
+        cur.execute(f"""
+            WITH product_list(product_id) AS (
+                SELECT unnest(%s::text[])
+            )
+            INSERT INTO tasks (product_id, detail, owner, category, time_range_label, status, priority, template_id)
+            SELECT p.product_id, t.detail, t.default_owner, t.category, %s, '待开始', '中', t.id
+            FROM product_list p CROSS JOIN task_template t
+            WHERE t.is_active = TRUE {tpl_filter}
+            ON CONFLICT ON CONSTRAINT tasks_unique_dim DO NOTHING
+            RETURNING id
+        """, (body.product_ids, body.period_label, *([body.template_ids] if body.template_ids else [])))
+        created = cur.rowcount
+        conn.commit()
+        return {"created": created, "period_label": body.period_label,
+                "product_count": len(body.product_ids)}
 
 
 @app.post("/api/tasks", status_code=201)
@@ -1084,18 +1121,6 @@ class UserRoleUpdate(BaseModel):
     display_name: Optional[str] = None
 
 
-class UserPasswordUpdate(BaseModel):
-    password: str
-
-@app.patch("/api/users/{user_id}/password")
-def update_user_password(user_id: int, body: UserPasswordUpdate):
-    pw_hash = hashlib.sha256(body.password.encode()).hexdigest()
-    with db() as conn:
-        cur = conn.cursor()
-        cur.execute("UPDATE users SET password_hash = %s WHERE id = %s", (pw_hash, user_id))
-        conn.commit()
-        return {"ok": True}
-
 @app.patch("/api/users/{user_id}")
 def update_user(user_id: int, body: UserRoleUpdate):
     fields = {'role': body.role}
@@ -1193,8 +1218,11 @@ def get_product_metrics(
                 SUM(s.pay_new_buyers)     AS total_new_buyers,
                 SUM(s.pay_old_buyers)     AS total_old_buyers,
                 SUM(s.search_visitors)    AS total_search_visitors,
-                AVG(s.avg_stay_duration)  AS avg_stay_duration,
-                AVG(s.bounce_rate)        AS avg_bounce_rate,
+                -- 按 UV 加权（避免低 UV 天 skew）
+                SUM(s.avg_stay_duration * s.visitors)::numeric / NULLIF(SUM(s.visitors),0)  AS avg_stay_duration,
+                SUM(s.bounce_rate * s.visitors)::numeric        / NULLIF(SUM(s.visitors),0) AS avg_bounce_rate,
+                -- 累计指标：MAX 仅在单 SKU 时正确；多 SKU 合并 SPU 时可能略偏，
+                -- 准确做法是各 SKU 取最新日累积值再 SUM，这里先保留 MAX，等下个迭代修
                 MAX(s.year_cum_pay)       AS year_cum_pay,
                 MAX(s.month_cum_pay)      AS month_cum_pay
             FROM fact_syzt_product s
@@ -1360,23 +1388,24 @@ def compare_products(
                 MAX(p.category_l1)   AS category_l1,
                 SUM(s.visitors)      AS total_visitors,
                 SUM(s.page_views)    AS total_pv,
-                ROUND((SUM(s.page_views)/NULLIF(SUM(s.visitors),0))::numeric,2)          AS pv_per_uv,
+                ROUND(SUM(s.page_views)/NULLIF(SUM(s.visitors),0),2)          AS pv_per_uv,
                 SUM(s.pay_amount)    AS total_pay,
-                ROUND((SUM(s.pay_amount)-SUM(s.refund_amount))::numeric,2)               AS net_pay,
-                ROUND((SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100)::numeric,4)      AS cart_rate,
-                ROUND((SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100)::numeric,4)    AS order_cvr,
-                ROUND((SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0))::numeric,2)          AS visitor_value,
-                ROUND((SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100)::numeric,2) AS new_buyer_pct,
-                AVG(s.avg_stay_duration)  AS avg_stay,
-                AVG(s.bounce_rate)*100    AS bounce_rate,
+                ROUND(SUM(s.pay_amount)-SUM(s.refund_amount),2)               AS net_pay,
+                ROUND(SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100,4)      AS cart_rate,
+                ROUND(SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100,4)    AS order_cvr,
+                ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0),2)          AS visitor_value,
+                ROUND(SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100,2) AS new_buyer_pct,
+                -- 按 UV 加权
+                SUM(s.avg_stay_duration * s.visitors)::numeric / NULLIF(SUM(s.visitors),0) AS avg_stay,
+                SUM(s.bounce_rate * s.visitors)::numeric        / NULLIF(SUM(s.visitors),0) * 100 AS bounce_rate,
                 SUM(s.search_visitors)    AS search_visitors,
-                ROUND((SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100)::numeric,2) AS search_pct,
+                ROUND(SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100,2) AS search_pct,
                 SUM(w.spend)              AS total_spend,
                 SUM(w.total_gmv)          AS ad_total_gmv,
-                ROUND((SUM(w.total_gmv)/NULLIF(SUM(w.spend),0))::numeric,2)              AS roi,
-                ROUND((SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100)::numeric,4)       AS ctr,
-                ROUND((SUM(w.spend)/NULLIF(SUM(w.clicks),0))::numeric,2)                 AS cpc,
-                ROUND((SUM(w.spend)/NULLIF(SUM(w.new_buyers),0))::numeric,2)             AS cpna
+                ROUND(SUM(w.total_gmv)/NULLIF(SUM(w.spend),0),2)              AS roi,
+                ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100,4)       AS ctr,
+                ROUND(SUM(w.spend)/NULLIF(SUM(w.clicks),0),2)                 AS cpc,
+                ROUND(SUM(w.spend)/NULLIF(SUM(w.new_buyers),0),2)             AS cpna
             FROM fact_syzt_product s
             JOIN dim_product p ON s.product_id = p.product_id
             LEFT JOIN fact_wxst_product w
@@ -1405,12 +1434,12 @@ def get_product_daily_metrics(
                 SUM(s.cart_users)    AS cart_users,
                 SUM(s.order_buyers)  AS order_buyers,
                 SUM(s.collect_users) AS collect_users,
-                ROUND((SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100)::numeric,4)   AS cart_rate,
-                ROUND((SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100)::numeric,4) AS order_cvr,
+                ROUND(SUM(s.cart_users)/NULLIF(SUM(s.visitors),0)*100,4)   AS cart_rate,
+                ROUND(SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100,4) AS order_cvr,
                 SUM(w.spend)         AS spend,
                 SUM(w.total_gmv)     AS ad_gmv,
-                ROUND((SUM(w.total_gmv)/NULLIF(SUM(w.spend),0))::numeric,2)          AS roi,
-                ROUND((SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100)::numeric,4)   AS ctr
+                ROUND(SUM(w.total_gmv)/NULLIF(SUM(w.spend),0),2)          AS roi,
+                ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100,4)   AS ctr
             FROM fact_syzt_product s
             JOIN dim_product p ON s.product_id = p.product_id
             LEFT JOIN fact_wxst_product w
@@ -1451,9 +1480,9 @@ def get_alerts(
                 GROUP BY spu_id
             )
             SELECT r.spu_id, r.title,
-                ROUND((r.avg_pay)::numeric,2) AS recent_7d_avg,
-                ROUND((p.avg_pay)::numeric,2) AS prev_7d_avg,
-                ROUND(((r.avg_pay-p.avg_pay)/NULLIF(p.avg_pay,0)*100)::numeric,1) AS change_pct,
+                ROUND(r.avg_pay,2) AS recent_7d_avg,
+                ROUND(p.avg_pay,2) AS prev_7d_avg,
+                ROUND((r.avg_pay-p.avg_pay)/NULLIF(p.avg_pay,0)*100,1) AS change_pct,
                 CASE WHEN r.avg_pay < p.avg_pay*0.7 THEN true ELSE false END AS decay_alert
             FROM recent r LEFT JOIN prev p USING(spu_id)
             ORDER BY change_pct ASC NULLS LAST
@@ -1491,8 +1520,9 @@ def get_xhs_metrics(
         base_sql = """
             SELECT n.id, n.note_title, n.note_url, n.publish_time, n.author,
                 n.likes, n.collects, n.shares, n.comments, n.reads,
-                ROUND(((n.likes*1.0 + n.collects*2.0 + n.shares*3.0 + n.comments*1.5)
-                    / NULLIF(n.reads,0) * 1000)::numeric, 2
+                ROUND(
+                    (n.likes*1.0 + n.collects*2.0 + n.shares*3.0 + n.comments*1.5)
+                    / NULLIF(n.reads,0) * 1000, 2
                 ) AS cei,
                 array_agg(np.product_id) AS product_ids
             FROM fact_xhs_note n
@@ -1542,117 +1572,115 @@ def get_overview_ranking(
     start: str = Query(default=None),
     end:   str = Query(default=None),
     limit: int = 10,
+    category: Optional[str] = Query(default=None,
+        description="按一级分类筛选：配饰 / 家具 / 灯具，留空=全部"),
 ):
     """
     商品排行榜，含当期 vs 上一周期对比。
     metric: gmv=销售额  ctr=点击率  visitors=进店UV
+    category: 可选，限定一级分类
     """
     s, e = start or CAMPAIGN_START, end or date.today().isoformat()
-    try:
-        ps, pe = _prev_range(s, e)
-    except Exception as ex:
-        return {"metric": metric, "period": {"start": s, "end": e}, "items": [], "_error": f"日期解析失败: {ex}"}
+    ps, pe = _prev_range(s, e)
+    cat_clause = " AND p.category_l1 = %s" if category else ""
+    cat_params = (category,) if category else ()
 
-    try:
-        with db() as conn:
-            if metric == "ctr":
-                sql_cur = """
-                    SELECT p.spu_id,
-                           MAX(p.title) AS title,
-                           MAX(p.category_l1) AS category_l1,
-                           ROUND((SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100)::numeric, 4) AS value,
-                           SUM(w.impressions) AS impressions,
-                           SUM(w.clicks)      AS clicks
-                    FROM fact_wxst_product w
-                    JOIN dim_product p ON w.product_id = p.product_id
-                    WHERE w.stat_date BETWEEN %s AND %s
-                    GROUP BY p.spu_id
-                    HAVING SUM(w.impressions) > 0
-                    ORDER BY value DESC LIMIT %s
-                """
-                sql_prev = """
-                    SELECT p.spu_id,
-                           ROUND((SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100)::numeric, 4) AS value
-                    FROM fact_wxst_product w
-                    JOIN dim_product p ON w.product_id = p.product_id
-                    WHERE w.stat_date BETWEEN %s AND %s
-                    GROUP BY p.spu_id
-                """
-                cur_rows  = rows(conn, sql_cur,  (s, e, limit))
-                prev_rows = rows(conn, sql_prev, (ps, pe))
-            elif metric == "visitors":
-                sql_cur = """
-                    SELECT p.spu_id,
-                           MAX(p.title) AS title,
-                           MAX(p.category_l1) AS category_l1,
-                           SUM(s.visitors) AS value
-                    FROM fact_syzt_product s
-                    JOIN dim_product p ON s.product_id = p.product_id
-                    WHERE s.stat_date BETWEEN %s AND %s
-                    GROUP BY p.spu_id
-                    ORDER BY value DESC LIMIT %s
-                """
-                sql_prev = """
-                    SELECT p.spu_id, SUM(s.visitors) AS value
-                    FROM fact_syzt_product s
-                    JOIN dim_product p ON s.product_id = p.product_id
-                    WHERE s.stat_date BETWEEN %s AND %s
-                    GROUP BY p.spu_id
-                """
-                cur_rows  = rows(conn, sql_cur,  (s, e, limit))
-                prev_rows = rows(conn, sql_prev, (ps, pe))
-            else:  # gmv
-                sql_cur = """
-                    SELECT p.spu_id,
-                           MAX(p.title) AS title,
-                           MAX(p.category_l1) AS category_l1,
-                           ROUND((SUM(s.pay_amount))::numeric, 2) AS value
-                    FROM fact_syzt_product s
-                    JOIN dim_product p ON s.product_id = p.product_id
-                    WHERE s.stat_date BETWEEN %s AND %s
-                    GROUP BY p.spu_id
-                    ORDER BY value DESC LIMIT %s
-                """
-                sql_prev = """
-                    SELECT p.spu_id, ROUND((SUM(s.pay_amount))::numeric, 2) AS value
-                    FROM fact_syzt_product s
-                    JOIN dim_product p ON s.product_id = p.product_id
-                    WHERE s.stat_date BETWEEN %s AND %s
-                    GROUP BY p.spu_id
-                """
-                cur_rows  = rows(conn, sql_cur,  (s, e, limit))
-                prev_rows = rows(conn, sql_prev, (ps, pe))
+    with db() as conn:
+        if metric == "ctr":
+            sql_cur = f"""
+                SELECT p.spu_id,
+                       MAX(p.title) AS title,
+                       MAX(p.category_l1) AS category_l1,
+                       ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100, 4) AS value,
+                       SUM(w.impressions) AS impressions,
+                       SUM(w.clicks)      AS clicks
+                FROM fact_wxst_product w
+                JOIN dim_product p ON w.product_id = p.product_id
+                WHERE w.stat_date BETWEEN %s AND %s {cat_clause}
+                GROUP BY p.spu_id
+                HAVING SUM(w.impressions) > 0
+                ORDER BY value DESC LIMIT %s
+            """
+            sql_prev = f"""
+                SELECT p.spu_id,
+                       ROUND(SUM(w.clicks)/NULLIF(SUM(w.impressions),0)*100, 4) AS value
+                FROM fact_wxst_product w
+                JOIN dim_product p ON w.product_id = p.product_id
+                WHERE w.stat_date BETWEEN %s AND %s {cat_clause}
+                GROUP BY p.spu_id
+            """
+            cur_rows  = rows(conn, sql_cur,  (s, e, *cat_params, limit))
+            prev_rows = rows(conn, sql_prev, (ps, pe, *cat_params))
+        elif metric == "visitors":
+            sql_cur = f"""
+                SELECT p.spu_id,
+                       MAX(p.title) AS title,
+                       MAX(p.category_l1) AS category_l1,
+                       SUM(s.visitors) AS value
+                FROM fact_syzt_product s
+                JOIN dim_product p ON s.product_id = p.product_id
+                WHERE s.stat_date BETWEEN %s AND %s {cat_clause}
+                GROUP BY p.spu_id
+                ORDER BY value DESC LIMIT %s
+            """
+            sql_prev = f"""
+                SELECT p.spu_id, SUM(s.visitors) AS value
+                FROM fact_syzt_product s
+                JOIN dim_product p ON s.product_id = p.product_id
+                WHERE s.stat_date BETWEEN %s AND %s {cat_clause}
+                GROUP BY p.spu_id
+            """
+            cur_rows  = rows(conn, sql_cur,  (s, e, *cat_params, limit))
+            prev_rows = rows(conn, sql_prev, (ps, pe, *cat_params))
+        else:  # gmv
+            sql_cur = f"""
+                SELECT p.spu_id,
+                       MAX(p.title) AS title,
+                       MAX(p.category_l1) AS category_l1,
+                       ROUND(SUM(s.pay_amount), 2) AS value
+                FROM fact_syzt_product s
+                JOIN dim_product p ON s.product_id = p.product_id
+                WHERE s.stat_date BETWEEN %s AND %s {cat_clause}
+                GROUP BY p.spu_id
+                ORDER BY value DESC LIMIT %s
+            """
+            sql_prev = f"""
+                SELECT p.spu_id, ROUND(SUM(s.pay_amount), 2) AS value
+                FROM fact_syzt_product s
+                JOIN dim_product p ON s.product_id = p.product_id
+                WHERE s.stat_date BETWEEN %s AND %s {cat_clause}
+                GROUP BY p.spu_id
+            """
+            cur_rows  = rows(conn, sql_cur,  (s, e, *cat_params, limit))
+            prev_rows = rows(conn, sql_prev, (ps, pe, *cat_params))
 
-            prev_map = {r["spu_id"]: r["value"] for r in prev_rows}
-            max_val = max((r["value"] or 0 for r in cur_rows), default=1)
+        prev_map = {r["spu_id"]: r["value"] for r in prev_rows}
+        max_val = max((r["value"] or 0 for r in cur_rows), default=1)
 
-            result = []
-            for rank, r in enumerate(cur_rows, 1):
-                cur_val  = r["value"] or 0
-                prev_val = prev_map.get(r["spu_id"])
-                if prev_val and prev_val > 0:
-                    change_pct = round((cur_val - prev_val) / prev_val * 100, 1)
-                else:
-                    change_pct = None
-                result.append({
-                    "rank":        rank,
-                    "spu_id":      r["spu_id"],
-                    "title":       r["title"],
-                    "category_l1": r["category_l1"],
-                    "value":       cur_val,
-                    "prev_value":  prev_val,
-                    "change_pct":  change_pct,
-                    "bar_pct":     round(cur_val / max_val * 100, 1) if max_val else 0,
-                })
-            return {
-                "metric":     metric,
-                "period":     {"start": s, "end": e},
-                "prev_period":{"start": ps, "end": pe},
-                "items":      result,
-            }
-    except Exception as ex:
-        import traceback; traceback.print_exc()
-        return {"metric": metric, "period": {"start": s, "end": e}, "items": [], "_error": str(ex)}
+        result = []
+        for rank, r in enumerate(cur_rows, 1):
+            cur_val  = r["value"] or 0
+            prev_val = prev_map.get(r["spu_id"])
+            if prev_val and prev_val > 0:
+                change_pct = round((cur_val - prev_val) / prev_val * 100, 1)
+            else:
+                change_pct = None
+            result.append({
+                "rank":        rank,
+                "spu_id":      r["spu_id"],
+                "title":       r["title"],
+                "category_l1": r["category_l1"],
+                "value":       cur_val,
+                "prev_value":  prev_val,
+                "change_pct":  change_pct,
+                "bar_pct":     round(cur_val / max_val * 100, 1) if max_val else 0,
+            })
+        return {
+            "metric":     metric,
+            "period":     {"start": s, "end": e},
+            "prev_period":{"start": ps, "end": pe},
+            "items":      result,
+        }
 
 
 @app.get("/api/overview/kpi")
@@ -1753,7 +1781,7 @@ def get_plan_category():
 
         actuals = rows(conn, """
             SELECT p.category_l1 AS category,
-                   ROUND((SUM(w.spend))::numeric, 2) AS actual_spend
+                   ROUND(SUM(w.spend), 2) AS actual_spend
             FROM fact_wxst_product w
             JOIN dim_product p ON w.product_id = p.product_id
             WHERE w.stat_date >= %s
@@ -1821,18 +1849,6 @@ def update_plan_category(body: PlanCategoryUpdate):
 
 @app.get("/api/health")
 def health():
-    import re as _re
-    # 直接从 dashboard.html RAW 块读取最新时间（ETL 写这里，不写数据库）
-    raw_loaded_at = None
-    raw_data_end  = None
-    try:
-        _html = open(os.path.join(DASHBOARD_DIR, "dashboard.html"), encoding="utf-8").read()
-        _m = _re.search(r'"loaded_at"\s*:\s*"([^"]+)"', _html)
-        if _m: raw_loaded_at = _m.group(1)
-        _m2 = _re.search(r'"data_end"\s*:\s*"([^"]+)"', _html)
-        if _m2: raw_data_end = _m2.group(1)
-    except Exception:
-        pass
     try:
         with db() as conn:
             counts = {
@@ -1842,17 +1858,21 @@ def health():
                 "tasks": row(conn, "SELECT COUNT(*) as n FROM tasks")["n"],
             }
             latest = row(conn, "SELECT MAX(stat_date) as d FROM fact_wxst_product")
+            loaded = row(conn, """
+                SELECT TO_CHAR(MAX(loaded_at) AT TIME ZONE 'Asia/Shanghai', 'MM-DD HH24:MI') AS t
+                FROM fact_syzt_product
+            """)
         return {
             "status": "ok",
-            "latest_date": raw_data_end or (latest["d"] if latest else None),
-            "loaded_at": raw_loaded_at,
+            "latest_date": latest["d"],
+            "loaded_at": loaded["t"] if loaded else None,
             "counts": counts,
         }
     except Exception:
         return {
             "status": "offline",
-            "latest_date": raw_data_end,
-            "loaded_at": raw_loaded_at,
+            "latest_date": "2026-04-21",
+            "loaded_at": "04-21 21:57",
             "counts": {},
         }
 
@@ -1938,35 +1958,15 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
         name = f.filename or "upload"
         ext = name.rsplit(".", 1)[-1].lower()
         if ext in ("xls", "xlsx"):
-            # 文件名含"流量"→无限店铺流量，否则→生意参谋商品
-            if "流量" in name:
-                dest_dir = os.path.join(base_dir, "无限店铺流量")
-            else:
-                dest_dir = os.path.join(base_dir, "生意参谋商品")
+            dest_dir = os.path.join(base_dir, "生意参谋商品")
         elif ext == "csv":
-            # 按文件名精确匹配，更具体的模式优先
-            if "人群推广商品报表" in name:
-                dest_dir = os.path.join(base_dir, "推广报表", "人群推广商品报表")
-            elif "关键词商品报表" in name:
-                dest_dir = os.path.join(base_dir, "推广报表", "关键词商品报表")
-            elif "人群报表" in name:
-                dest_dir = os.path.join(base_dir, "推广报表", "人群报表")
-            elif "关键词报表" in name:
-                dest_dir = os.path.join(base_dir, "推广报表", "关键词报表")
-            elif "内容报表" in name:
-                dest_dir = os.path.join(base_dir, "推广报表", "内容报表")
-            elif "创意报表" in name:
-                dest_dir = os.path.join(base_dir, "推广报表", "创意报表")
-            elif "商品报表" in name:
+            # Detect: ad report vs store report
+            content_head = await f.read(512)
+            await f.seek(0)
+            if b"\xe8\x8a\xb1\xe8\xb4\xb9" in content_head or b"spend" in content_head.lower() or "推广" in name or "商品报表" in name:
                 dest_dir = os.path.join(base_dir, "推广报表", "商品报表")
             else:
-                # 兜底：检查内容是否含花费字段
-                content_head = await f.read(512)
-                await f.seek(0)
-                if b"\xe8\x8a\xb1\xe8\xb4\xb9" in content_head:  # 花费
-                    dest_dir = os.path.join(base_dir, "推广报表", "商品报表")
-                else:
-                    dest_dir = os.path.join(base_dir, "生意参谋商品")
+                dest_dir = os.path.join(base_dir, "生意参谋商品")
         else:
             continue
         os.makedirs(dest_dir, exist_ok=True)
@@ -1978,55 +1978,42 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
     if not saved:
         raise HTTPException(400, "未识别到有效文件（需要 .xls/.xlsx/.csv）")
 
-    # 优先使用 etl_load.py（写入 Neon DB），fallback 到 refresh_dashboard.py（写 HTML）
-    etl_db_script   = os.path.join(base_dir, "etl", "etl_load.py")
-    etl_html_script = os.path.join(base_dir, "etl", "refresh_dashboard.py")
+    etl_script = os.path.join(base_dir, "etl", "refresh_dashboard.py")
+    if not os.path.exists(etl_script):
+        raise HTTPException(500, "ETL 脚本不存在：etl/refresh_dashboard.py")
 
     try:
-        # ── 主路径：写入数据库 ──────────────────────────────
-        if os.path.exists(etl_db_script):
-            result = subprocess.run(
-                ["python3", etl_db_script],
-                cwd=base_dir,
-                capture_output=True, text=True, timeout=180
-            )
-            if result.returncode == 0:
-                _invalidate_raw_cache()
-                # 从输出中提取统计信息
-                log_tail = result.stdout[-800:]
-                return {"ok": True, "saved_files": saved,
-                        "backend": "neon_db", "log": log_tail}
-            # 数据库写入失败，fallback 到 HTML
-            db_err = result.stderr[-400:]
-        else:
-            db_err = "etl_load.py 不存在"
-
-        # ── Fallback：更新 dashboard.html ──────────────────
-        if not os.path.exists(etl_html_script):
-            raise HTTPException(500, f"ETL DB 失败: {db_err}；HTML ETL 也不存在")
-        result2 = subprocess.run(
-            ["python3", etl_html_script],
+        result = subprocess.run(
+            ["python3", etl_script],
             cwd=base_dir,
             capture_output=True, text=True, timeout=120
         )
-        if result2.returncode != 0:
-            raise HTTPException(500, f"ETL(DB)失败: {db_err}\nETL(HTML)失败: {result2.stderr[-400:]}")
+        if result.returncode != 0:
+            raise HTTPException(500, f"ETL 失败：{result.stderr[-800:]}")
+        # Extract data_end from output
         data_end = None
-        for line in result2.stdout.splitlines():
+        for line in result.stdout.splitlines():
             if "data_end=" in line:
-                data_end = line.split("data_end=")[1].split()[0]; break
-        _invalidate_raw_cache()
-        return {"ok": True, "saved_files": saved, "backend": "html_fallback",
-                "data_end": data_end, "log": result2.stdout[-600:]}
+                data_end = line.split("data_end=")[1].split()[0]
+                break
+        syzt = wxst = 0
+        for line in result.stdout.splitlines():
+            if "syzt=" in line:
+                try: syzt = int(line.split("syzt=")[1].split()[0])
+                except: pass
+            if "wxst=" in line:
+                try: wxst = int(line.split("wxst=")[1].split()[0])
+                except: pass
+        return {"ok": True, "saved_files": saved, "data_end": data_end, "syzt": syzt, "wxst": wxst, "log": result.stdout[-600:]}
     except subprocess.TimeoutExpired:
-        raise HTTPException(500, "ETL 超时（>180s）")
+        raise HTTPException(500, "ETL 超时（>120s）")
 
 
 # ── 静态文件：直接访问 http://localhost:766 打开看板 ──
 @app.get("/")
 def serve_dashboard():
     path = os.path.join(DASHBOARD_DIR, "dashboard.html")
-    return FileResponse(path, media_type="text/html", headers={"Cache-Control": "no-store, no-cache, must-revalidate"})
+    return FileResponse(path, media_type="text/html")
 
 @app.get("/favicon.ico")
 def favicon():

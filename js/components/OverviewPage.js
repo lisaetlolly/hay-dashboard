@@ -4,13 +4,14 @@
 const OverviewPage = defineComponent({
   name: 'OverviewPage',
   components: { InteractiveTrendChart },
-  props: ['start', 'end', 'granularity'],
+  props: ['start', 'end'],
   setup(props) {
     const kpi       = ref({})
     const planData  = ref({ items:[], total_actual:0 })
     const tasks     = ref([])
     const meetings  = ref([])
     const rankMetric   = ref('gmv')
+    const rankCategory = ref('全部')   // 新增：分类筛选（全部 / 配饰 / 家具 / 灯具）
     const rankData     = ref({ items:[] })
     const channelCatData = ref({ audienceRows:[], keywordRows:[], audienceTotal:0, keywordTotal:0, grandTotal:0 })
     const rankLoading  = ref(false)
@@ -34,7 +35,7 @@ const OverviewPage = defineComponent({
       if (v >= 1000)  return v.toFixed(0)
       return v.toFixed(0)
     }
-    const imgSrc = pid => (APP_STATE.value.imageOverrides || {})[pid] || RAW.img_map?.[pid] || ''
+    const imgSrc = pid => RAW.img_map?.[pid] || ''
     const kpiVal = key => {
       const k = kpi.value[key]
       if (!k) return '—'
@@ -59,22 +60,25 @@ const OverviewPage = defineComponent({
       return v >= 10000 ? (v/10000).toFixed(1) + '万' : v.toFixed(0)
     })
 
-    const localRank = (metric, s, e) => {
-      const rows = Object.values(RAW.products || {}).map(p => {
-        let gmv=0, vis=0
-        for (let i=0;i<p.dates.length;i++) {
-          const d=p.dates[i]
-          if (d>=s && d<=e) {
-            gmv += p.pay[i]||0
-            vis += p.vis[i]||0
+    const localRank = (metric, s, e, cat) => {
+      const rows = Object.values(RAW.products)
+        .filter(p => cat === '全部' || p.cat === cat)
+        .map(p => {
+          let gmv=0, vis=0
+          for (let i=0;i<p.dates.length;i++) {
+            const d=p.dates[i]
+            if (d>=s && d<=e) {
+              gmv += p.pay[i]||0
+              vis += p.vis[i]||0
+            }
           }
-        }
-        return {
-          spu_id:p.pid,
-          title:p.name,
-          value: metric==='gmv' ? gmv : vis,
-        }
-      }).filter(r => r.value != null && r.value > 0)
+          return {
+            spu_id:p.pid,
+            title:p.name,
+            category_l1: p.cat,
+            value: metric==='gmv' ? gmv : vis,
+          }
+        }).filter(r => r.value != null && r.value > 0)
         .sort((a,b)=>(b.value||0)-(a.value||0))
         .slice(0,10)
         .map((r,i)=>({ ...r, rank:i+1 }))
@@ -85,22 +89,31 @@ const OverviewPage = defineComponent({
       rankLoading.value = true
       const s = props.start, e = props.end
       if (!s || !e) { rankLoading.value = false; return }
-      const d = await api('/api/overview/ranking', { metric: rankMetric.value, start: s, end: e })
-      const valid = d && Array.isArray(d.items) && d.items.length >= 10 ? d : localRank(rankMetric.value, s, e)
+      const params = { metric: rankMetric.value, start: s, end: e }
+      if (rankCategory.value !== '全部') params.category = rankCategory.value
+      const d = await api('/api/overview/ranking', params)
+      // 接口返回不足或失败时回退到本地计算（带分类筛选）
+      const valid = d && Array.isArray(d.items) && d.items.length > 0
+        ? d
+        : localRank(rankMetric.value, s, e, rankCategory.value)
       rankData.value = valid || { items: [] }
       if (valid && valid.prev_top) prevTopData.value = valid.prev_top
       rankLoading.value = false
     }
-    const load = () => {
+    // 切换分类时立即重载
+    Vue.watch(rankCategory, () => loadRank())
+    const load = async () => {
       const s = props.start, e = props.end
       if (!s || !e) return
+      // 先预热实时人群/关键词比例，再算所有派生指标
+      try { await fetchChannelRatios(s, e) } catch {}
       const all = computeAll(s, e)
       const subD = (ds, n) => { const d = new Date(ds); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10) }
       const prev = s === e ? { s: subD(s,1), e: subD(e,1) } : prevRange(s, e)
       prevPeriod.value = prev
       kpi.value      = all.kpi
       planData.value = all.plan
-      meetings.value = (APP_STATE.value.meetings || []).slice(0, 6)
+      meetings.value = all.meetings.slice(0, 6)
       channelCatData.value = computeChannelCatTable(s, e)
       loadRank()
     }
@@ -135,7 +148,7 @@ const OverviewPage = defineComponent({
       if (!s || !e) return []
       const gran = trendGranularity.value
       const dayMap = {}
-      for (const p of Object.values(RAW.products || {})) {
+      for (const p of Object.values(RAW.products)) {
         for (let i=0;i<p.dates.length;i++) {
           const d = p.dates[i]
           if (d<s || d>e) continue
@@ -169,7 +182,7 @@ const OverviewPage = defineComponent({
     })
 
     return {
-      kpi, planData, tasks, meetings, rankMetric, rankData, rankLoading,
+      kpi, planData, tasks, meetings, rankMetric, rankCategory, rankData, rankLoading,
       kpiDefs, rankDefs, kpiVal, kpiChg, barW, rankFmt, fmtWan, imgSrc,
       dotColor, statusLabel, totalActualWan, prevTopList, prevPeriod, chgCls, chgTxt,
       selectedOverviewMetrics, overviewMetricOpts, trendSeries, trendGranularity,
@@ -313,16 +326,26 @@ const OverviewPage = defineComponent({
 
     <!-- Ranking -->
     <div class="card" style="padding:16px">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:4px">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
         <div class="tabs" style="border-bottom:none">
           <div v-for="m in rankDefs" :key="m.k"
                class="tab" :class="{active:rankMetric===m.k}"
                @click="rankMetric=m.k">{{ m.l }} 排行</div>
         </div>
+        <!-- 分类筛选按钮组：全部 / 配饰 / 家具 / 灯具 -->
+        <div style="display:flex;gap:4px;align-items:center">
+          <span style="font-size:11px;color:var(--muted)">分类：</span>
+          <button v-for="c in ['全部','配饰','家具','灯具']" :key="c"
+            @click="rankCategory=c"
+            :style="{padding:'4px 10px',fontSize:'11px',border:rankCategory===c?'1px solid var(--accent)':'1px solid var(--border)',
+                     background:rankCategory===c?'var(--accent)':'transparent',color:rankCategory===c?'#fff':'var(--muted)',
+                     borderRadius:'14px',cursor:'pointer',fontWeight:rankCategory===c?'600':'400'}">{{ c }}</button>
+        </div>
         <div style="font-size:11px;color:var(--muted)">vs 上期</div>
         <span class="info-btn" style="margin-left:8px">?<span class="tooltip" style="left:auto;right:0">
           GMV：生意参谋 pay_amount 字段汇总 ｜
-          流量：生意参谋 visitors 字段汇总
+          流量：生意参谋 visitors 字段汇总 ｜
+          分类筛选只看该一级分类下的商品排行
         </span></span>
       </div>
       <div style="border-bottom:1px solid var(--border);margin:8px 0 10px"></div>

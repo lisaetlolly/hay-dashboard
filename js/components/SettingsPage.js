@@ -152,6 +152,68 @@ const SettingsPage = defineComponent({
       state.meetings=state.meetings.filter(x=>x.id!==m.id); persistAppState()
     }
 
+    // ── 人群投放品类计划（admin 可改）─────────────────────────
+    const audiencePlan = Vue.ref([])           // [{category, plan_pct, sort_order}, ...]
+    const audiencePlanLoading = Vue.ref(false)
+    const audiencePlanSaving  = Vue.ref(false)
+    const audiencePlanMsg     = Vue.ref('')
+
+    const loadAudiencePlan = async () => {
+      audiencePlanLoading.value = true
+      try {
+        const res = await fetch('/api/settings/audience-plan')
+        if (res.ok) {
+          const data = await res.json()
+          // 保证 4 行齐全
+          const byCat = {}
+          for (const r of data || []) byCat[r.category] = r
+          audiencePlan.value = ['家具','配饰','灯具','其他'].map((c, i) => ({
+            category: c,
+            plan_pct: byCat[c]?.plan_pct ?? ({家具:63, 配饰:30, 灯具:5, 其他:2}[c]),
+            sort_order: byCat[c]?.sort_order ?? (i+1)*10,
+          }))
+        }
+      } catch (e) { audiencePlanMsg.value = '加载失败：' + e.message }
+      audiencePlanLoading.value = false
+    }
+    const audiencePlanTotal = Vue.computed(() =>
+      audiencePlan.value.reduce((a,b)=>a+(+b.plan_pct||0), 0).toFixed(1)
+    )
+    const saveAudiencePlan = async () => {
+      if (!can('metric.edit') && !((me.value?.permissions||[]).includes('*'))) {
+        return alert('无修改人群品类计划权限（需要 admin）')
+      }
+      audiencePlanSaving.value = true
+      audiencePlanMsg.value = ''
+      try {
+        const res = await fetch('/api/settings/audience-plan', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            items: audiencePlan.value.map(r => ({ category: r.category, plan_pct: +r.plan_pct })),
+            updated_by: me.value?.display_name || ''
+          })
+        })
+        const out = await res.json()
+        if (res.ok) {
+          audiencePlanMsg.value = out.warning ? `已保存（注意：${out.warning}）` : '已保存'
+          setTimeout(() => { audiencePlanMsg.value = '' }, 3000)
+        } else {
+          audiencePlanMsg.value = '保存失败：' + (out.detail || res.status)
+        }
+      } catch (e) { audiencePlanMsg.value = '保存失败：' + e.message }
+      audiencePlanSaving.value = false
+    }
+    const resetAudiencePlanDefault = () => {
+      audiencePlan.value = [
+        { category:'家具', plan_pct:63, sort_order:10 },
+        { category:'配饰', plan_pct:30, sort_order:20 },
+        { category:'灯具', plan_pct:5,  sort_order:30 },
+        { category:'其他', plan_pct:2,  sort_order:40 },
+      ]
+    }
+    Vue.onMounted(loadAudiencePlan)
+
     // ── 数据导出/导入 ─────────────────────────────────────────
     const exportState = () => {
       const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'})
@@ -300,6 +362,9 @@ const SettingsPage = defineComponent({
       meetingModal,openAddMeeting,openEditMeeting,saveMeetingModal,deleteMeeting,
       actions,ACTION_TYPES,actionModal,openAddAction,openEditAction,saveActionModal,deleteAction,
       exportState,importState,
+      // 人群投放品类计划
+      audiencePlan, audiencePlanLoading, audiencePlanSaving, audiencePlanMsg, audiencePlanTotal,
+      saveAudiencePlan, resetAudiencePlanDefault, loadAudiencePlan,
       allProductsForManage,productModal,openAddProduct,openEditProduct,saveProductModal,toggleHideProduct,deleteCustomProduct,
       manualInputPid,manualInputDate,manualInputFields,manualProductOptions,saveManualData,
       productNameByPid: pid => RAW.products?.[pid]?.name || pid,
@@ -544,6 +609,47 @@ const SettingsPage = defineComponent({
     </div>
     <div style="display:flex;justify-content:flex-end">
       <button @click="saveManualData" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:8px 16px;font-size:12px;cursor:pointer;font-weight:600">保存数据</button>
+    </div>
+  </div>
+
+  <!-- 人群投放品类计划（admin 可改） -->
+  <div class="card" style="padding:16px">
+    <div class="card-header" style="margin-bottom:14px">
+      <span class="card-title">人群投放品类计划</span>
+      <span class="card-sub">晓东定的目标比例：家具/配饰/灯具/其他。改完保存后投放面板自动同步</span>
+    </div>
+    <div v-if="audiencePlanLoading" style="color:var(--muted);font-size:12px">加载中...</div>
+    <div v-else>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px">
+        <div v-for="(row, idx) in audiencePlan" :key="row.category"
+          style="border:1px solid var(--border);border-radius:8px;padding:12px;background:#fafaf9">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">{{ row.category }}</div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" v-model.number="row.plan_pct" min="0" max="100" step="0.1"
+              style="width:70px;padding:6px 8px;font-size:14px;font-weight:700;border:1px solid var(--border);border-radius:6px;text-align:right"
+              :disabled="!can('metric.edit') && !((me?.permissions||[]).includes('*'))">
+            <span style="font-size:12px;color:var(--muted)">%</span>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+        <span style="color:var(--muted)">合计：</span>
+        <span :style="{fontWeight:700, color: Math.abs(audiencePlanTotal - 100) < 0.5 ? 'var(--green)' : 'var(--yellow)'}">
+          {{ audiencePlanTotal }}%
+        </span>
+        <span v-if="Math.abs(audiencePlanTotal - 100) >= 0.5" style="color:var(--yellow)">⚠️ 计划总和不为 100%</span>
+        <div style="flex:1"></div>
+        <button @click="resetAudiencePlanDefault"
+          style="padding:5px 12px;font-size:12px;border:1px solid var(--border);background:#fff;color:var(--muted);border-radius:6px;cursor:pointer">
+          恢复默认 (63/30/5/2)
+        </button>
+        <button @click="saveAudiencePlan" :disabled="audiencePlanSaving"
+          style="padding:5px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">
+          {{ audiencePlanSaving ? '保存中...' : '保存' }}
+        </button>
+      </div>
+      <div v-if="audiencePlanMsg" style="margin-top:8px;font-size:12px"
+        :style="{color: audiencePlanMsg.includes('失败') ? 'var(--red)' : 'var(--green)'}">{{ audiencePlanMsg }}</div>
     </div>
   </div>
 

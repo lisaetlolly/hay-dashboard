@@ -6,4 +6,9 @@ services:
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: DATABASE_URL
-        sync: false   # 在 Render 控制台手动填写 Neon DSN
+        sync: false   # 在 Render Dashboard → Environment 手动填 Neon DSN
+    disk:
+      name: uploads
+      # ⚠️ 不能挂到 /opt/render/project/src（会覆盖代码），挂到 data 目录
+      mountPath: /opt/render/project/data
+      sizeGB: 1

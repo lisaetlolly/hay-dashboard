@@ -1,7 +1,54 @@
 // ── compute.js ────────────────────────────────────────────────
 // 核心数据计算函数。依赖：RAW（内联注入全局）、utils.js（filterRows/prevRange）、
-// config.js（AUDIENCE_RATIO/KEYWORD_RATIO）、OFFICIAL（内联全局）、PLAN_LOOKUP（内联全局）。
+// config.js（AUDIENCE_RATIO/KEYWORD_RATIO 仅作为 API 失败时的兜底常量）、
+// OFFICIAL（内联全局）、PLAN_LOOKUP（内联全局）。
 // 注意：PLAN_LOOKUP 初始化在 dashboard.html 内联脚本中（依赖 RAW）。
+
+// ── 实时人群/关键词花费比例（替换硬编码 AUDIENCE_RATIO/KEYWORD_RATIO）──
+// 用法：先 await fetchChannelRatios(s, e)，再调用 computeAll 等函数。
+// 缓存键 = `${s}~${e}`，5 分钟内不会重复请求。
+const _channelRatioCache = {}
+async function fetchChannelRatios(s, e) {
+  const key = `${s}~${e}`
+  const now = Date.now()
+  const cached = _channelRatioCache[key]
+  if (cached && (now - cached.at) < 5*60*1000) return cached.value
+  try {
+    const res = await fetch(`/api/ads/channel-split?start=${s}&end=${e}`)
+    if (!res.ok) throw new Error('http ' + res.status)
+    const d = await res.json()
+    if (d && d.audience_pct != null && d.total > 0) {
+      const ratios = {
+        audience: d.audience_pct / 100,
+        keyword:  d.keyword_pct / 100,
+        audience_spend: d.audience_spend,
+        keyword_spend:  d.keyword_spend,
+        plan_audience_pct: d.plan_audience_pct,
+        plan_keyword_pct:  d.plan_keyword_pct,
+        source: 'api'
+      }
+      _channelRatioCache[key] = { at: now, value: ratios }
+      window.AUDIENCE_RATIO_LIVE = ratios.audience
+      window.KEYWORD_RATIO_LIVE  = ratios.keyword
+      return ratios
+    }
+  } catch (e) { /* fall through to hardcoded fallback */ }
+  // Fallback：用 config.js 的硬编码 ratio
+  return {
+    audience: AUDIENCE_RATIO, keyword: KEYWORD_RATIO,
+    audience_spend: null, keyword_spend: null,
+    plan_audience_pct: 73.1, plan_keyword_pct: 26.9,
+    source: 'fallback'
+  }
+}
+function currentAudienceRatio() {
+  return (typeof window !== 'undefined' && window.AUDIENCE_RATIO_LIVE != null)
+    ? window.AUDIENCE_RATIO_LIVE : AUDIENCE_RATIO
+}
+function currentKeywordRatio() {
+  return (typeof window !== 'undefined' && window.KEYWORD_RATIO_LIVE != null)
+    ? window.KEYWORD_RATIO_LIVE : KEYWORD_RATIO
+}
 
 function computeKPI(s, e) {
   let pay=0, vis=0, cart=0, ctr_sum=0, ctr_n=0, fav_cart=0
@@ -286,15 +333,18 @@ function _computeChannelCatTable(s, e) {
   })
 
   // 4. Keyword table: same category grouping, no plan, just actual spend scaled by keyword ratio
-  const kwGrand = grandTotal * KEYWORD_RATIO
-  const audGrand = grandTotal * AUDIENCE_RATIO
+  // 优先用 /api/ads/channel-split 返回的实时比例，失败回退到 config.js 硬编码常量
+  const audRatio = currentAudienceRatio()
+  const kwRatio  = currentKeywordRatio()
+  const kwGrand  = grandTotal * kwRatio
+  const audGrand = grandTotal * audRatio
   const keywordRows = catOrder.map(cat => {
     const audActual = catTotals[cat] || 0
-    const kwActual = +(audActual * KEYWORD_RATIO / AUDIENCE_RATIO).toFixed(2)
+    const kwActual = +(audActual * kwRatio / audRatio).toFixed(2)
     const kwPct = kwGrand > 0 ? +((kwActual / kwGrand) * 100).toFixed(1) : 0
     const products = pidList.filter(p => (p.cat || '其他') === cat).map(p => ({
       ...p,
-      kw_spend: +(p.spend * KEYWORD_RATIO / AUDIENCE_RATIO).toFixed(2),
+      kw_spend: +(p.spend * kwRatio / audRatio).toFixed(2),
     }))
     return Vue.reactive({
       category: cat,
