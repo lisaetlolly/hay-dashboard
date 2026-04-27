@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-将标准任务模板（9 条 × 13 个商品）及 4.20-22 周期数据写入 dashboard.html 的 RAW 块。
+将标准任务模板（9 条 × 13 个商品）及各周期数据写入 dashboard.html 的 RAW 块。
 可重复运行：先移除同名 detail 的旧任务，再写入新任务（避免重复）。
 """
 import json, uuid
@@ -11,10 +11,8 @@ html_path = base / 'dashboard.html'
 
 html  = html_path.read_text(encoding='utf-8')
 start = html.index('const RAW = ')
-end   = html.index('const OFFICIAL = new Set(RAW.official_pids)')
-raw   = json.loads(html[start + len('const RAW = '):end].strip().rstrip('\n'))
-
-PERIOD = "4.20-22"
+end   = html.index('\nasync function _loadRawFromAPI')
+raw   = json.loads(html[start + len('const RAW = '):end].strip())
 
 TEMPLATES = [
     {"category": "标题优化",    "detail": "结合小红书/淘宝热搜词，优化链接标题",              "owner": "Jas team（内容）"},
@@ -28,9 +26,8 @@ TEMPLATES = [
     {"category": "售卖复盘",    "detail": "对流量、收藏加购情况做分析",                         "owner": "晓东（运营）"},
 ]
 
-# 每个商品的 4.20-22 周期进展：(status, note)，顺序与 TEMPLATES 一致
-_E = ("待开始", "")  # 空/未开始
-_P = ("待开始", "")  # 待完成（映射为待开始）
+_E = ("待开始", "")
+_P = ("待开始", "")
 
 def bowler():
     return [
@@ -84,10 +81,12 @@ def colour_rack():
         ("待开始", "待更进"),
     ]
 
-PENDING_ROW = [_P, _P, _P, _P, _P, _P, _E, _P, _P]  # 待完成，竞品留空
 EMPTY_ROW   = [_E] * 9
+PENDING_ROW = [_P, _P, _P, _P, _P, _P, _E, _P, _P]
 
-PRODUCT_NOTES = {
+# ── 4.20-22 period: initial setup for all tracked products ──────────────────
+PERIOD_420 = "4.20-22"
+PRODUCTS_420 = {
     "679198301351": EMPTY_ROW,    # Colour Crate
     "580467335137": PENDING_ROW,  # Basket
     "781547798998": PENDING_ROW,  # Slice Chopping Board
@@ -98,48 +97,63 @@ PRODUCT_NOTES = {
     "824452791755": facet(),      # Facet Cabinet
     "824607518747": colour_rack(),# Colour Rack
     "682036237751": EMPTY_ROW,    # Korpus
-    "742092260504": [_P]*9,       # Apex Lamp（全待完成含竞品）
+    "742092260504": [_P]*9,       # Apex Lamp
     "886901025905": EMPTY_ROW,    # PC Portable
-    "818210888511": EMPTY_ROW,    # Paper shade
+    "818210888511": EMPTY_ROW,    # Paper Shade
+}
+
+# ── 4.27-30 period: new products added this cycle ───────────────────────────
+PERIOD_427 = "4.27-30"
+# Only products NEW to the task board this period need their tasks created.
+# Products already in PRODUCTS_420 already have tasks; just adding the period
+# to task_periods is sufficient for them to show up in the new period UI.
+PRODUCTS_427_NEW = {
+    "7660181033346": EMPTY_ROW,   # Barro Bowl & Plate (new this period)
 }
 
 def make_id():
     return "task_" + uuid.uuid4().hex[:8]
 
+def upsert_tasks(tasks_by_pid, period, product_map):
+    """Add template tasks for each product in product_map, deduplicating by detail."""
+    template_details = {t["detail"] for t in TEMPLATES}
+    for pid, notes in product_map.items():
+        existing = tasks_by_pid.get(pid, [])
+        existing = [t for t in existing if t.get("detail") not in template_details]
+        new_tasks = []
+        for i, tmpl in enumerate(TEMPLATES):
+            status, note = notes[i]
+            task = {
+                "id": make_id(),
+                "category": tmpl["category"],
+                "detail":   tmpl["detail"],
+                "owner":    tmpl["owner"],
+                "status":   status,
+                "period_notes": {period: note} if note else {},
+            }
+            new_tasks.append(task)
+        tasks_by_pid[pid] = new_tasks + existing
+
+
 tasks_by_pid = raw.get("tasks_by_pid", {})
-template_details = {t["detail"] for t in TEMPLATES}
+periods      = raw.get("task_periods", [])
 
-for pid, notes in PRODUCT_NOTES.items():
-    existing = tasks_by_pid.get(pid, [])
-    # 移除旧的标准模板任务（按 detail 去重），保留用户自定义任务
-    existing = [t for t in existing if t.get("detail") not in template_details]
+# Apply 4.20-22
+upsert_tasks(tasks_by_pid, PERIOD_420, PRODUCTS_420)
+if PERIOD_420 not in periods:
+    periods.append(PERIOD_420)
 
-    new_tasks = []
-    for i, tmpl in enumerate(TEMPLATES):
-        status, note = notes[i]
-        task = {
-            "id": make_id(),
-            "category": tmpl["category"],
-            "detail":   tmpl["detail"],
-            "owner":    tmpl["owner"],
-            "status":   status,
-            "period_notes": {PERIOD: note} if note else {},
-        }
-        new_tasks.append(task)
-
-    tasks_by_pid[pid] = new_tasks + existing  # 标准任务排在前面
+# Apply 4.27-30 new products only
+upsert_tasks(tasks_by_pid, PERIOD_427, PRODUCTS_427_NEW)
+if PERIOD_427 not in periods:
+    periods.append(PERIOD_427)
 
 raw["tasks_by_pid"] = tasks_by_pid
-
-# 确保 task_periods 包含此周期
-periods = raw.get("task_periods", [])
-if PERIOD not in periods:
-    periods.append(PERIOD)
-raw["task_periods"] = periods
+raw["task_periods"]  = periods
 
 new_raw = 'const RAW = ' + json.dumps(raw, ensure_ascii=False) + '\n\n'
 html = html[:start] + new_raw + html[end:]
 html_path.write_text(html, encoding='utf-8')
 
 total_tasks = sum(len(v) for v in tasks_by_pid.values())
-print(f"完成：{len(PRODUCT_NOTES)} 个商品，共 {total_tasks} 条任务，task_periods={raw['task_periods']}")
+print(f"完成：{len(tasks_by_pid)} 个商品，共 {total_tasks} 条任务，task_periods={periods}")
