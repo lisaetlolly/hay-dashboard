@@ -214,20 +214,43 @@ const AdsPage = defineComponent({
     const latestMeeting = computed(() => meetings.value[0] || null)
     const toggleChannel = key => { openChannel.value[key] = !openChannel.value[key] }
 
-    const taskModal = ref({ show:false, pid:'', id:'', detail:'', owner:'', category:'', status:'待开始', note:'' })
+    const taskModal = ref({ show:false, mode:'edit', pid:'', id:'', detail:'', owner:'', category:'', status:'待开始', note:'' })
     const openEditTask = (item, task) => {
       if (!canEditTask(task)) return
-      Object.assign(taskModal.value, { show:true, pid:item.pid, id:task.id, detail:task.detail, owner:task.owner, category:task.category, status:task.status||'待开始', note:task.note||'' })
+      Object.assign(taskModal.value, { show:true, mode:'edit', pid:item.pid, id:task.id, detail:task.detail, owner:task.owner, category:task.category, status:task.status||'待开始', note:task.note||'' })
+    }
+    const openAddTask = (item) => {
+      const u = currentUser.value
+      if (!u) return
+      Object.assign(taskModal.value, { show:true, mode:'add', pid:item.pid, id:'', detail:'', owner: u.role==='admin'?'':(u.display_name||''), category:'', status:'待开始', note:'' })
     }
     const saveTaskModal = () => {
-      const { pid, id, detail, owner, category, status, note } = taskModal.value
+      const { pid, id, mode, detail, owner, category, status, note } = taskModal.value
+      if (!detail.trim()) return alert('请填写任务名称')
+      if (!APP_STATE.value.tasksByPid) APP_STATE.value.tasksByPid = {}
+      if (!APP_STATE.value.tasksByPid[pid]) APP_STATE.value.tasksByPid[pid] = []
       const list = APP_STATE.value.tasksByPid[pid]
-      if (!list) return (taskModal.value.show = false)
-      const t = list.find(x => x.id === id)
-      if (t) {
-        t.detail = detail; t.owner = owner; t.category = category; t.status = status
-        if (!t.period_notes) t.period_notes = {}
-        t.period_notes[activePeriod.value] = note
+      if (mode === 'add') {
+        const newTask = { id: makeId('task'), detail: detail.trim(), owner, category, status, period_notes: {} }
+        newTask.period_notes[activePeriod.value] = note
+        list.push(newTask)
+      } else {
+        const t = list.find(x => x.id === id)
+        if (t) {
+          t.detail = detail; t.owner = owner; t.category = category; t.status = status
+          if (!t.period_notes) t.period_notes = {}
+          t.period_notes[activePeriod.value] = note
+        }
+      }
+      persistAppState(); taskModal.value.show = false
+    }
+    const deleteTask = () => {
+      const { pid, id } = taskModal.value
+      if (!confirm('确认删除此任务？')) return
+      const list = APP_STATE.value.tasksByPid[pid]
+      if (list) {
+        const idx = list.findIndex(x => x.id === id)
+        if (idx >= 0) list.splice(idx, 1)
       }
       persistAppState(); taskModal.value.show = false
     }
@@ -270,7 +293,7 @@ const AdsPage = defineComponent({
       teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,
       channelCatData,
-      taskModal, openEditTask, saveTaskModal, updateTaskStatus, userOptions,
+      taskModal, openEditTask, openAddTask, saveTaskModal, deleteTask, updateTaskStatus, userOptions,
     }
   },
   template: `
@@ -506,9 +529,15 @@ const AdsPage = defineComponent({
               </div>
               <!-- 右：商品信息 + 指标 -->
               <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0">
-                <div>
-                  <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.name }}</div>
-                  <div style="font-size:11px;color:var(--muted)">{{ item.pid }}</div>
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+                  <div style="min-width:0">
+                    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.name }}</div>
+                    <div style="font-size:11px;color:var(--muted)">{{ item.pid }}</div>
+                  </div>
+                  <button @click="openAddTask(item)"
+                    style="flex-shrink:0;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-weight:500;white-space:nowrap">
+                    + 新增任务
+                  </button>
                 </div>
                 <div>
                   <div style="font-size:10px;color:var(--muted);margin-bottom:6px">数据统计时间：{{ periodLabel }}</div>
@@ -609,10 +638,10 @@ const AdsPage = defineComponent({
   <!-- 任务编辑 Modal -->
   <div v-if="taskModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="taskModal.show=false">
     <div style="background:#fff;border-radius:14px;padding:24px;width:420px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
-      <div style="font-size:15px;font-weight:700;margin-bottom:16px">编辑任务</div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ taskModal.mode==='add' ? '新增任务' : '编辑任务' }}</div>
       <div style="margin-bottom:12px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务名称</div>
-        <input v-model="taskModal.detail" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务名称 <span style="color:#e55">*</span></div>
+        <input v-model="taskModal.detail" placeholder="任务描述" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
         <div>
@@ -623,19 +652,25 @@ const AdsPage = defineComponent({
           </select>
         </div>
         <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务标签</div>
+          <input v-model="taskModal.category" placeholder="如：投放、内容…" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务状态</div>
           <select v-model="taskModal.status" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
             <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
           </select>
         </div>
       </div>
-      <div style="margin-bottom:20px">
+      <div style="margin-bottom:16px">
         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">任务备注（{{ activePeriod }}）</div>
         <textarea v-model="taskModal.note" rows="3" placeholder="本周期进展记录" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;resize:vertical;box-sizing:border-box"></textarea>
       </div>
       <div style="display:flex;gap:8px">
         <button @click="saveTaskModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
         <button @click="taskModal.show=false" style="flex:1;background:#f4f4f5;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer">取消</button>
+        <button v-if="taskModal.mode==='edit'" @click="deleteTask"
+          style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:8px;padding:9px 14px;font-size:12px;cursor:pointer">删除</button>
       </div>
     </div>
   </div>
