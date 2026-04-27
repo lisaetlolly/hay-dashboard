@@ -33,32 +33,50 @@ const SettingsPage = defineComponent({
     const setMe = id => { state.currentUserId=id; persistAppState() }
 
     // ── 用户 CRUD ──────────────────────────────────────────────
-    const userModal = Vue.reactive({ show:false, mode:'', id:'', name:'', role:'member' })
+    const userModal = Vue.reactive({ show:false, mode:'', id:'', name:'', role:'member', username:'', password:'' })
     const openAddUser = () => {
       if (!can('user.create')) return alert('无新增用户权限')
-      Object.assign(userModal, { show:true, mode:'add', id:'', name:'', role:'member' })
+      Object.assign(userModal, { show:true, mode:'add', id:'', name:'', role:'member', username:'', password:'' })
     }
     const openEditUser = u => {
       if (!can('user.edit')) return alert('无编辑用户权限')
-      Object.assign(userModal, { show:true, mode:'edit', id:u.id, name:u.display_name, role:u.role||'member' })
+      Object.assign(userModal, { show:true, mode:'edit', id:u.id, name:u.display_name, role:u.role||'member', username:u.username||'', password:'' })
     }
     const roleDefaultPerms = {
       admin:  ['*'],
       ops:    ['task.view_all','task.create','task.edit_all','meeting.view','meeting.create','meeting.edit','action.view','action.create','action.edit','metric.view','product.view'],
       member: ['task.view_all','task.view_own','task.edit_own','action.view','meeting.view','metric.view','product.view'],
+      viewer: ['task.view_own','action.view','meeting.view','metric.view','product.view'],
     }
-    const saveUserModal = () => {
-      if (!userModal.name.trim()) return alert('用户名不能为空')
+    const saveUserModal = async () => {
+      if (!userModal.name.trim()) return alert('显示名不能为空')
       const defaultPerms = roleDefaultPerms[userModal.role] || roleDefaultPerms.member
       if (userModal.mode === 'add') {
-        state.users.push({ id:makeId('user'), display_name:userModal.name.trim(), role:userModal.role, permissions:[...defaultPerms] })
+        if (!userModal.username.trim()) return alert('登录账号不能为空')
+        if (!userModal.password.trim()) return alert('初始密码不能为空')
+        try {
+          const res = await fetch('/api/users/register', { method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ username: userModal.username.trim(), password: userModal.password.trim(),
+              display_name: userModal.name.trim(), role: userModal.role }) })
+          if (!res.ok) { const d = await res.json().catch(()=>({})); return alert(d.detail || '注册失败') }
+        } catch { return alert('注册失败，请检查网络') }
+        state.users.push({ id:makeId('user'), display_name:userModal.name.trim(), role:userModal.role, permissions:[...defaultPerms], username:userModal.username.trim() })
       } else {
         const u = state.users.find(x => x.id === userModal.id)
         if (u) {
           const roleChanged = u.role !== userModal.role
           u.display_name = userModal.name.trim()
           u.role = userModal.role
+          u.username = userModal.username.trim()
           if (roleChanged) u.permissions = [...defaultPerms]
+        }
+        if (userModal.password.trim()) {
+          const dbUsers = await fetch('/api/users').then(r=>r.json()).catch(()=>[])
+          const dbUser = dbUsers.find(x => x.display_name === userModal.name.trim() || x.username === userModal.username.trim())
+          if (dbUser) {
+            await fetch(`/api/users/${dbUser.id}/password`, { method:'PATCH', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ password: userModal.password.trim() }) }).catch(()=>{})
+          }
         }
       }
       persistAppState()
@@ -169,14 +187,15 @@ const SettingsPage = defineComponent({
       }))
       return [...base, ...cust].sort((a,b) => a.name.localeCompare(b.name))
     })
-    const productModal = Vue.reactive({ show:false, mode:'', pid:'', newPid:'', name:'', cat:'配饰', isCustom:false })
+    const productModal = Vue.reactive({ show:false, mode:'', pid:'', newPid:'', name:'', cat:'配饰', isCustom:false, imageUrl:'' })
     const openAddProduct = () => {
       if (!can('product.create')) return alert('无新增商品权限')
-      Object.assign(productModal, { show:true, mode:'add', pid:'', newPid:'', name:'', cat:'配饰', isCustom:true })
+      Object.assign(productModal, { show:true, mode:'add', pid:'', newPid:'', name:'', cat:'配饰', isCustom:true, imageUrl:'' })
     }
     const openEditProduct = p => {
       if (!can('product.edit')) return alert('无编辑商品权限')
-      Object.assign(productModal, { show:true, mode:'edit', pid:p.pid, newPid:p.pid, name:p.name, cat:p.cat, isCustom:!!p.isCustom })
+      const imgUrl = (state.imageOverrides || {})[p.pid] || ''
+      Object.assign(productModal, { show:true, mode:'edit', pid:p.pid, newPid:p.pid, name:p.name, cat:p.cat, isCustom:!!p.isCustom, imageUrl:imgUrl })
     }
     const saveProductModal = () => {
       if (!productModal.name.trim()) return alert('商品名不能为空')
@@ -190,7 +209,6 @@ const SettingsPage = defineComponent({
         if (!newPid) return alert('商品ID不能为空')
         if (!state.productOverrides) state.productOverrides = {}
         if (productModal.isCustom && newPid !== productModal.pid) {
-          // rename PID for custom product
           const cp = (state.customProducts||[]).find(p => p.pid === productModal.pid)
           if (cp) { cp.pid = newPid; cp.name = productModal.name.trim(); cp.cat = productModal.cat }
           delete state.productOverrides[productModal.pid]
@@ -200,6 +218,10 @@ const SettingsPage = defineComponent({
           state.productOverrides[productModal.pid] = { name: productModal.name.trim(), cat: productModal.cat }
         }
       }
+      if (!state.imageOverrides) state.imageOverrides = {}
+      const targetPid = productModal.mode === 'add' ? productModal.pid.trim() : productModal.newPid.trim()
+      if (productModal.imageUrl.trim()) state.imageOverrides[targetPid] = productModal.imageUrl.trim()
+      else delete state.imageOverrides[targetPid]
       persistAppState(); productModal.show = false
     }
     const toggleHideProduct = pid => {
@@ -360,7 +382,7 @@ const SettingsPage = defineComponent({
               <span v-else>{{ (u.permissions||[]).length }} 项权限已开启</span>
             </div>
             <div style="display:flex;justify-content:flex-end;gap:6px" @click.stop>
-              <button @click="openEditUser(u)" style="border:1px solid var(--border);background:#fff;border-radius:7px;padding:4px 10px;font-size:11px;cursor:pointer">编辑</button>
+              <button @click="openEditUser(u)" style="border:1px solid var(--border);background:#fff;border-radius:7px;padding:4px 10px;font-size:11px;cursor:pointer">修改</button>
               <button @click="deleteUser(u)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:7px;padding:4px 10px;font-size:11px;cursor:pointer">删除</button>
             </div>
           </div>
@@ -398,11 +420,12 @@ const SettingsPage = defineComponent({
           <button @click="openAddMetric" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">新增指标</button>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto">
-          <div v-for="m in (metrics || [])" :key="m.id" style="padding:10px;border:1px solid var(--border);border-radius:10px;background:#fafaf9">
+          <div v-for="m in (metrics || [])" :key="m.id" @click="openEditMetric(m)"
+            style="padding:10px;border:1px solid var(--border);border-radius:10px;background:#fafaf9;cursor:pointer;transition:border-color .15s"
+            :style="{'border-color':'var(--border)'}" @mouseenter="$event.currentTarget.style.borderColor='var(--accent)'" @mouseleave="$event.currentTarget.style.borderColor='var(--border)'">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
               <div style="font-size:12px;font-weight:700">{{ m.label }}</div>
-              <div style="display:flex;gap:5px">
-                <button @click="openEditMetric(m)" style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">编辑</button>
+              <div style="display:flex;gap:5px" @click.stop>
                 <button @click="deleteMetric(m)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">删除</button>
               </div>
             </div>
@@ -419,14 +442,14 @@ const SettingsPage = defineComponent({
           <button @click="openAddMeeting" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">新增会议要点</button>
         </div>
         <div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto">
-          <div v-for="m in (meetings || [])" :key="m.id" style="padding:10px;border:1px solid var(--border);border-radius:10px;background:#fafaf9">
+          <div v-for="m in (meetings || [])" :key="m.id" @click="openEditMeeting(m)"
+            style="padding:10px;border:1px solid var(--border);border-radius:10px;background:#fafaf9;cursor:pointer">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px">
               <div>
                 <div style="font-size:12px;font-weight:700">{{ m.title }}</div>
                 <div style="font-size:11px;color:var(--muted)">{{ m.meeting_date }} · {{ m.week_label }}</div>
               </div>
-              <div style="display:flex;gap:5px;flex-shrink:0">
-                <button @click="openEditMeeting(m)" style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">编辑</button>
+              <div style="display:flex;gap:5px;flex-shrink:0" @click.stop>
                 <button @click="deleteMeeting(m)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">删除</button>
               </div>
             </div>
@@ -448,8 +471,8 @@ const SettingsPage = defineComponent({
         <div>类型</div><div>执行日期</div><div>关联商品</div><div>备注</div><div style="text-align:right">操作</div>
       </div>
       <div v-if="!actions.length" class="empty" style="padding:24px">暂无运营动作记录，点击「新增动作」开始记录</div>
-      <div v-for="(a, ai) in (actions || [])" :key="a.id"
-        :style="{display:'grid',gridTemplateColumns:'90px 96px minmax(0,1fr) minmax(0,2fr) 100px',padding:'8px 14px',borderBottom:ai<actions.length-1?'1px solid var(--border)':'none',alignItems:'center'}">
+      <div v-for="(a, ai) in (actions || [])" :key="a.id" @click="openEditAction(a)"
+        :style="{display:'grid',gridTemplateColumns:'90px 96px minmax(0,1fr) minmax(0,2fr) 60px',padding:'8px 14px',borderBottom:ai<actions.length-1?'1px solid var(--border)':'none',alignItems:'center',cursor:'pointer'}">
         <div>
           <span style="padding:2px 7px;border-radius:99px;font-size:11px;font-weight:600;background:#f0fdf4;color:#16a34a">{{ a.action_type }}</span>
         </div>
@@ -458,8 +481,7 @@ const SettingsPage = defineComponent({
           {{ a.pid ? productNameByPid(a.pid) : (a.pids?.length > 0 ? (a.pids.includes('*') ? '全部商品' : a.pids.length + '个商品') : '—') }}
         </div>
         <div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px">{{ a.note || a.content || '—' }}</div>
-        <div style="display:flex;justify-content:flex-end;gap:5px">
-          <button @click="openEditAction(a)" style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">编辑</button>
+        <div style="display:flex;justify-content:flex-end" @click.stop>
           <button @click="deleteAction(a)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">删除</button>
         </div>
       </div>
@@ -476,8 +498,8 @@ const SettingsPage = defineComponent({
       <div style="display:grid;grid-template-columns:minmax(0,2fr) 64px 60px 120px;padding:7px 14px;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--muted)">
         <div>商品名称</div><div>类目</div><div>状态</div><div style="text-align:right">操作</div>
       </div>
-      <div v-for="(p, pi) in (allProductsForManage || [])" :key="p.pid"
-        :style="{display:'grid',gridTemplateColumns:'minmax(0,2fr) 64px 60px 120px',padding:'8px 14px',borderBottom:pi<allProductsForManage.length-1?'1px solid var(--border)':'none',alignItems:'center',background:p.hidden?'#fafaf9':'#fff'}">
+      <div v-for="(p, pi) in (allProductsForManage || [])" :key="p.pid" @click="openEditProduct(p)"
+        :style="{display:'grid',gridTemplateColumns:'minmax(0,2fr) 64px 60px 90px',padding:'8px 14px',borderBottom:pi<allProductsForManage.length-1?'1px solid var(--border)':'none',alignItems:'center',background:p.hidden?'#fafaf9':'#fff',cursor:'pointer'}">
         <div style="min-width:0">
           <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :style="{opacity:p.hidden?0.4:1}">{{ p.name }}</div>
           <div style="font-size:10px;color:var(--muted)">{{ p.pid }}</div>
@@ -487,10 +509,9 @@ const SettingsPage = defineComponent({
           <span v-if="p.isCustom" style="font-size:10px;padding:2px 6px;border-radius:99px;background:#dbeafe;color:#1e40af;font-weight:600">自定义</span>
           <span v-if="p.hidden" style="font-size:10px;padding:2px 6px;border-radius:99px;background:#f3f4f6;color:#71717a">已隐藏</span>
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:5px">
-          <button @click="openEditProduct(p)" style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">编辑</button>
-          <button @click="toggleHideProduct(p.pid)" style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">{{ p.hidden ? '显示' : '隐藏' }}</button>
-          <button v-if="p.isCustom" @click="deleteCustomProduct(p.pid)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">删除</button>
+        <div style="display:flex;justify-content:flex-end;gap:4px" @click.stop>
+          <button @click="toggleHideProduct(p.pid)" style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer">{{ p.hidden ? '显示' : '隐藏' }}</button>
+          <button v-if="p.isCustom" @click="deleteCustomProduct(p.pid)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer">删除</button>
         </div>
       </div>
     </div>
@@ -551,17 +572,29 @@ const SettingsPage = defineComponent({
 
   <!-- 用户编辑 Modal -->
   <div v-if="userModal.show" style="position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:1000" @click.self="userModal.show=false">
-    <div style="background:#fff;border-radius:14px;padding:24px;width:360px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+    <div style="background:#fff;border-radius:14px;padding:24px;width:380px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
       <div style="font-size:15px;font-weight:700;margin-bottom:16px">{{ userModal.mode==='add'?'新增用户':'编辑用户' }}</div>
-      <div style="margin-bottom:12px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">显示名</div>
-        <input v-model="userModal.name" placeholder="姓名" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">显示名 <span style="color:#e55">*</span></div>
+          <input v-model="userModal.name" placeholder="如：晓东（运营）" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">登录账号 <span style="color:#e55">*</span></div>
+          <input v-model="userModal.username" placeholder="如：xiaodong" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
       </div>
-      <div style="margin-bottom:20px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">角色</div>
-        <select v-model="userModal.role" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
-          <option value="admin">管理员</option><option value="ops">运营</option><option value="member">成员</option>
-        </select>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">角色</div>
+          <select v-model="userModal.role" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+            <option value="admin">管理员</option><option value="ops">运营</option><option value="member">成员</option><option value="viewer">只读</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">{{ userModal.mode==='add'?'初始密码 *':'新密码（留空不改）' }}</div>
+          <input v-model="userModal.password" type="password" placeholder="输入密码" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        </div>
       </div>
       <div style="display:flex;gap:8px">
         <button @click="saveUserModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>
@@ -650,11 +683,20 @@ const SettingsPage = defineComponent({
         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">商品名</div>
         <input v-model="productModal.name" placeholder="商品名称" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
       </div>
-      <div style="margin-bottom:20px">
-        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">类目</div>
-        <select v-model="productModal.cat" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
-          <option value="家具">家具</option><option value="配饰">配饰</option><option value="灯具">灯具</option><option value="其他">其他</option>
-        </select>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+        <div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:4px">类目</div>
+          <select v-model="productModal.cat" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;background:#fff">
+            <option value="家具">家具</option><option value="配饰">配饰</option><option value="灯具">灯具</option><option value="其他">其他</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-bottom:16px">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:4px">商品图片 URL（留空则用系统默认）</div>
+        <input v-model="productModal.imageUrl" placeholder="粘贴图片链接，如 https://..." style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:12px;box-sizing:border-box">
+        <div v-if="productModal.imageUrl" style="margin-top:6px;width:60px;height:60px;border:1px solid var(--border);border-radius:6px;overflow:hidden">
+          <img :src="productModal.imageUrl" style="width:100%;height:100%;object-fit:cover">
+        </div>
       </div>
       <div style="display:flex;gap:8px">
         <button @click="saveProductModal" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px;font-size:12px;cursor:pointer;font-weight:600">保存</button>

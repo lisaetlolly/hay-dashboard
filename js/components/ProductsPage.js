@@ -69,7 +69,7 @@ const ProductsPage = defineComponent({
     }
     const fchg = v => v == null ? '—' : ((v>0?'+':'') + v.toFixed(1) + '%')
     const chgCls = v => v == null ? 'flat' : v>0 ? 'up' : 'dn'
-    const imgSrc = pid => RAW.img_map?.[pid] || ''
+    const imgSrc = pid => (APP_STATE.value.imageOverrides || {})[pid] || RAW.img_map?.[pid] || ''
 
     function agg(p, s, e) {
       const prev = s === e ? { s: subDays(s,1), e: subDays(e,1) } : prevRange(s, e)

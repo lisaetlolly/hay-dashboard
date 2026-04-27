@@ -60,6 +60,7 @@ function createInitialAppState() {
     customProducts: [],
     hiddenPids: [],
     productOverrides: {},
+    imageOverrides: {},
     manualDailyData: {},
   }
 }

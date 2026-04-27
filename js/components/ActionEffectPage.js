@@ -115,7 +115,7 @@ const ActionEffectPage = defineComponent({
     }
     const chgCls=v=>v==null?'flat':v>0?'up':v<0?'dn':'flat'
     const chgTxt=v=>v==null?'—':(v>0?'+':'')+v.toFixed(1)+'%'
-    const imgSrc=pid=>RAW.img_map?.[pid]||''
+    const imgSrc=pid=>(APP_STATE.value.imageOverrides||{})[pid]||RAW.img_map?.[pid]||''
     const metricLabel=computed(()=>metricOptions.find(m=>m.key===selectedMetric.value)?.label||'')
     const showMetricGuide = ref(false)
     const guideKeys = ['action_effect','gmv','vis','cart_rate','conv_rate','ad_roi','new_buyers','pv','dwell_time','bounce_rate','fav_cart_users','search_vis']

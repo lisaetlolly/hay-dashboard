@@ -34,7 +34,7 @@ const OverviewPage = defineComponent({
       if (v >= 1000)  return v.toFixed(0)
       return v.toFixed(0)
     }
-    const imgSrc = pid => RAW.img_map?.[pid] || ''
+    const imgSrc = pid => (APP_STATE.value.imageOverrides || {})[pid] || RAW.img_map?.[pid] || ''
     const kpiVal = key => {
       const k = kpi.value[key]
       if (!k) return '—'
