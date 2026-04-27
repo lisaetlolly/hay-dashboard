@@ -28,10 +28,11 @@ def to_float(v):
     except:
         return 0.0
 
-# ── 生意参谋商品（所有 XLS） ────────────────────────────────────
+# ── 生意参谋商品（所有 XLS / XLSX） ─────────────────────────────
 print('[2] 读取生意参谋商品 XLS …')
 syzt_rows = []; syzt_map = {}
-xls_files = sorted((base / '生意参谋商品').glob('*.xls'))
+xls_dir = base / '生意参谋商品'
+xls_files = sorted(list(xls_dir.glob('*.xls')) + list(xls_dir.glob('*.xlsx'))) if xls_dir.exists() else []
 for i, f in enumerate(xls_files):
     if i % 10 == 0:
         print(f'    {i+1}/{len(xls_files)} {f.name}')
@@ -58,28 +59,41 @@ for i, f in enumerate(xls_files):
         }
 print(f'    syzt 共 {len(syzt_rows)} 行')
 
-# ── 万象台推广报表（最新一份 CSV） ──────────────────────────────
+# ── 万象台推广报表（最新一份 CSV，可选） ────────────────────────
 print('[3] 读取万象台商品报表 CSV …')
-latest_csv = sorted((base / '推广报表' / '商品报表').glob('*.csv'))[-1]
-print(f'    使用: {latest_csv.name}')
-rows_csv = list(csv.DictReader(latest_csv.read_bytes().decode('gbk', errors='replace').splitlines()))
 wxst_rows = []; wxst_map = {}; pid_daily_spend = {}
-for row in rows_csv:
-    pid = str(row.get('主体ID','')).strip()
-    if not pid or pid not in product_ids:
-        continue
-    d = str(row.get('日期','')).strip()[:10]
-    if not d:
-        continue
-    spend = to_float(row.get('花费'))
-    ctr   = to_float(row.get('点击率'))
-    ctr   = ctr / 100 if ctr > 1.5 else ctr
-    roi   = to_float(row.get('投入产出比'))
-    imps  = to_float(row.get('展现量'))
-    wxst_rows.append({'d':d,'pid':pid,'spend':round(spend,2),'ctr':round(ctr,4),'imps':imps})
-    wxst_map[(d,pid)] = {'spend':round(spend,2),'ctr':round(ctr,4),'roi':round(roi,2)}
-    pid_daily_spend.setdefault(pid,{})[d] = {'spend':round(spend,2),'ctr':round(ctr,4),'roi':round(roi,2)}
-print(f'    wxst 共 {len(wxst_rows)} 行')
+csv_dir = base / '推广报表' / '商品报表'
+csv_files = sorted(csv_dir.glob('*.csv')) if csv_dir.exists() else []
+if not csv_files:
+    print('    ⚠ 未找到推广报表 CSV，跳过（花费/CTR 数据将为空）')
+else:
+    latest_csv = csv_files[-1]
+    print(f'    使用: {latest_csv.name}')
+    raw_bytes = latest_csv.read_bytes()
+    for enc in ('gbk', 'utf-8-sig', 'utf-8'):
+        try:
+            text = raw_bytes.decode(enc); break
+        except UnicodeDecodeError:
+            continue
+    else:
+        text = raw_bytes.decode('gbk', errors='replace')
+    rows_csv = list(csv.DictReader(text.splitlines()))
+    for row in rows_csv:
+        pid = str(row.get('主体ID','')).strip()
+        if not pid or pid not in product_ids:
+            continue
+        d = str(row.get('日期','')).strip()[:10]
+        if not d:
+            continue
+        spend = to_float(row.get('花费'))
+        ctr   = to_float(row.get('点击率'))
+        ctr   = ctr / 100 if ctr > 1.5 else ctr
+        roi   = to_float(row.get('投入产出比'))
+        imps  = to_float(row.get('展现量'))
+        wxst_rows.append({'d':d,'pid':pid,'spend':round(spend,2),'ctr':round(ctr,4),'imps':imps})
+        wxst_map[(d,pid)] = {'spend':round(spend,2),'ctr':round(ctr,4),'roi':round(roi,2)}
+        pid_daily_spend.setdefault(pid,{})[d] = {'spend':round(spend,2),'ctr':round(ctr,4),'roi':round(roi,2)}
+    print(f'    wxst 共 {len(wxst_rows)} 行')
 
 # ── 重建 products ────────────────────────────────────────────────
 print('[4] 重建 products 数组 …')
