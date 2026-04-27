@@ -121,6 +121,153 @@ def row(conn, sql, params=()):
     return dict(r) if r else None
 
 
+# ── RAW 数据缓存（/api/raw-data 使用）──────────────────────────
+_raw_cache: dict | None = None
+_raw_cache_dirty = True
+
+def _invalidate_raw_cache():
+    global _raw_cache_dirty
+    _raw_cache_dirty = True
+
+def _build_raw_from_db(conn) -> dict:
+    """从 Neon DB 构建前端所需的 RAW 动态数据（时序 + 推广 + 流量）。"""
+    def _rows(sql, params=()):
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
+
+    # ── 商品维度 ──────────────────────────────────────────────
+    dim = {r['product_id']: r for r in _rows("SELECT product_id, title, category_l1 FROM dim_product")}
+
+    # ── 生意参谋：日级数据 ───────────────────────────────────
+    syzt = _rows("""SELECT stat_date AS d, product_id AS pid,
+                           pay_amount AS pay, visitors AS vis, cart_users AS cart,
+                           collect_users AS collect, refund_amount AS refund,
+                           pay_new_buyers AS new_buyers
+                    FROM fact_syzt_product ORDER BY stat_date, product_id""")
+    syzt_map = {(r['d'], r['pid']): r for r in syzt}
+
+    # ── 万象台商品报表（总）────────────────────────────────
+    wxst = _rows("""SELECT stat_date AS d, product_id AS pid,
+                           spend, ctr, roi, impressions AS imps
+                    FROM fact_wxst_product ORDER BY stat_date, product_id""")
+    wxst_map = {(r['d'], r['pid']): r for r in wxst}
+    pid_daily_spend: dict = {}
+    for r in wxst:
+        pid_daily_spend.setdefault(r['pid'], {})[r['d']] = {
+            'spend': round(float(r['spend'] or 0), 2),
+            'ctr':   round(float(r['ctr']   or 0), 4),
+            'roi':   round(float(r['roi']   or 0), 2),
+        }
+
+    # ── 人群/关键词渠道商品报表 ──────────────────────────────
+    try:
+        rq_map = {(r['stat_date'], r['product_id']): float(r['spend'] or 0)
+                  for r in _rows("SELECT stat_date, product_id, spend FROM fact_wxst_rq_product")}
+    except Exception:
+        rq_map = {}
+    try:
+        kw_map = {(r['stat_date'], r['product_id']): float(r['spend'] or 0)
+                  for r in _rows("SELECT stat_date, product_id, spend FROM fact_wxst_kw_product")}
+    except Exception:
+        kw_map = {}
+
+    # ── 构建 products 时序字典 ──────────────────────────────
+    all_dates = sorted({r['d'] for r in syzt} | {r['d'] for r in wxst})
+    all_pids  = set(dim) | {k[1] for k in syzt_map} | {k[1] for k in wxst_map}
+    products: dict = {}
+    for pid in sorted(all_pids):
+        p = dim.get(pid, {})
+        pay_a = []; vis_a = []; cart_a = []; col_a = []; ref_a = []; nb_a = []
+        sp_a  = []; ctr_a = []; roi_a = []; rq_a  = []; kw_a  = []
+        for d in all_dates:
+            sy = syzt_map.get((d, pid), {})
+            wx = wxst_map.get((d, pid), {})
+            pay_a.append(round(float(sy.get('pay')  or 0), 2))
+            vis_a.append(int  (float(sy.get('vis')  or 0)))
+            cart_a.append(int (float(sy.get('cart') or 0)))
+            col_a.append(int  (float(sy.get('collect')   or 0)))
+            ref_a.append(round(float(sy.get('refund')    or 0), 2))
+            nb_a.append(int   (float(sy.get('new_buyers') or 0)))
+            sp_a.append(round (float(wx.get('spend') or 0), 2))
+            ctr_a.append(round(float(wx.get('ctr')   or 0), 4))
+            roi_a.append(round(float(wx.get('roi')   or 0), 2))
+            rq_a.append(round (rq_map.get((d, pid), 0.0), 2))
+            kw_a.append(round (kw_map.get((d, pid), 0.0), 2))
+        if any(pay_a) or any(vis_a) or any(sp_a) or pid in dim:
+            products[pid] = {
+                'pid': pid,
+                'name': p.get('title') or pid,
+                'cat':  p.get('category_l1') or '',
+                'dates': all_dates,
+                'pay': pay_a, 'vis': vis_a, 'cart': cart_a,
+                'collect': col_a, 'refund': ref_a, 'new_buyers': nb_a,
+                'spend': sp_a, 'ctr': ctr_a, 'roi': roi_a,
+                'spend_rq': rq_a, 'spend_kw': kw_a,
+            }
+
+    # ── 人群报表（维度汇总）─────────────────────────────────
+    try:
+        wxst_audience = [dict(r) for r in _rows(
+            "SELECT stat_date AS d, audience_name AS name, spend, ctr, roi, total_gmv AS gmv, impressions AS imps FROM fact_wxst_audience ORDER BY stat_date")]
+    except Exception:
+        wxst_audience = []
+
+    # ── 关键词报表（维度汇总）───────────────────────────────
+    try:
+        wxst_keyword = [dict(r) for r in _rows(
+            "SELECT stat_date AS d, keyword_name AS name, spend, ctr, roi, total_gmv AS gmv, impressions AS imps FROM fact_wxst_keyword ORDER BY stat_date")]
+    except Exception:
+        wxst_keyword = []
+
+    # ── 流量来源明细 ────────────────────────────────────────
+    try:
+        traffic = [dict(r) for r in _rows(
+            """SELECT stat_date AS d, source_l1 AS l1, source_l2 AS l2,
+                      source_l3 AS l3, source_l4 AS l4,
+                      visitors, pay_buyers, cart_users
+               FROM fact_traffic ORDER BY stat_date, source_l1, source_l2""")]
+    except Exception:
+        traffic = []
+
+    return {
+        'products':       products,
+        'syzt':           [{'d': r['d'], 'pid': r['pid'], 'pay': r.get('pay') or 0,
+                            'vis': r.get('vis') or 0, 'cart': r.get('cart') or 0} for r in syzt],
+        'wxst':           [{'d': r['d'], 'pid': r['pid'], 'spend': r.get('spend') or 0,
+                            'ctr': r.get('ctr') or 0, 'imps': r.get('imps') or 0} for r in wxst],
+        'pid_daily_spend': pid_daily_spend,
+        'wxst_audience':  wxst_audience,
+        'wxst_keyword':   wxst_keyword,
+        'traffic':        traffic,
+        'data_end':       all_dates[-1] if all_dates else None,
+        'data_start':     all_dates[0]  if all_dates else None,
+        'loaded_at':      all_dates[-1] if all_dates else None,
+    }
+
+
+@app.get("/api/raw-data")
+def get_raw_data():
+    """从 Neon DB 返回完整时序数据，前端替换 RAW 动态部分。"""
+    global _raw_cache, _raw_cache_dirty
+    if not _raw_cache_dirty and _raw_cache is not None:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(_raw_cache)
+    try:
+        with db() as conn:
+            data = _build_raw_from_db(conn)
+        _raw_cache = data
+        _raw_cache_dirty = False
+        from fastapi.responses import JSONResponse
+        return JSONResponse(data)
+    except Exception as e:
+        # DB unavailable — return empty shell; frontend falls back to baked-in data
+        from fastapi.responses import JSONResponse
+        return JSONResponse({'_error': str(e), 'products': {}, 'syzt': [], 'wxst': [],
+                             'pid_daily_spend': {}, 'wxst_audience': [], 'wxst_keyword': [],
+                             'traffic': [], 'data_end': None, 'data_start': None})
+
+
 # ── 默认日期范围（投放周期起始到今天）
 CAMPAIGN_START = "2026-04-08"
 
@@ -1666,48 +1813,48 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
     if not saved:
         raise HTTPException(400, "未识别到有效文件（需要 .xls/.xlsx/.csv）")
 
-    etl_script = os.path.join(base_dir, "etl", "refresh_dashboard.py")
-    if not os.path.exists(etl_script):
-        raise HTTPException(500, "ETL 脚本不存在：etl/refresh_dashboard.py")
+    # 优先使用 etl_load.py（写入 Neon DB），fallback 到 refresh_dashboard.py（写 HTML）
+    etl_db_script   = os.path.join(base_dir, "etl", "etl_load.py")
+    etl_html_script = os.path.join(base_dir, "etl", "refresh_dashboard.py")
 
     try:
-        result = subprocess.run(
-            ["python3", etl_script],
+        # ── 主路径：写入数据库 ──────────────────────────────
+        if os.path.exists(etl_db_script):
+            result = subprocess.run(
+                ["python3", etl_db_script],
+                cwd=base_dir,
+                capture_output=True, text=True, timeout=180
+            )
+            if result.returncode == 0:
+                _invalidate_raw_cache()
+                # 从输出中提取统计信息
+                log_tail = result.stdout[-800:]
+                return {"ok": True, "saved_files": saved,
+                        "backend": "neon_db", "log": log_tail}
+            # 数据库写入失败，fallback 到 HTML
+            db_err = result.stderr[-400:]
+        else:
+            db_err = "etl_load.py 不存在"
+
+        # ── Fallback：更新 dashboard.html ──────────────────
+        if not os.path.exists(etl_html_script):
+            raise HTTPException(500, f"ETL DB 失败: {db_err}；HTML ETL 也不存在")
+        result2 = subprocess.run(
+            ["python3", etl_html_script],
             cwd=base_dir,
             capture_output=True, text=True, timeout=120
         )
-        if result.returncode != 0:
-            raise HTTPException(500, f"ETL 失败：{result.stderr[-800:]}")
-        # Extract data_end from output
+        if result2.returncode != 0:
+            raise HTTPException(500, f"ETL(DB)失败: {db_err}\nETL(HTML)失败: {result2.stderr[-400:]}")
         data_end = None
-        for line in result.stdout.splitlines():
+        for line in result2.stdout.splitlines():
             if "data_end=" in line:
-                data_end = line.split("data_end=")[1].split()[0]
-                break
-        syzt = wxst = 0
-        for line in result.stdout.splitlines():
-            if "syzt=" in line:
-                try: syzt = int(line.split("syzt=")[1].split()[0])
-                except: pass
-            if "wxst=" in line:
-                try: wxst = int(line.split("wxst=")[1].split()[0])
-                except: pass
-        # 将更新后的 dashboard.html 提交并推送，防止服务重启后数据回滚
-        git_log = ""
-        try:
-            commit_msg = f"data: ETL更新数据 data_end={data_end} syzt={syzt} wxst={wxst}"
-            git_add = subprocess.run(["git", "add", "dashboard.html"], cwd=base_dir, capture_output=True, text=True, timeout=30)
-            git_commit = subprocess.run(["git", "commit", "-m", commit_msg], cwd=base_dir, capture_output=True, text=True, timeout=30)
-            if git_commit.returncode == 0:
-                git_push = subprocess.run(["git", "push", "origin", "main"], cwd=base_dir, capture_output=True, text=True, timeout=60)
-                git_log = f"git commit OK; push {'OK' if git_push.returncode==0 else 'WARN:'+git_push.stderr[-200:]}"
-            else:
-                git_log = f"git commit skip: {git_commit.stdout.strip()}"
-        except Exception as ge:
-            git_log = f"git warn: {ge}"
-        return {"ok": True, "saved_files": saved, "data_end": data_end, "syzt": syzt, "wxst": wxst, "log": result.stdout[-600:], "git": git_log}
+                data_end = line.split("data_end=")[1].split()[0]; break
+        _invalidate_raw_cache()
+        return {"ok": True, "saved_files": saved, "backend": "html_fallback",
+                "data_end": data_end, "log": result2.stdout[-600:]}
     except subprocess.TimeoutExpired:
-        raise HTTPException(500, "ETL 超时（>120s）")
+        raise HTTPException(500, "ETL 超时（>180s）")
 
 
 # ── 静态文件：直接访问 http://localhost:766 打开看板 ──

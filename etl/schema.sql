@@ -274,6 +274,36 @@ CREATE TABLE IF NOT EXISTS page_views (
     duration_seconds INT DEFAULT 0
 );
 
+-- 人群推广商品报表（人群渠道下各商品花费）
+CREATE TABLE IF NOT EXISTS fact_wxst_rq_product (
+    id           SERIAL PRIMARY KEY,
+    stat_date    TEXT NOT NULL,
+    product_id   TEXT NOT NULL,
+    spend        REAL DEFAULT 0,
+    impressions  REAL DEFAULT 0,
+    ctr          REAL DEFAULT 0,
+    roi          REAL DEFAULT 0,
+    total_gmv    REAL DEFAULT 0,
+    source_file  TEXT,
+    loaded_at    TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(stat_date, product_id)
+);
+
+-- 关键词商品报表（关键词渠道下各商品花费）
+CREATE TABLE IF NOT EXISTS fact_wxst_kw_product (
+    id           SERIAL PRIMARY KEY,
+    stat_date    TEXT NOT NULL,
+    product_id   TEXT NOT NULL,
+    spend        REAL DEFAULT 0,
+    impressions  REAL DEFAULT 0,
+    ctr          REAL DEFAULT 0,
+    roi          REAL DEFAULT 0,
+    total_gmv    REAL DEFAULT 0,
+    source_file  TEXT,
+    loaded_at    TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(stat_date, product_id)
+);
+
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_syzt_date    ON fact_syzt_product(stat_date);
 CREATE INDEX IF NOT EXISTS idx_syzt_pid     ON fact_syzt_product(product_id);
@@ -285,3 +315,5 @@ CREATE INDEX IF NOT EXISTS idx_tr_date      ON fact_traffic(stat_date);
 CREATE INDEX IF NOT EXISTS idx_paid_date    ON fact_paid_promo(stat_date);
 CREATE INDEX IF NOT EXISTS idx_xhs_time     ON fact_xhs_note(publish_time);
 CREATE INDEX IF NOT EXISTS idx_product_spu  ON dim_product(spu_id);
+CREATE INDEX IF NOT EXISTS idx_rq_date  ON fact_wxst_rq_product(stat_date);
+CREATE INDEX IF NOT EXISTS idx_kw_date  ON fact_wxst_kw_product(stat_date);
