@@ -547,6 +547,112 @@ const AdsPage = defineComponent({
       } catch (err) { alert('发布失败：' + err.message); m.saving = false }
     }
 
+    // ── 备注 popup（textarea + 多图 + 自动 link）──
+    const noteModal = ref({ show:false, taskId:null, text:'', images:[], saving:false })
+    const openNoteModal = (task) => {
+      if (!canEditTask(task)) return alert('只能改自己负责的任务')
+      // 占位行：先 materialize 再编辑
+      if (task.is_template || (typeof task.id === 'string' && String(task.id).startsWith('tmpl_'))) {
+        return alert('该商品下还没正式创建这条任务，先点单元格编辑任意字段触发落库后再加备注')
+      }
+      noteModal.value = {
+        show: true, taskId: task.id,
+        text: task.execution_note || task.note || '',
+        images: Array.isArray(task.note_images) ? [...task.note_images] : [],
+        saving: false,
+      }
+    }
+    const closeNoteModal = () => { noteModal.value.show = false }
+    const _addNoteImagesFromFiles = (fileList) => {
+      const files = Array.from(fileList || []).filter(f => f && f.type && f.type.startsWith('image/'))
+      if (!files.length) return
+      const oversized = []
+      let processed = 0
+      const finish = () => {
+        if (oversized.length) alert('以下图片过大（>1MB）已跳过：\n' + oversized.join('\n'))
+      }
+      files.forEach(f => {
+        if (f.size > 1000000) {
+          oversized.push(f.name || '截图'); processed++
+          if (processed === files.length) finish()
+          return
+        }
+        const r = new FileReader()
+        r.onload = e => {
+          noteModal.value.images.push(e.target.result)
+          processed++
+          if (processed === files.length) finish()
+        }
+        r.readAsDataURL(f)
+      })
+    }
+    const onNoteFilePick = (event) => {
+      _addNoteImagesFromFiles(event.target.files)
+      if (event.target) event.target.value = ''
+    }
+    const onNoteDrop = (event) => {
+      _addNoteImagesFromFiles(event.dataTransfer && event.dataTransfer.files)
+    }
+    const onNotePaste = (event) => {
+      const items = event.clipboardData && event.clipboardData.items
+      if (!items) return
+      const files = []
+      for (const it of items) {
+        if (it.kind === 'file') {
+          const f = it.getAsFile()
+          if (f) files.push(f)
+        }
+      }
+      if (files.length) {
+        event.preventDefault()
+        _addNoteImagesFromFiles(files)
+      }
+    }
+    const removeNoteImage = (idx) => {
+      noteModal.value.images.splice(idx, 1)
+    }
+    const saveNoteModal = async () => {
+      const m = noteModal.value
+      m.saving = true
+      try {
+        const r = await fetch(`/api/tasks/${m.taskId}`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            execution_note: m.text || '',
+            note_images: m.images || [],
+          }),
+        })
+        if (!r.ok) {
+          const err = await r.json().catch(()=>({detail:'保存失败'}))
+          throw new Error(err.detail || ('HTTP ' + r.status))
+        }
+        // 本地写值
+        for (const g of apiTasksData.value.groups || []) {
+          for (const t of g.tasks || []) {
+            if (t.id === m.taskId) {
+              t.execution_note = m.text
+              t.note = m.text
+              t.note_images = [...m.images]
+            }
+          }
+        }
+        closeNoteModal()
+      } catch (err) {
+        alert('保存失败：' + err.message)
+        m.saving = false
+      }
+    }
+    // 备注里的 URL 自动转 <a> + 转义 HTML（避免 XSS）
+    const renderNoteHtml = (text) => {
+      if (!text) return ''
+      const esc = String(text)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+      // URL 模式（http/https）→ <a target=_blank>
+      return esc.replace(/(https?:\/\/[^\s<]+)/g,
+        '<a href="$1" target="_blank" rel="noopener" style="color:#0369a1;text-decoration:underline">$1</a>')
+    }
+
     // 批量改时间 state
     const batchSelected = ref(new Set())  // 勾选的真实 task.id（数字）
     const batchModal = ref({ show:false, start_date:'', end_date:'', saving:false })
@@ -1643,6 +1749,9 @@ const AdsPage = defineComponent({
       // 单卡 + 按钮
       cardAddTaskModal, openCardAddTask, closeCardAddTask, saveCardAddTask,
       cardCategoriesAll, cardDetailsAll, cardOwnersAll,
+      // 备注 popup
+      noteModal, openNoteModal, closeNoteModal, saveNoteModal,
+      onNoteFilePick, onNoteDrop, onNotePaste, removeNoteImage, renderNoteHtml,
       // 设置 modal + 子模块
       settingsModal, openSettingsModal, closeSettingsModal,
       taskGroupsList,
@@ -2048,16 +2157,14 @@ const AdsPage = defineComponent({
                   </template>
                 </div>
 
-                <!-- 备注（点击改）+ 评论 + 删除 -->
+                <!-- 备注（点击弹出 popup 改）+ 评论 + 删除 -->
                 <div style="padding:7px 8px;display:flex;align-items:center;gap:6px;overflow:hidden">
-                  <input v-if="isEditing(task.id,'note')" v-model="cellDraft" :data-cell-edit="task.id+'-note'"
-                    @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
-                    placeholder="备注…"
-                    style="flex:1;font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:3px 6px;outline:none;min-width:0">
-                  <div v-else :style="{flex:1,overflow:'hidden',cursor:canEditTask(task)?'pointer':'default',minWidth:'0',padding:'2px 4px',borderRadius:'4px'}"
-                       @click="canEditTask(task) && startCellEdit(task,'note')">
-                    <div v-if="task.execution_note || task.note" style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.execution_note || task.note }}</div>
-                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">{{ canEditTask(task) ? '点击添加…' : '—' }}</div>
+                  <div :style="{flex:1,overflow:'hidden',cursor:canEditTask(task)?'pointer':'default',minWidth:'0',padding:'2px 4px',borderRadius:'4px',display:'flex',alignItems:'center',gap:'4px'}"
+                       @click="canEditTask(task) && openNoteModal(task)"
+                       :title="canEditTask(task) ? '点击编辑备注（支持链接和多张图）' : ''">
+                    <span v-if="(task.note_images||[]).length" style="font-size:10px;color:#0369a1;flex-shrink:0">📎{{ (task.note_images||[]).length }}</span>
+                    <div v-if="task.execution_note || task.note" style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" v-html="renderNoteHtml(task.execution_note || task.note)"></div>
+                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic;flex:1">{{ canEditTask(task) ? '点击添加…' : '—' }}</div>
                   </div>
                   <button @click.stop="toggleTaskExpand(task.id)" :title="'评论 (' + (taskComments[task.id]||[]).length + ')'"
                     style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted);flex-shrink:0">💬{{ (taskComments[task.id]||[]).length }}</button>
@@ -2355,6 +2462,48 @@ const AdsPage = defineComponent({
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeGroupCreate" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
         <button @click="saveGroupCreate" :disabled="groupCreateModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ groupCreateModal.saving ? '...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================== -->
+  <!-- 备注 Modal：textarea + 多图 + URL 自动 link -->
+  <!-- ========================================================================== -->
+  <div v-if="noteModal.show" @click.self="closeNoteModal"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:560px;max-width:94vw;max-height:88vh;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25);display:flex;flex-direction:column"
+         @dragover.prevent @drop.prevent="onNoteDrop">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:700">编辑备注</div>
+        <button @click="closeNoteModal" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--muted)">×</button>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">支持文字、URL（自动转链接）、拖入/粘贴/选择多张图（≤1MB/张）</div>
+      <textarea v-model="noteModal.text" @paste="onNotePaste" rows="5"
+        placeholder="说明、链接、问题…  http(s):// 会自动变蓝可点击"
+        style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box;font-family:inherit;resize:vertical;outline:none;line-height:1.6"></textarea>
+
+      <!-- 图片预览区 -->
+      <div v-if="noteModal.images.length" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">
+        <div v-for="(img, idx) in noteModal.images" :key="idx" style="position:relative">
+          <img :src="img" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer"
+               @click="previewImage = img">
+          <button @click="removeNoteImage(idx)"
+            style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:10px;cursor:pointer;line-height:1">×</button>
+        </div>
+      </div>
+
+      <!-- 加图工具栏 -->
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
+        <label style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border);background:#fff;border-radius:6px;font-size:11px;cursor:pointer;color:var(--muted)">
+          📎 选图
+          <input type="file" accept="image/*" multiple @change="onNoteFilePick" style="display:none">
+        </label>
+        <span style="font-size:10px;color:var(--muted)">或直接拖拽 / 粘贴截图到这里</span>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
+        <button @click="closeNoteModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveNoteModal" :disabled="noteModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ noteModal.saving ? '保存中…' : '保存' }}</button>
       </div>
     </div>
   </div>

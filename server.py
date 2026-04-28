@@ -1025,6 +1025,7 @@ class TaskUpdate(BaseModel):
     status: Optional[str] = None
     priority: Optional[str] = None
     execution_note: Optional[str] = None
+    note_images: Optional[list] = None     # base64 dataURI 数组，支持备注里多张图
     time_range_label: Optional[str] = None
     start_date: Optional[str] = None       # 任务开始日期（'YYYY-MM-DD' 或 '' 清空）
     eta_date: Optional[str] = None         # 任务截止日期（'YYYY-MM-DD' 或 '' 清空）
@@ -1281,6 +1282,7 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             tasks = rows(conn, """
                 SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
                        t.category, t.time_range_label, t.execution_note,
+                       COALESCE(t.note_images, '[]'::jsonb) AS note_images,
                        t.template_id,
                        t.created_at::text         AS created_at,
                        t.start_date::text         AS start_date,
@@ -2002,13 +2004,22 @@ def update_task(task_id: int, task: TaskUpdate, user: Optional[dict] = Depends(g
         else:
             extra_clauses.append("completed_at = NULL")
 
-    # 确保 start_date / eta_date / completed_at 列存在（首次运行自动建表）
+    # 确保 start_date / eta_date / completed_at / note_images 列存在（首次运行自动建表）
     with db() as conn:
         cur = conn.cursor()
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS note_images JSONB DEFAULT '[]'::jsonb")
         conn.commit()
+    # note_images 数组传入 → 序列化 JSON
+    if 'note_images' in fields:
+        v = fields['note_images']
+        if v is None or v == '':
+            fields['note_images'] = '[]'
+        else:
+            import json as _json
+            fields['note_images'] = _json.dumps(v if isinstance(v, list) else [v])
 
     # start_date / eta_date 空字符串 → SQL NULL
     if 'start_date' in fields and (fields['start_date'] == '' or fields['start_date'] is None):
