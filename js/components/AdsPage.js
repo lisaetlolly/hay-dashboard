@@ -301,6 +301,71 @@ const AdsPage = defineComponent({
     }
     // 给 header 用的"上周"参考（与 selectedPeriod 解耦，永远显示 4.20-26 类标签）
     const lastWeekRefLabel = computed(() => pickDefaultPeriodLabel(apiTaskPeriods.value))
+    // ── 单品批量改时间 modal ──
+    // 打开时把该商品下所有真任务列出来，admin 勾选 / 反选 + 设统一起止日期 + 保存
+    const productBatchTimeModal = ref({
+      show: false, pid: '', name: '',
+      tasks: [],   // [{id, detail, category, status, picked: true}]
+      start_date: '', end_date: '', saving: false,
+    })
+    const openProductBatchTime = (item) => {
+      if (!isAdmin.value) return alert('仅管理员可批量改时间')
+      const realTasks = (item.tasks || []).filter(t => !t.is_template)
+      if (!realTasks.length) return alert('该商品下没有真任务（占位行需先编辑落库）')
+      const p = apiTasksData.value.period
+      productBatchTimeModal.value = {
+        show: true, pid: item.pid, name: item.name,
+        tasks: realTasks.map(t => ({
+          id: t.id, detail: t.detail, category: t.category, status: t.status,
+          picked: !isStatusDone(t.status),  // 已完成的默认不勾（避免误改）
+        })),
+        start_date: p?.start_date || new Date().toISOString().slice(0,10),
+        end_date:   p?.end_date   || new Date().toISOString().slice(0,10),
+        saving: false,
+      }
+    }
+    const closeProductBatchTime = () => { productBatchTimeModal.value.show = false }
+    const toggleProductBatchTask = (id) => {
+      const t = productBatchTimeModal.value.tasks.find(x => x.id === id)
+      if (t) t.picked = !t.picked
+    }
+    const productBatchPickAll = () => {
+      const all = productBatchTimeModal.value.tasks.every(t => t.picked)
+      productBatchTimeModal.value.tasks.forEach(t => t.picked = !all)
+    }
+    const saveProductBatchTime = async () => {
+      const m = productBatchTimeModal.value
+      const picked = m.tasks.filter(t => t.picked)
+      if (!picked.length) return alert('请至少勾选 1 条任务')
+      if (!m.start_date && !m.end_date) return alert('起止时间至少填一个')
+      m.saving = true
+      try {
+        const body = {}
+        if (m.start_date) body.start_date = m.start_date
+        if (m.end_date)   body.eta_date   = m.end_date
+        for (const t of picked) {
+          const r = await fetch(`/api/tasks/${t.id}`, {
+            method:'PATCH', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(body),
+          })
+          if (!r.ok) throw new Error('id=' + t.id + ' 改失败')
+          // 本地写
+          for (const g of apiTasksData.value.groups || []) {
+            for (const tt of (g.tasks || [])) {
+              if (tt.id === t.id) {
+                if (m.start_date) tt.start_date = m.start_date
+                if (m.end_date)   tt.eta_date   = m.end_date
+              }
+            }
+          }
+        }
+        closeProductBatchTime()
+      } catch (err) {
+        alert('批量改失败：' + err.message)
+        m.saving = false
+      }
+    }
+
     // ── 单卡 + 按钮（方式一：给单个商品加任务）──
     const cardAddTaskModal = ref({
       show: false, pid: '',
@@ -1961,6 +2026,9 @@ const AdsPage = defineComponent({
       // 单卡 + 按钮
       cardAddTaskModal, openCardAddTask, closeCardAddTask, saveCardAddTask,
       cardCategoriesAll, cardDetailsAll, cardOwnersAll,
+      // 单品批量改时间
+      productBatchTimeModal, openProductBatchTime, closeProductBatchTime,
+      toggleProductBatchTask, productBatchPickAll, saveProductBatchTime,
       // 备注 popup（已废弃，保留兼容）
       noteModal, openNoteModal, closeNoteModal, saveNoteModal,
       onNoteFilePick, onNoteDrop, onNotePaste, removeNoteImage, renderNoteHtml,
@@ -2247,9 +2315,13 @@ const AdsPage = defineComponent({
                     <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.name }}</div>
                     <div style="font-size:11px;color:var(--muted)">{{ item.pid }}</div>
                   </div>
-                  <!-- 单卡 + 按钮（仅 admin）-->
-                  <button v-if="isAdmin" @click="openCardAddTask(item.pid)" title="给该商品加一行任务"
-                    style="border:1px solid #d97706;background:#fff;color:#d97706;border-radius:50%;width:26px;height:26px;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1">+</button>
+                  <!-- 单卡：批量改时间 + 加任务（仅 admin）-->
+                  <div v-if="isAdmin" style="display:flex;gap:6px;flex-shrink:0">
+                    <button @click="openProductBatchTime(item)" title="批量改任务起止时间"
+                      style="border:1px solid var(--border);background:#fff;color:var(--muted);border-radius:6px;padding:0 10px;height:26px;font-size:11px;cursor:pointer">📅 批量改时间</button>
+                    <button @click="openCardAddTask(item.pid)" title="给该商品加一行任务"
+                      style="border:1px solid #d97706;background:#fff;color:#d97706;border-radius:50%;width:26px;height:26px;font-size:16px;font-weight:700;cursor:pointer;line-height:1">+</button>
+                  </div>
                 </div>
                 <div>
                   <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px 12px">
@@ -2489,19 +2561,7 @@ const AdsPage = defineComponent({
         </div>
       </div>
 
-      <!-- 会议要点 -->
-      <div class="card" style="padding:16px">
-        <div class="card-header" style="margin-bottom:12px"><span class="card-title">会议要点</span><span class="card-sub">{{ meetings.length }} 条</span></div>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <div v-for="m in meetings" :key="m.id" style="padding:12px;border:1px solid var(--border);border-radius:10px;background:#fafaf9">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px">
-              <div style="font-size:13px;font-weight:700">{{ m.title }}</div>
-              <div style="font-size:11px;color:var(--muted)">{{ m.meeting_date }} · {{ m.week_label }}</div>
-            </div>
-            <div style="font-size:12px;color:var(--muted);line-height:1.7">{{ m.content }}</div>
-          </div>
-        </div>
-      </div>
+      <!-- 底部会议要点已去除（顶上已有 latestMeeting 横条） -->
     </div>
   </template>
 
@@ -2717,6 +2777,54 @@ const AdsPage = defineComponent({
   </div>
 
   <!-- 备注 popup 已废弃（替换为表格内联编辑器，行内 textarea + 链接/图片/附件 3 按钮）-->
+
+  <!-- ========================================================================== -->
+  <!-- 单品批量改时间 modal -->
+  <!-- ========================================================================== -->
+  <div v-if="productBatchTimeModal.show" @click.self="closeProductBatchTime"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:560px;max-width:94vw;max-height:88vh;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25);display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div>
+          <div style="font-size:14px;font-weight:700">批量改任务时间</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">{{ productBatchTimeModal.name }}（{{ productBatchTimeModal.pid }}）</div>
+        </div>
+        <button @click="closeProductBatchTime" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--muted)">×</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期</div>
+          <input type="date" v-model="productBatchTimeModal.start_date"
+            style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">截止日期</div>
+          <input type="date" v-model="productBatchTimeModal.end_date"
+            style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:11px;color:var(--muted)">应用到（已勾 {{ productBatchTimeModal.tasks.filter(t=>t.picked).length }} / {{ productBatchTimeModal.tasks.length }} 条）</div>
+        <button @click="productBatchPickAll" style="font-size:10px;padding:3px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">全选 / 全不选</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px;max-height:320px">
+        <label v-for="t in productBatchTimeModal.tasks" :key="t.id"
+          style="display:flex;align-items:center;gap:6px;padding:5px 6px;cursor:pointer;font-size:12px;border-radius:4px"
+          :style="{background: t.picked ? '#fff7ed' : 'transparent'}">
+          <input type="checkbox" :checked="t.picked" @change="toggleProductBatchTask(t.id)">
+          <span style="font-size:10px;padding:1px 6px;border:1px solid var(--border);border-radius:99px;background:#fff;color:var(--muted);flex-shrink:0">{{ t.category || '—' }}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.detail }}</span>
+          <span style="font-size:10px;color:var(--muted);flex-shrink:0">{{ t.status }}</span>
+        </label>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:8px">⚠ 起止时间会**覆盖**勾选任务的现有 start_date / eta_date</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
+        <button @click="closeProductBatchTime" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveProductBatchTime" :disabled="productBatchTimeModal.saving"
+          style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ productBatchTimeModal.saving ? '保存中…' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 新增任务 Modal — 标签/名称 用 datalist：可以选已有的，也可以填全新的（全新的会打红点）-->
   <div v-if="newTaskModal.show" @click.self="closeNewTask"
