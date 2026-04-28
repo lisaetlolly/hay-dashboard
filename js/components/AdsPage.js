@@ -519,40 +519,137 @@ const AdsPage = defineComponent({
       }
     }
 
-    // ── 新增任务 Modal（投放面板版）─────────────────────
-    const newTaskModal = ref({ show:false, pid:'', detail:'', category:'标题优化', owner:'Jas team（内容）', status:'待开始', priority:'中', execution_note:'', saving:false })
+    // ── 任务模板（task_template 表 9 条固定模板）──
+    // 用户改的「负责人名」改的是当前任务行的 owner，不影响模板的 default_owner（部门绑定）
+    const taskTemplates = ref([])  // [{id, category, detail, default_owner, sort_order}, ...]
+    const loadTaskTemplates = async () => {
+      try {
+        const res = await fetch('/api/task-templates')
+        if (res.ok) taskTemplates.value = await res.json()
+      } catch {}
+    }
+    onMounted(loadTaskTemplates)
+
+    // ── 新增单个任务 Modal（基于模板：选一级 → 二级 → owner 自动填）──
+    const newTaskModal = ref({ show:false, pid:'', tplId:'', owner:'', status:'待开始', execution_note:'', saving:false })
+    const newTaskCategories = computed(() =>
+      [...new Set(taskTemplates.value.map(t => t.category))]
+    )
+    const newTaskCategory = ref('')  // 当前选中的一级分类
+    const newTaskTemplatesInCat = computed(() =>
+      taskTemplates.value.filter(t => t.category === newTaskCategory.value)
+    )
     const openNewTask = (pid) => {
       if (!isAdmin.value && !myPerms.value.includes('task.create')) return alert('无新增任务权限')
-      Object.assign(newTaskModal.value, { show:true, pid: pid||'', detail:'', category:'标题优化', owner:'Jas team（内容）', status:'待开始', priority:'中', execution_note:'', saving:false })
+      newTaskCategory.value = taskTemplates.value[0]?.category || ''
+      const firstTpl = taskTemplates.value.find(t => t.category === newTaskCategory.value)
+      Object.assign(newTaskModal.value, {
+        show: true, pid: pid || '',
+        tplId: firstTpl?.id || '',
+        owner: firstTpl?.default_owner || '',
+        status: '待开始', execution_note: '', saving: false,
+      })
     }
+    // 切一级分类时，自动选第一个二级 + 重置 owner
+    Vue.watch(newTaskCategory, (cat) => {
+      const tpl = taskTemplates.value.find(t => t.category === cat)
+      if (tpl) {
+        newTaskModal.value.tplId = tpl.id
+        newTaskModal.value.owner = tpl.default_owner
+      }
+    })
+    // 切二级分类时，自动重置 owner 为模板默认
+    Vue.watch(() => newTaskModal.value.tplId, (id) => {
+      const tpl = taskTemplates.value.find(t => t.id === id)
+      if (tpl) newTaskModal.value.owner = tpl.default_owner
+    })
     const closeNewTask = () => { newTaskModal.value.show = false }
     const saveNewTask = async () => {
       const m = newTaskModal.value
-      if (!m.pid) return alert('请选商品')
-      if (!m.detail.trim()) return alert('任务名不能空')
+      if (!m.pid) return alert('请填商品 PID')
+      if (!m.tplId) return alert('请选任务模板')
+      const tpl = taskTemplates.value.find(t => t.id === m.tplId)
+      if (!tpl) return alert('模板不存在')
       m.saving = true
       try {
-        const period = activePeriod.value || ''
-        const body = {
-          product_id: m.pid, detail: m.detail.trim(), owner: m.owner,
-          status: m.status, priority: m.priority, category: m.category,
-          time_range_label: period, execution_note: m.execution_note || null,
-        }
         const res = await fetch('/api/tasks', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            product_id: m.pid,
+            detail: tpl.detail,
+            owner: m.owner || tpl.default_owner,
+            category: tpl.category,
+            status: m.status, priority: '中',
+            time_range_label: activePeriod.value || '',
+            execution_note: m.execution_note || null,
+          }),
         })
         if (!res.ok) {
           const err = await res.json().catch(()=>({detail:'新增失败'}))
           throw new Error(err.detail || ('HTTP ' + res.status))
         }
-        // 重新拉一遍任务列表
         await loadTasksWithMetrics()
         closeNewTask()
       } catch (err) {
         alert('新增失败：' + err.message)
         m.saving = false
       }
+    }
+
+    // ── 批量给多商品建任务 Modal（任务组合 a/b → 调 bulk-instantiate）──
+    // mode='all'：组合 a，全 9 模板；mode='custom'：组合 b，勾选模板子集
+    const bulkModal = ref({
+      show:false, mode:'all', pidsText:'', selectedTplIds:new Set(),
+      period:'', saving:false, lastResult:null,
+    })
+    const openBulkCreate = () => {
+      if (!isAdmin.value && !myPerms.value.includes('task.create')) return alert('需要 task.create 权限')
+      const all = new Set(taskTemplates.value.map(t => t.id))
+      Object.assign(bulkModal.value, {
+        show:true, mode:'all', pidsText:'',
+        selectedTplIds: all,  // 默认全选
+        period: activePeriod.value || '',
+        saving:false, lastResult:null,
+      })
+    }
+    const closeBulkCreate = () => { bulkModal.value.show = false }
+    const toggleBulkTpl = (id) => {
+      const s = new Set(bulkModal.value.selectedTplIds)
+      if (s.has(id)) s.delete(id); else s.add(id)
+      bulkModal.value.selectedTplIds = s
+    }
+    const isBulkTplSelected = (id) => bulkModal.value.selectedTplIds.has(id)
+    const saveBulkCreate = async () => {
+      const m = bulkModal.value
+      // 解析 PID 列表（支持空格/逗号/换行分隔）
+      const pids = (m.pidsText || '').split(/[\s,，;；\n]+/).map(s => s.trim()).filter(Boolean)
+      if (!pids.length) return alert('请填至少 1 个商品 PID')
+      if (!m.period) return alert('请选周期')
+      const tplIds = m.mode === 'all'
+        ? null  // 后端 template_ids 为空 = 全部
+        : Array.from(m.selectedTplIds)
+      if (m.mode === 'custom' && !tplIds.length) return alert('自选模式至少选 1 个模板')
+      m.saving = true
+      try {
+        const res = await fetch('/api/tasks/bulk-instantiate', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            product_ids: pids,
+            period_label: m.period,
+            template_ids: tplIds,  // null = 全 9 个
+          }),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'批量创建失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        const data = await res.json()
+        m.lastResult = `✓ 已为 ${data.product_count} 个商品创建 ${data.created} 条任务（重复的自动跳过）`
+        await loadTasksWithMetrics()
+      } catch (err) {
+        m.lastResult = '✗ ' + err.message
+      }
+      m.saving = false
     }
 
     // ── 任务评论 / 反馈 ─────────────────────────────────────

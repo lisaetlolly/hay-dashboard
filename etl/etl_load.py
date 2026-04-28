@@ -60,15 +60,28 @@ PID_FIX = {
     '7660181033346': '1020815058332',  # Barro Bowl & Plate 13 位数 → 13 位数应为 13 位 实为 1020815058332
 }
 
+# 主链 SKU 硬编码 fallback（来自 优化商品ID清单.xlsx 26 行去 typo 后 25 个）
+# Render 上 .gitignore 屏蔽了 *.xlsx，所以远程跑 ETL 时 xlsx 不存在，要用这个兜底
+HARDCODED_MAIN_PIDS = {
+    '679198301351','580467335137','781547798998','888002957800','965048597796',
+    '886839411718','887041510904','975799789205','1020815058332','1020175879777',
+    '1022489092196','824946188993','824607518747','1016294283167','717349639294',
+    '737675603229','689952405763','682036237751','824882661931','742092260504',
+    '880120382310','583134215392','690221882602','652664516885','880816460277',
+}
+
 def _load_product_ids():
     """
-    加载 25 主链 SKU 列表 = 优化清单去重去 typo 后的 PID 集
-    优化清单实际有 26 行，含一个 typo（7660181033346 → 1020815058332），
-    去掉 1 个被 SPU 合并的副 SKU（824452791755）后剩 25 个主链 SKU。
+    加载 25 主链 SKU。优先读 优化商品ID清单.xlsx，没有则用硬编码 fallback。
+    SPU_MAP 里的副 SKU 也加进来让 ETL 识别。
     """
     path = os.path.join(DATA_DIR, '优化商品ID清单.xlsx')
     if not os.path.exists(path):
-        raise FileNotFoundError(f"找不到优化商品ID清单.xlsx: {path}")
+        # Render 远程：xlsx 文件被 gitignore 排除，用硬编码兜底
+        ids = set(HARDCODED_MAIN_PIDS)
+        ids_with_aliases = ids | set(SPU_MAP.keys())
+        print(f"  [优化商品ID清单] xlsx 文件不存在，用硬编码 25 PID + {len(SPU_MAP)} 个 alias")
+        return ids_with_aliases, ids
     zf = zipfile.ZipFile(path)
     sh_xml = zf.read('xl/worksheets/sheet1.xml').decode('utf-8')
     sr = ET.fromstring(sh_xml)
