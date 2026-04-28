@@ -1027,6 +1027,9 @@ class TaskUpdate(BaseModel):
     execution_note: Optional[str] = None
     time_range_label: Optional[str] = None
     eta_date: Optional[str] = None         # 'YYYY-MM-DD' 或 '' 清空
+    completed_at: Optional[str] = None     # 管理员补录历史完成时间用（'YYYY-MM-DD' 或 ISO timestamp）
+    category: Optional[str] = None
+    template_id: Optional[int] = None
 
 
 @app.get("/api/tasks")
@@ -1721,10 +1724,12 @@ def update_task(task_id: int, task: TaskUpdate, user: Optional[dict] = Depends(g
                 raise HTTPException(403, "只能编辑自己的任务")
     # 状态切到 / 离开「已完成」时，同步 completed_at
     # （已完成的别名：'done' / '已完成' / '完成'）
+    # 但是：如果用户在同一次 PATCH 里直接传了 completed_at（管理员补录），就尊重用户的值，
+    # 不再覆盖。
     DONE_ALIASES = {'done', '已完成', '完成'}
     extra_clauses = []
     extra_values = []
-    if 'status' in fields:
+    if 'status' in fields and 'completed_at' not in fields:
         if fields['status'] in DONE_ALIASES:
             extra_clauses.append("completed_at = COALESCE(completed_at, now())")
         else:
@@ -1740,6 +1745,13 @@ def update_task(task_id: int, task: TaskUpdate, user: Optional[dict] = Depends(g
     # eta_date 空字符串 → SQL NULL
     if 'eta_date' in fields and (fields['eta_date'] == '' or fields['eta_date'] is None):
         fields['eta_date'] = None
+    # completed_at 空字符串 → SQL NULL；'YYYY-MM-DD' → 加 12:00 时区中性时间
+    if 'completed_at' in fields:
+        v = fields['completed_at']
+        if v == '' or v is None:
+            fields['completed_at'] = None
+        elif isinstance(v, str) and len(v) == 10:  # YYYY-MM-DD
+            fields['completed_at'] = v + ' 12:00:00'
 
     set_parts = [f"{k} = %s" for k in fields] + extra_clauses
     set_clause = ", ".join(set_parts)

@@ -560,16 +560,13 @@ const AdsPage = defineComponent({
       try {
         // 占位行（is_template=true / id 形如 'tmpl_…'）：先 bulk-instantiate 落库，再重新拉数据
         if (task.is_template || (typeof task.id === 'string' && task.id.startsWith('tmpl_'))) {
-          // 找到这个占位 task 所属商品（taskGroups 是 computed，要从 apiTasksData 反查）
           let pid = null
           for (const g of apiTasksData.value.groups || []) {
-            // 占位 id 形如 tmpl_<tplId>_<pid>
             if (typeof task.id === 'string' && task.id.endsWith('_' + g.product_id)) {
               pid = g.product_id; break
             }
           }
           if (!pid) {
-            // 兜底：从 taskGroups 里反查
             for (const grp of taskGroups.value) {
               if (grp.tasks.some(t => t.id === task.id)) { pid = grp.pid; break }
             }
@@ -587,9 +584,8 @@ const AdsPage = defineComponent({
             const err = await inst.json().catch(()=>({detail:'落库失败'}))
             throw new Error(err.detail || ('HTTP ' + inst.status))
           }
-          // 重新拉，再把刚刚的字段 PATCH 到新建出来的任务上
+          // 只 reload 一次，找到新生成的真实任务后用 PATCH 写字段（不再 reload 第二次）
           await loadTasksWithMetrics()
-          // 找到刚刚生成的真实任务（同 pid + 同 template_id）
           let realTask = null
           for (const g of apiTasksData.value.groups || []) {
             if (g.product_id !== pid) continue
@@ -608,7 +604,15 @@ const AdsPage = defineComponent({
             const err = await r2.json().catch(()=>({detail:'保存失败'}))
             throw new Error(err.detail || ('HTTP ' + r2.status))
           }
-          await loadTasksWithMetrics()
+          // 本地写入新值（不再二次 reload，避免慢）
+          if (field === 'note') {
+            realTask.execution_note = val; realTask.note = val
+          } else {
+            realTask[field] = val
+          }
+          if (field === 'status' && ['done','已完成','完成'].includes(val)) {
+            realTask.completed_at = realTask.completed_at || new Date().toISOString()
+          }
           editingCell.value = null
           return
         }
@@ -767,58 +771,80 @@ const AdsPage = defineComponent({
     onMounted(loadTaskTemplates)
 
     // ── 新增单个任务 Modal（基于模板：选一级 → 二级 → owner 自动填）──
-    const newTaskModal = ref({ show:false, pid:'', tplId:'', owner:'', status:'待开始', execution_note:'', saving:false })
+    // 新增任务 state：标签/名称 支持已有 + 新建，负责人是固定下拉
+    // category：一级分类（标签）  detail：二级分类（任务名称）  owner：负责人
+    const newTaskModal = ref({ show:false, pid:'', category:'', detail:'', owner:'', saving:false })
+    // 已有标签（一级）：从 task_template 拉所有 category 去重
     const newTaskCategories = computed(() =>
-      [...new Set(taskTemplates.value.map(t => t.category))]
+      [...new Set(taskTemplates.value.map(t => t.category).filter(Boolean))]
     )
-    const newTaskCategory = ref('')  // 当前选中的一级分类
+    const newTaskCategory = computed({
+      get: () => newTaskModal.value.category,
+      set: (v) => { newTaskModal.value.category = v }
+    })
+    // 当前已选标签下面的已有任务名（二级）
     const newTaskTemplatesInCat = computed(() =>
-      taskTemplates.value.filter(t => t.category === newTaskCategory.value)
+      taskTemplates.value.filter(t => t.category === newTaskModal.value.category)
     )
     const openNewTask = (pid) => {
-      if (!isAdmin.value && !myPerms.value.includes('task.create')) return alert('无新增任务权限')
-      newTaskCategory.value = taskTemplates.value[0]?.category || ''
-      const firstTpl = taskTemplates.value.find(t => t.category === newTaskCategory.value)
+      if (!isAdmin.value) return alert('仅管理员可新增任务')
+      // 默认：第一个标签 + 该标签下第一个名称 + 该模板默认负责人
+      const firstCat = taskTemplates.value[0]?.category || ''
+      const firstTpl = taskTemplates.value.find(t => t.category === firstCat)
       Object.assign(newTaskModal.value, {
         show: true, pid: pid || '',
-        tplId: firstTpl?.id || '',
+        category: firstCat,
+        detail: firstTpl?.detail || '',
         owner: firstTpl?.default_owner || '',
-        status: '待开始', execution_note: '', saving: false,
+        saving: false,
       })
     }
-    // 切一级分类时，自动选第一个二级 + 重置 owner
-    Vue.watch(newTaskCategory, (cat) => {
-      const tpl = taskTemplates.value.find(t => t.category === cat)
-      if (tpl) {
-        newTaskModal.value.tplId = tpl.id
-        newTaskModal.value.owner = tpl.default_owner
-      }
+    // 当用户选择一个已有的"任务名称"时，自动填充其默认负责人（如果对得上）
+    Vue.watch(() => newTaskModal.value.detail, (newDetail) => {
+      const tpl = taskTemplates.value.find(t =>
+        t.category === newTaskModal.value.category && t.detail === newDetail)
+      if (tpl && tpl.default_owner) newTaskModal.value.owner = tpl.default_owner
     })
-    // 切二级分类时，自动重置 owner 为模板默认
-    Vue.watch(() => newTaskModal.value.tplId, (id) => {
-      const tpl = taskTemplates.value.find(t => t.id === id)
-      if (tpl) newTaskModal.value.owner = tpl.default_owner
+    // 切标签时，如果当前 detail 在新标签下不存在 → 重置为新标签下第一个 detail
+    Vue.watch(() => newTaskModal.value.category, (newCat) => {
+      const exists = taskTemplates.value.some(t =>
+        t.category === newCat && t.detail === newTaskModal.value.detail)
+      if (!exists) {
+        const firstTpl = taskTemplates.value.find(t => t.category === newCat)
+        if (firstTpl) {
+          newTaskModal.value.detail = firstTpl.detail
+          newTaskModal.value.owner = firstTpl.default_owner
+        } else {
+          newTaskModal.value.detail = ''
+        }
+      }
     })
     const closeNewTask = () => { newTaskModal.value.show = false }
     const saveNewTask = async () => {
       const m = newTaskModal.value
       if (!m.pid) return alert('请填商品 PID')
-      if (!m.tplId) return alert('请选任务模板')
-      const tpl = taskTemplates.value.find(t => t.id === m.tplId)
-      if (!tpl) return alert('模板不存在')
+      if (!m.category || !m.category.trim()) return alert('请填任务标签')
+      if (!m.detail || !m.detail.trim()) return alert('请填任务名称')
+      if (!m.owner) return alert('请选负责人')
+      // 看看 category+detail 是不是一个已有 9 模板里的：
+      // 是 → 带上 template_id，不打红点（这是常规任务）
+      // 否 → 不带 template_id，打红点（这是全新没出现过的任务）
+      const matched = taskTemplates.value.find(t =>
+        t.category === m.category.trim() && t.detail === m.detail.trim())
       m.saving = true
       try {
+        const body = {
+          product_id: m.pid,
+          detail: m.detail.trim(),
+          owner: m.owner,
+          category: m.category.trim(),
+          status: '待开始', priority: '中',
+          time_range_label: activePeriod.value || apiTasksData.value.period?.label || '',
+        }
+        if (matched && matched.id) body.template_id = matched.id
         const res = await fetch('/api/tasks', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({
-            product_id: m.pid,
-            detail: tpl.detail,
-            owner: m.owner || tpl.default_owner,
-            category: tpl.category,
-            status: m.status, priority: '中',
-            time_range_label: activePeriod.value || '',
-            execution_note: m.execution_note || null,
-          }),
+          body: JSON.stringify(body),
         })
         if (!res.ok) {
           const err = await res.json().catch(()=>({detail:'新增失败'}))
@@ -1077,12 +1103,30 @@ const AdsPage = defineComponent({
       const sun = new Date(mon); sun.setDate(mon.getDate() + 6); sun.setHours(23,59,59,999)
       return [mon.getTime(), sun.getTime()]
     }
-    // task.created_at 在本 ISO 周内 → 红点
+    // 红点 = "全新没出现过的任务"，只在以下条件全部满足时显示：
+    // 1) 不是占位行（is_template）
+    // 2) 任务的 (category, detail) 组合 *不在* 9 个固定模板里
+    //    —— 用 (category,detail) 判定而非 template_id，避免旧数据 template_id 缺失误伤补录
+    // 3) created_at 落在当前展示周期内 → 持续一整周，下周自动消失
+    // 含义：只有管理员通过"+ 新增任务"加的自定义任务（或不在标准 9 项里的）才会打红点。
+    // 改状态、补录数据 都不会触发红点（因为 created_at 不会变）
     const isNewThisWeek = (task) => {
-      if (!task || !task.created_at) return false
-      const [a, b] = currentWeekRange()
-      const t = new Date(task.created_at).getTime()
-      return t >= a && t <= b
+      if (!task) return false
+      if (task.is_template) return false
+      if (!task.created_at) return false
+      // (category, detail) 落在标准 9 项里 → 不打红点
+      const cat = (task.category || '').trim()
+      const det = (task.detail || '').trim()
+      const isStandard = taskTemplates.value.some(t =>
+        (t.category||'').trim() === cat && (t.detail||'').trim() === det)
+      if (isStandard) return false
+      const p = apiTasksData.value.period
+      if (!p || !p.start_date || !p.end_date) return false
+      const t = new Date(task.created_at)
+      if (isNaN(t.getTime())) return false
+      const start = new Date(p.start_date + 'T00:00:00')
+      const end = new Date(p.end_date + 'T23:59:59')
+      return t >= start && t <= end
     }
     // 完成时间格式化（保留分钟）
     const fmtCompletedAt = (iso) => {
@@ -1243,6 +1287,7 @@ const AdsPage = defineComponent({
       TASK_CATEGORIES_ALL, TASK_OWNERS_ALL,
       // 新增任务 + 周期 modal
       newTaskModal, openNewTask, closeNewTask, saveNewTask,
+      newTaskCategory, newTaskCategories, newTaskTemplatesInCat, taskTemplates,
       periodModal, openPeriodModal, closePeriodModal, savePeriod,
       openPeriodEdit, deleteCurrentPeriod, apiTaskPeriods,
     }
@@ -1470,8 +1515,8 @@ const AdsPage = defineComponent({
             <span class="card-sub">{{ activePeriod }} · {{ taskGroups.length }} 个商品 · 点击单元格直接编辑</span>
           </div>
           <div style="display:flex;gap:8px">
-            <button v-if="isAdmin || (me?.permissions||[]).includes('task.create')" @click="openNewTask('')"
-              style="padding:6px 12px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">+ 新增任务</button>
+            <button v-if="isAdmin" @click="openNewTask('')"
+              style="padding:6px 14px;font-size:13px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)">+ 新增任务</button>
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:10px">
@@ -1572,23 +1617,31 @@ const AdsPage = defineComponent({
                   </span>
                 </div>
 
-                <!-- 时间列：已完成→展示 completed_at（自动）；进行中→展示/编辑 eta_date（admin 可改）-->
-                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',cursor:(isStatusInProgress(task.status) && isAdmin)?'pointer':'default'}"
-                     @click="isStatusInProgress(task.status) && isAdmin && !isEditing(task.id,'eta_date') && startCellEdit(task,'eta_date')">
-                  <!-- 已完成 -->
-                  <span v-if="isStatusDone(task.status)" style="font-size:11px;color:#16a34a" :title="'完成时间：' + (task.completed_at || '周末兜底')">
+                <!-- 时间列：
+                  · 已完成 → 展示 completed_at；admin 可点击改（补录用）
+                  · 待开始 / 进行中 → 展示 ETA（截止时间）；admin 可点击改
+                -->
+                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',cursor:isAdmin?'pointer':'default'}"
+                     @click="isAdmin && !isEditing(task.id, isStatusDone(task.status)?'completed_at':'eta_date') && startCellEdit(task, isStatusDone(task.status)?'completed_at':'eta_date')">
+                  <!-- 已完成 + 编辑 completed_at（仅管理员）-->
+                  <input v-if="isStatusDone(task.status) && isEditing(task.id,'completed_at')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-completed_at'"
+                    @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                    style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
+                  <!-- 已完成展示 -->
+                  <span v-else-if="isStatusDone(task.status)" style="font-size:11px;color:#16a34a"
+                    :title="isAdmin ? '点击改完成时间（管理员补录用）' : ('完成时间：' + (task.completed_at || '—'))">
                     ✓ {{ fmtCompletedSmart(task) }}
                   </span>
-                  <!-- 进行中：admin 可改 ETA -->
+                  <!-- 编辑 ETA -->
                   <input v-else-if="isEditing(task.id,'eta_date')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-eta_date'"
                     @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
                     style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
-                  <span v-else-if="isStatusInProgress(task.status)" style="font-size:11px;color:task.eta_date?'#f59e0b':'#9ca3af'"
-                    :title="isAdmin ? '点击设置/修改预计完成日期' : '预计完成日期'">
-                    {{ task.eta_date ? ('🕒 ' + fmtEtaDate(task.eta_date)) : (isAdmin ? '+ 设置预计完成' : '—') }}
+                  <!-- 显示 ETA -->
+                  <span v-else style="font-size:11px"
+                    :style="{color: task.eta_date ? '#f59e0b' : '#9ca3af'}"
+                    :title="isAdmin ? '点击设置/修改截止日期' : '任务截止日期'">
+                    {{ task.eta_date ? ('🕒 ' + fmtEtaDate(task.eta_date)) : (isAdmin ? '+ 设置截止时间' : '—') }}
                   </span>
-                  <!-- 其他状态：暂不展示 -->
-                  <span v-else style="font-size:11px;color:#d1d5db">—</span>
                 </div>
 
                 <!-- 备注（点击改）+ 评论 + 删除 -->
@@ -1691,36 +1744,42 @@ const AdsPage = defineComponent({
     </div>
   </template>
 
-  <!-- 新增任务 Modal -->
+  <!-- 新增任务 Modal — 标签/名称 用 datalist：可以选已有的，也可以填全新的（全新的会打红点）-->
   <div v-if="newTaskModal.show" @click.self="closeNewTask"
     style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
-    <div style="width:460px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
-      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新增任务</div>
+    <div style="width:480px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新增任务（仅管理员）</div>
       <div style="display:flex;flex-direction:column;gap:10px">
         <div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:3px">商品 PID *</div>
           <input v-model="newTaskModal.pid" placeholder="如：690221882602" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
-          <div style="font-size:10px;color:var(--muted);margin-top:3px">从单品页或商品管理复制 PID 过来</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px">从单品页或商品管理复制 PID</div>
         </div>
         <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称 *</div>
-          <input v-model="newTaskModal.detail" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务标签 *（一级分类，可选已有/可填新的）</div>
+          <input v-model="newTaskModal.category" list="new-task-cats" placeholder="如：标题优化 / 评价与问大家 …" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          <datalist id="new-task-cats">
+            <option v-for="c in newTaskCategories" :key="c" :value="c"></option>
+          </datalist>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">分类</div>
-            <select v-model="newTaskModal.category" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-              <option v-for="c in TASK_CATEGORIES_ALL" :key="c" :value="c">{{ c }}</option>
-            </select>
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人</div>
-            <select v-model="newTaskModal.owner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-              <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
-            </select>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称 *（二级分类，自动落到当前标签下）</div>
+          <input v-model="newTaskModal.detail" list="new-task-names" placeholder="如：结合小红书/淘宝热搜词，优化链接标题" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          <datalist id="new-task-names">
+            <option v-for="t in newTaskTemplatesInCat" :key="t.id" :value="t.detail"></option>
+          </datalist>
+          <div style="font-size:10px;color:#dc2626;margin-top:3px" v-if="newTaskModal.category && newTaskModal.detail && !taskTemplates.find(t=>t.category===newTaskModal.category.trim()&&t.detail===newTaskModal.detail.trim())">
+            ⚠ 全新任务（不在 9 个固定任务里），本周会标红点
           </div>
         </div>
-        <div style="font-size:10px;color:var(--muted)">周期自动写：{{ activePeriod || '—' }}</div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人 *</div>
+          <select v-model="newTaskModal.owner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+            <option value="">— 选负责人 —</option>
+            <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
+          </select>
+        </div>
+        <div style="font-size:10px;color:var(--muted)">周期自动写：{{ activePeriod || '—' }}（周一-周日）</div>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeNewTask" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
