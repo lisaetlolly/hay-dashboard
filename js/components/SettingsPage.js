@@ -466,32 +466,34 @@ const SettingsPage = defineComponent({
     }
 
     // ── 数据异常检测：哪些日期缺数据 ──
+    // 各类报表的起算日期不同：生意参谋从 data_start（2 月）；万象台/短视频从投放上线日（launch_date 4.8）
     const dataGaps = Vue.computed(() => {
       const gaps = []
-      const start = RAW.data_start || '2026-04-01'
-      const end = RAW.data_end || new Date().toISOString().slice(0, 10)
-      // 生成预期日期范围
-      const expectedDates = []
-      const sd = new Date(start), ed = new Date(end)
-      for (let d = new Date(sd); d <= ed; d.setDate(d.getDate() + 1)) {
-        expectedDates.push(d.toISOString().slice(0, 10))
+      const today = new Date().toISOString().slice(0, 10)
+      const syztStart = RAW.data_start || '2026-04-01'  // 生意参谋全店从开店起就有
+      const adsStart = RAW.launch_date || '2026-04-08'   // 万象台/短视频上线后才有数据
+      const end = (RAW.data_end && RAW.data_end < today) ? RAW.data_end : today
+      const range = (s, e) => {
+        const dates = []
+        const sd = new Date(s), ed = new Date(e)
+        for (let d = new Date(sd); d <= ed; d.setDate(d.getDate() + 1)) {
+          dates.push(d.toISOString().slice(0, 10))
+        }
+        return dates
       }
-      // 1) syzt：检查所有商品至少有 1 行数据 / 天
       const syztDates = new Set((RAW.syzt || []).map(r => r.d))
-      for (const d of expectedDates) {
+      for (const d of range(syztStart, end)) {
         if (!syztDates.has(d)) gaps.push({ report: '生意参谋商品报表', date: d })
       }
-      // 2) wxst：同上
       const wxstDates = new Set((RAW.wxst || []).map(r => r.d))
-      for (const d of expectedDates) {
+      for (const d of range(adsStart, end)) {
         if (!wxstDates.has(d)) gaps.push({ report: '万象台商品报表', date: d })
       }
-      // 3) 短视频：内容报表
       const videoDates = new Set(Object.keys(RAW.video_daily || {}))
-      for (const d of expectedDates) {
+      for (const d of range(adsStart, end)) {
         if (!videoDates.has(d)) gaps.push({ report: '内容报表(短视频)', date: d })
       }
-      return gaps.slice(0, 30)  // 最多展示 30 条
+      return gaps.slice(0, 30)
     })
 
     // ── 手工数据录入 ─────────────────────────────────────────
@@ -575,13 +577,23 @@ const SettingsPage = defineComponent({
         const importFiles = Vue.ref([])
         const importStatus = Vue.ref('')
         const importLoading = Vue.ref(false)
-        const onImportFilesChange = e => { importFiles.value = Array.from(e.target.files||[]) }
+        // 选文件：累加追加，不要每次替换（用户可能分批选）。去重按 name
+        const onImportFilesChange = e => {
+          const incoming = Array.from(e.target.files || [])
+          const map = new Map(importFiles.value.map(f => [f.name, f]))
+          for (const f of incoming) map.set(f.name, f)
+          importFiles.value = Array.from(map.values())
+        }
         const pickImportFiles = () => {
           const inp = document.createElement('input')
           inp.type='file'; inp.multiple=true; inp.accept='.xls,.xlsx,.csv'
           inp.onchange = onImportFilesChange
           inp.click()
         }
+        const removeImportFile = (name) => {
+          importFiles.value = importFiles.value.filter(f => f.name !== name)
+        }
+        const clearImportFiles = () => { importFiles.value = [] }
         const runImport = async () => {
           if (!importFiles.value.length) return alert('请先选择文件')
           importLoading.value = true; importStatus.value = '上传中…'
@@ -591,7 +603,21 @@ const SettingsPage = defineComponent({
             const res = await fetch('/api/refresh-data', { method:'POST', body:fd })
             const data = await res.json()
             if (res.ok) {
-              importStatus.value = `✓ 导入成功！data_end=${data.data_end||'—'}  ${data.syzt||0} 行生意参谋 · ${data.wxst||0} 行推广报表`
+              const parts = []
+              parts.push(`生意参谋 ${data.syzt||0}`)
+              parts.push(`商品报表 ${data.wxst||0}`)
+              if (data.audience != null) parts.push(`人群 ${data.audience}`)
+              if (data.keyword  != null) parts.push(`关键词 ${data.keyword}`)
+              if (data.traffic  != null) parts.push(`流量 ${data.traffic}`)
+              const fileSummary = (data.saved_files || []).map(f =>
+                typeof f === 'string' ? f : `${f.name} → ${f.dest || ''}`
+              ).join('\n  · ')
+              const totalRows = (data.syzt||0)+(data.wxst||0)+(data.audience||0)+(data.keyword||0)+(data.traffic||0)
+              const status = totalRows > 0 ? '✓ 导入成功' : '⚠️ 文件已上传但 ETL 没读到数据'
+              importStatus.value = `${status}（${importFiles.value.length} 个文件）\n汇总：${parts.join(' · ')} 行\n路由：\n  · ${fileSummary || '—'}`
+              if (totalRows === 0 && data.log) {
+                importStatus.value += `\nETL 日志末尾：\n${(data.log || '').split('\n').slice(-15).join('\n')}`
+              }
               importFiles.value = []
             } else {
               importStatus.value = `✗ 失败：${data.detail||res.statusText}`
@@ -599,7 +625,7 @@ const SettingsPage = defineComponent({
           } catch(e) { importStatus.value = `✗ 网络错误：${e.message}` }
           importLoading.value = false
         }
-        return { importFiles, importStatus, importLoading, pickImportFiles, runImport }
+        return { importFiles, importStatus, importLoading, pickImportFiles, runImport, removeImportFile, clearImportFiles }
       })(),
     }
   },
@@ -861,21 +887,34 @@ const SettingsPage = defineComponent({
     </div>
     <div @click="pickImportFiles"
       style="border:2px dashed var(--border);border-radius:10px;padding:24px;text-align:center;cursor:pointer;transition:border-color .15s;background:#fafaf9"
-      @dragover.prevent @drop.prevent="e=>{importFiles=Array.from(e.dataTransfer.files);}"
+      @dragover.prevent
+      @drop.prevent="e=>{
+        const incoming = Array.from(e.dataTransfer.files || []);
+        const map = new Map(importFiles.map(f=>[f.name,f]));
+        incoming.forEach(f=>map.set(f.name,f));
+        importFiles = Array.from(map.values());
+      }"
       onmouseenter="this.style.borderColor='var(--accent)'" onmouseleave="this.style.borderColor='var(--border)'">
       <div style="font-size:24px;margin-bottom:6px">📁</div>
-      <div style="font-size:13px;font-weight:600;color:var(--text)">点击选择文件 / 拖拽到此处</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">支持 .xls .xlsx .csv，可多选</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text)">点击选择文件 / 拖拽到此处（按住 Cmd/Ctrl 多选）</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">支持 .xls .xlsx .csv，可多选；也可分批多次选，自动累加</div>
     </div>
     <div v-if="importFiles.length" style="margin-top:10px;padding:10px 14px;background:#f4f4f5;border-radius:8px">
-      <div v-for="f in importFiles" :key="f.name" style="font-size:12px;color:var(--text);padding:2px 0">📄 {{ f.name }}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:11px;font-weight:600;color:var(--text)">已选 {{ importFiles.length }} 个</span>
+        <button @click="clearImportFiles" style="font-size:11px;padding:2px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">全部清除</button>
+      </div>
+      <div v-for="f in importFiles" :key="f.name" style="font-size:12px;color:var(--text);padding:2px 0;display:flex;align-items:center;gap:6px">
+        📄 <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ f.name }}</span>
+        <button @click="removeImportFile(f.name)" style="font-size:10px;border:none;background:none;cursor:pointer;color:#dc2626">×</button>
+      </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
       <button @click="runImport" :disabled="importLoading||!importFiles.length"
         :style="{border:'1px solid var(--accent)',background:importLoading||!importFiles.length?'#d4d4d8':'var(--accent)',color:'#fff',borderRadius:'8px',padding:'8px 20px',fontSize:'12px',cursor:importLoading||!importFiles.length?'default':'pointer',fontWeight:'600'}">
         {{ importLoading ? '处理中…' : '开始导入' }}
       </button>
-      <span v-if="importStatus" :style="{fontSize:'12px',color:importStatus.startsWith('✓')?'var(--green)':'var(--red)'}">{{ importStatus }}</span>
+      <pre v-if="importStatus" :style="{fontSize:'11px',color:importStatus.startsWith('✓')?'#16a34a':importStatus.startsWith('⚠')?'#d97706':'#dc2626',whiteSpace:'pre-wrap',margin:0,fontFamily:'inherit',background:'#fafaf9',padding:'8px 10px',borderRadius:'6px',maxHeight:'240px',overflow:'auto',width:'100%'}">{{ importStatus }}</pre>
     </div>
   </div>
 

@@ -701,6 +701,88 @@ def load_wxst_content(conn):
     print(f"  fact_wxst_content: {total} rows ({len(matches)} files)")
 
 # ─────────────────────────────────────────────
+# 万象台全营销场景报表（场景级日数据）
+# 文件夹：推广报表/全营销场景报表/*.csv
+# 用于「总投放 ROI 口径」对账：万象台后台显示的总花费/ROI 用的就是这个表
+# ─────────────────────────────────────────────
+def load_wxst_scene(conn):
+    matches = (glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表', '*.csv'))
+            or glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表*.csv'))
+            or glob.glob(os.path.join(DATA_DIR, '推广报表', '全场景*.csv')))
+    if not matches:
+        print("  [SKIP] 万象台全营销场景报表 not found")
+        return
+    cur = conn.cursor()
+    sql = """
+        INSERT INTO fact_wxst_scene (
+            stat_date, scene_id, scene_name, sub_scene_id, sub_scene_name,
+            impressions, clicks, spend, ctr, avg_cpc, cpm,
+            total_gmv, direct_gmv, indirect_gmv,
+            total_orders, direct_orders, indirect_orders,
+            click_cvr, roi, cart_cnt, cart_rate,
+            collect_item_cnt, collect_shop_cnt, total_collect_cart,
+            placed_orders, placed_amount,
+            guided_visits, guided_visitors,
+            new_buyers, new_pct,
+            natural_gmv, natural_impressions, source_file
+        ) VALUES %s
+        ON CONFLICT(stat_date, scene_id, sub_scene_id) DO UPDATE SET
+            impressions  = EXCLUDED.impressions,
+            clicks       = EXCLUDED.clicks,
+            spend        = EXCLUDED.spend,
+            total_gmv    = EXCLUDED.total_gmv,
+            direct_gmv   = EXCLUDED.direct_gmv,
+            indirect_gmv = EXCLUDED.indirect_gmv,
+            roi          = EXCLUDED.roi,
+            placed_amount= EXCLUDED.placed_amount,
+            new_buyers   = EXCLUDED.new_buyers
+    """
+    seen = set()
+    total = 0
+    print(f"  万象台全营销场景报表：开始处理 {len(matches)} 个 CSV 文件")
+    for fi, fpath in enumerate(sorted(matches), 1):
+        fname = os.path.basename(fpath)
+        try:
+            _, rs = read_csv_gbk(fpath)
+        except Exception as e:
+            print(f"  [WARN] {fname}: {e}")
+            continue
+        batch = []
+        for row in rs:
+            stat_date = str(row.get('日期', '')).strip()[:10]
+            scene_id  = str(row.get('场景ID', '')).strip()
+            sub_id    = str(row.get('原二级场景ID', '')).strip() or scene_id
+            if not stat_date or not scene_id:
+                continue
+            key = (stat_date, scene_id, sub_id)
+            if key in seen: continue
+            seen.add(key)
+            def g(k):  return safe_float(row.get(k))
+            def gp(k): return safe_pct(row.get(k))
+            batch.append((
+                stat_date, scene_id, str(row.get('场景名字', '')),
+                sub_id, str(row.get('原二级场景名字', '')),
+                g('展现量'), g('点击量'), g('花费'),
+                gp('点击率'), g('平均点击花费'), g('千次展现花费'),
+                g('总成交金额'), g('直接成交金额'), g('间接成交金额'),
+                g('总成交笔数'), g('直接成交笔数'), g('间接成交笔数'),
+                gp('点击转化率'), g('投入产出比'),
+                g('总购物车数'), gp('加购率'),
+                g('收藏宝贝数'), g('收藏店铺数'), g('总收藏加购数'),
+                g('拍下订单笔数'), g('拍下订单金额'),
+                g('引导访问量'), g('引导访问人数'),
+                g('成交新客数'), gp('成交新客占比'),
+                g('自然流量转化金额'), g('自然流量曝光量'),
+                fname
+            ))
+        if batch:
+            psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
+            conn.commit()
+        total += len(batch)
+        print(f"    [{fi}/{len(matches)}] {fname}: +{len(batch)}（累计 {total}）")
+    print(f"  fact_wxst_scene: {total} rows ({len(matches)} files)")
+
+# ─────────────────────────────────────────────
 # 无限店铺流量
 # ─────────────────────────────────────────────
 def load_traffic(conn):
@@ -830,6 +912,9 @@ def main():
 
     print("[7] 万象台内容报表（短视频/直播）")
     load_wxst_content(conn)
+
+    print("[7b] 万象台全营销场景报表（场景级，ROI 口径权威源）")
+    load_wxst_scene(conn)
 
     print("[8] 无限店铺流量")
     load_traffic(conn)

@@ -2868,26 +2868,52 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
 
     base_dir = DASHBOARD_DIR
     saved = []
+    # 文件名 → 目标文件夹分发（按淘宝/万象台导出文件名前缀识别）
+    def _route_file(filename: str) -> Optional[str]:
+        n = filename or ""
+        ext = n.rsplit(".", 1)[-1].lower()
+        if ext not in ("xls", "xlsx", "csv"):
+            return None
+        # 流量类
+        if "无限店铺流量" in n or "流量报表" in n or "店铺流量" in n:
+            return os.path.join(base_dir, "无限店铺流量")
+        # 万象台 推广报表 子类（按文件名优先匹配最具体的）
+        if "人群推广商品报表" in n or "人群商品报表" in n:
+            return os.path.join(base_dir, "推广报表", "商品报表", "人群推广商品报表")
+        if "关键词商品报表" in n or "关键词推广商品报表" in n:
+            return os.path.join(base_dir, "推广报表", "商品报表", "关键词商品报表")
+        if "全部营销场景商品报表" in n or "全场景商品报表" in n:
+            return os.path.join(base_dir, "推广报表", "商品报表")
+        # 全营销场景报表（场景级日数据，老板要求的 ROI 口径权威源）
+        if "全营销场景报表" in n or "全部营销场景报表" in n or "全场景报表" in n:
+            return os.path.join(base_dir, "推广报表", "全营销场景报表")
+        if "人群报表" in n:
+            return os.path.join(base_dir, "推广报表", "人群报表")
+        if "关键词报表" in n:
+            return os.path.join(base_dir, "推广报表", "关键词报表")
+        if "内容报表" in n:
+            return os.path.join(base_dir, "推广报表", "内容报表")
+        if "创意报表" in n:
+            return os.path.join(base_dir, "推广报表", "创意报表")
+        # 通用商品报表（兜底）
+        if "推广" in n or "商品报表" in n:
+            return os.path.join(base_dir, "推广报表", "商品报表")
+        # 生意参谋（默认 xls 文件）
+        if ext in ("xls", "xlsx"):
+            return os.path.join(base_dir, "生意参谋商品")
+        # csv 默认放生意参谋
+        return os.path.join(base_dir, "生意参谋商品")
+
     for f in files:
         name = f.filename or "upload"
-        ext = name.rsplit(".", 1)[-1].lower()
-        if ext in ("xls", "xlsx"):
-            dest_dir = os.path.join(base_dir, "生意参谋商品")
-        elif ext == "csv":
-            # Detect: ad report vs store report
-            content_head = await f.read(512)
-            await f.seek(0)
-            if b"\xe8\x8a\xb1\xe8\xb4\xb9" in content_head or b"spend" in content_head.lower() or "推广" in name or "商品报表" in name:
-                dest_dir = os.path.join(base_dir, "推广报表", "商品报表")
-            else:
-                dest_dir = os.path.join(base_dir, "生意参谋商品")
-        else:
+        dest_dir = _route_file(name)
+        if not dest_dir:
             continue
         os.makedirs(dest_dir, exist_ok=True)
         dest_path = os.path.join(dest_dir, name)
         with open(dest_path, "wb") as out:
             shutil.copyfileobj(f.file, out)
-        saved.append(name)
+        saved.append({"name": name, "dest": dest_dir.replace(base_dir + os.sep, "")})
 
     if not saved:
         raise HTTPException(400, "未识别到有效文件（需要 .xls/.xlsx/.csv）")
@@ -2925,21 +2951,27 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
         result = r1  # 返回值兼容老下游
         if result.returncode != 0:
             raise HTTPException(500, f"ETL 失败：{result.stderr[-800:]}")
-        # Extract data_end from output
-        data_end = None
-        for line in result.stdout.splitlines():
-            if "data_end=" in line:
-                data_end = line.split("data_end=")[1].split()[0]
-                break
-        syzt = wxst = 0
-        for line in result.stdout.splitlines():
-            if "syzt=" in line:
-                try: syzt = int(line.split("syzt=")[1].split()[0])
-                except: pass
-            if "wxst=" in line:
-                try: wxst = int(line.split("wxst=")[1].split()[0])
-                except: pass
-        return {"ok": True, "saved_files": saved, "data_end": data_end, "syzt": syzt, "wxst": wxst, "log": result.stdout[-600:]}
+        # 从 etl_load.py 输出里抓行数（fact_syzt_product: N rows / fact_wxst_product: N rows / fact_traffic: N rows）
+        import re as _re
+        out = result.stdout or ""
+        def _pick(tbl):
+            m = _re.search(rf'fact_{tbl}\s*:\s*(\d+)\s*rows', out)
+            return int(m.group(1)) if m else 0
+        syzt = _pick('syzt_product')
+        wxst = _pick('wxst_product')
+        traffic = _pick('traffic')
+        audience = _pick('wxst_audience')
+        keyword = _pick('wxst_keyword')
+        # data_end 从 syzt 表最大日期取（近似）
+        m = _re.search(r'fact_syzt_product:.*?\n.*?data_end[=：]\s*(\d{4}-\d{2}-\d{2})', out, _re.S)
+        data_end = m.group(1) if m else None
+        return {
+            "ok": True, "saved_files": saved,
+            "data_end": data_end,
+            "syzt": syzt, "wxst": wxst,
+            "traffic": traffic, "audience": audience, "keyword": keyword,
+            "log": out[-1500:],
+        }
     except subprocess.TimeoutExpired:
         raise HTTPException(500, "ETL 超时（>120s）")
 

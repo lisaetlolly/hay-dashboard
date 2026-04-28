@@ -163,6 +163,48 @@ CREATE TABLE IF NOT EXISTS fact_wxst_keyword (
     UNIQUE(stat_date, keyword_name)
 );
 
+-- 6b. 万象台全营销场景报表（场景级日数据，用于"总投放 ROI 口径"对账）
+-- 这是老板要求的"投放花费"权威来源 = 万象台后台「全营销场景报表」每行 spend
+CREATE TABLE IF NOT EXISTS fact_wxst_scene (
+    id              SERIAL PRIMARY KEY,
+    stat_date       TEXT NOT NULL,
+    scene_id        TEXT NOT NULL,
+    scene_name      TEXT NOT NULL,
+    sub_scene_id    TEXT,
+    sub_scene_name  TEXT,
+    impressions     REAL,
+    clicks          REAL,
+    spend           REAL,
+    ctr             REAL,
+    avg_cpc         REAL,
+    cpm             REAL,
+    total_gmv       REAL,    -- 总成交金额 = 直接+间接
+    direct_gmv      REAL,
+    indirect_gmv    REAL,
+    total_orders    REAL,    -- 总成交笔数
+    direct_orders   REAL,
+    indirect_orders REAL,
+    click_cvr       REAL,    -- 点击转化率
+    roi             REAL,    -- 投入产出比
+    cart_cnt        REAL,    -- 总购物车数
+    cart_rate       REAL,
+    collect_item_cnt REAL,
+    collect_shop_cnt REAL,
+    total_collect_cart REAL,
+    placed_orders   REAL,    -- 拍下订单笔数（你之前说的 GMV 定义=下单金额可以用这个）
+    placed_amount   REAL,    -- 拍下订单金额
+    guided_visits   REAL,
+    guided_visitors REAL,
+    new_buyers      REAL,    -- 成交新客数
+    new_pct         REAL,    -- 成交新客占比
+    natural_gmv     REAL,
+    natural_impressions REAL,
+    source_file     TEXT,
+    loaded_at       TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(stat_date, scene_id, sub_scene_id)
+);
+CREATE INDEX IF NOT EXISTS idx_wxst_scene_date ON fact_wxst_scene(stat_date);
+
 -- 7. 无限店铺流量
 CREATE TABLE IF NOT EXISTS fact_traffic (
     id                SERIAL PRIMARY KEY,
