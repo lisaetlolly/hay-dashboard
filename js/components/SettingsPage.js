@@ -193,20 +193,21 @@ const SettingsPage = defineComponent({
       }
       await loadDbUsers()
     }
-    const togglePerm = async (u, code) => {
+    // 乐观更新 + 后台保存：点击立刻变，失败回滚。避免每次等 200ms 网络。
+    const togglePerm = (u, code) => {
       if (!can('permission.assign')) return alert('无权限分配权限')
       if ((u.permissions||[]).includes('*')) return alert('管理员拥有全部权限')
-      // 检查 X-Username 来源
-      let cur = null
-      try { cur = JSON.parse(localStorage.getItem('hay_current_user') || 'null') } catch {}
-      if (!cur || !cur.username) return alert('当前没登录身份，请到设置 → 当前角色选一个真实账号（如 admin）')
-
-      const s = new Set(u.permissions || [])
+      const before = [...(u.permissions || [])]
+      const s = new Set(before)
       s.has(code) ? s.delete(code) : s.add(code)
       const newPerms = [...s]
-      // 真账号（id 是数字字符串）→ 调 PATCH /api/users/{id}/permissions 落 DB
+      // 1) 立即 UI 更新
+      u.permissions = newPerms
+      persistAppState()
+      // 2) 后台调 API 保存。真账号才发请求；失败回滚 UI
       const isRealUser = u.id && /^\d+$/.test(u.id)
-      if (isRealUser) {
+      if (!isRealUser) return
+      ;(async () => {
         try {
           const res = await fetch(`/api/users/${u.id}/permissions`, {
             method: 'PATCH',
@@ -214,21 +215,17 @@ const SettingsPage = defineComponent({
             body: JSON.stringify({ permissions: newPerms }),
           })
           if (!res.ok) {
+            u.permissions = before  // 回滚
+            persistAppState()
             const err = await res.json().catch(()=>({detail:'保存失败'}))
-            return alert('保存失败：' + (err.detail || res.status))
+            alert('保存失败（已回滚）：' + (err.detail || res.status))
           }
-          // 立即用 API 返回的最新数据更新本地（防止其他逻辑覆盖）
-          const fresh = await res.json().catch(()=>null)
-          if (fresh && fresh.permissions) u.permissions = Array.isArray(fresh.permissions) ? fresh.permissions : newPerms
-          else u.permissions = newPerms
-          persistAppState()
         } catch (e) {
-          alert('保存失败：' + e.message)
+          u.permissions = before
+          persistAppState()
+          alert('保存失败（已回滚）：' + e.message)
         }
-      } else {
-        u.permissions = newPerms
-        persistAppState()
-      }
+      })()
     }
 
     // ── 指标 CRUD (Modal) ──────────────────────────────────────
