@@ -58,7 +58,7 @@ const AdsPage = defineComponent({
 
     const fmtMoney = v => v>=10000 ? '¥'+(v/10000).toFixed(1)+'万' : '¥'+Number(v).toFixed(0)
     const fmtDelta = v => v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + '%'
-    const statusColor = s=>s==='已完成'?'#16a34a':s==='进行中'?'#d97706':'#a1a1aa'
+    const statusColor = s=>s==='已完成'?'#16a34a':s==='进行中'?'#d97706':s==='未确认'?'#dc2626':'#a1a1aa'
     const imgSrc = pid => RAW.img_map?.[pid] || ''
 
     const productStats = computed(() => {
@@ -284,9 +284,10 @@ const AdsPage = defineComponent({
     })
     const openProductBatchTime = (item) => {
       if (!isAdmin.value) return alert('仅管理员可批量编辑')
-      const realTasks = (item.tasks || []).filter(t => !t.is_template)
-      if (!realTasks.length) return alert('该商品下没有真任务（占位行需先编辑落库）')
-      // 默认填**本周 Mon-Sun**（批量改时间多半是给本周用，跟 metrics 上周无关）
+      // 全部任务（含占位行 — 占位也是默认任务，应当能批量编辑；保存时若是占位会先 materialize）
+      const allTasks = item.tasks || []
+      if (!allTasks.length) return alert('该商品下没有任务')
+      // 默认填**本周 Mon-Sun**
       const [startMs, endMs] = currentWeekRange()
       const fmtIso = (ms) => {
         const d = new Date(ms)
@@ -294,9 +295,11 @@ const AdsPage = defineComponent({
       }
       productBatchTimeModal.value = {
         show: true, pid: item.pid, name: item.name,
-        tasks: realTasks.map(t => ({
+        tasks: allTasks.map(t => ({
           id: t.id, detail: t.detail, category: t.category, status: t.status,
-          picked: !isStatusDone(t.status),
+          template_id: t.template_id || null,
+          is_template: !!t.is_template,
+          picked: !isStatusDone(t.status),  // 已完成默认不勾，其他都勾
         })),
         start_date: fmtIso(startMs),
         end_date:   fmtIso(endMs),
@@ -326,13 +329,47 @@ const AdsPage = defineComponent({
         if (m.start_date) body.start_date = m.start_date
         if (m.end_date)   body.eta_date   = m.end_date
         if (m.newStatus)  body.status     = m.newStatus
+
+        // 把占位 task 拎出来一次性 bulk-instantiate（同 product，多 template_id）
+        const placeholderItems = picked.filter(t => t.is_template && t.template_id)
+        if (placeholderItems.length) {
+          const inst = await fetch('/api/tasks/bulk-instantiate', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              period_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
+              product_ids: [m.pid],
+              template_ids: placeholderItems.map(t => t.template_id),
+            }),
+          })
+          if (!inst.ok) {
+            const err = await inst.json().catch(()=>({detail:'落库失败'}))
+            throw new Error('占位 materialize 失败：' + (err.detail || ('HTTP ' + inst.status)))
+          }
+          await loadTasksWithMetrics()
+          // 重新查 picked 列表里占位行的 real_id
+          for (const item of placeholderItems) {
+            for (const g of apiTasksData.value.groups || []) {
+              if (g.product_id !== m.pid) continue
+              for (const t of (g.tasks || [])) {
+                if (t.template_id === item.template_id && !t.is_template) {
+                  item.id = t.id  // 替换成真实 id
+                  item.is_template = false
+                  break
+                }
+              }
+            }
+          }
+        }
+
+        // 现在所有 picked 都是真任务（id 是数字），逐个 PATCH
         for (const t of picked) {
+          if (typeof t.id !== 'number') continue  // 兜底：materialize 失败的跳过
           const r = await fetch(`/api/tasks/${t.id}`, {
             method:'PATCH', headers:{'Content-Type':'application/json'},
             body: JSON.stringify(body),
           })
           if (!r.ok) throw new Error('id=' + t.id + ' 改失败')
-          // 本地写值（状态切已完成时立即填 completed_at）
+          // 本地写值
           for (const g of apiTasksData.value.groups || []) {
             for (const tt of (g.tasks || [])) {
               if (tt.id === t.id) {
@@ -1072,7 +1109,7 @@ const AdsPage = defineComponent({
         for (const t of (g.tasks || [])) if (t.category) s.add(t.category)
       return [...s].sort()
     })
-    const statusOptions = ['待开始','进行中','已完成']
+    const statusOptions = ['待开始','进行中','已完成','未确认']
 
     // 主链官方 PID 列表 — 25 主链 + 4 扩展（Cotton Bag / Manolito / Paper Shade / PC Portable）= 29
     const OFFICIAL_25_PIDS = [
