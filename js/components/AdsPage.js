@@ -428,12 +428,9 @@ const AdsPage = defineComponent({
       for (const g of apiTasksData.value.groups || []) {
         if (g && g.product_id) apiByPid[g.product_id] = g
       }
-      // 强制用前端写死的 25 PID 作底，再叠加后端返回但不在 25 内的 PID（兼容 Cotton Bag 这种扩展商品）
-      const officialPids = OFFICIAL_25_PIDS
-      const allPids = [
-        ...officialPids,
-        ...Object.keys(apiByPid).filter(pid => !officialPids.includes(pid)),
-      ]
+      // 严格 25 个：只渲染 OFFICIAL_25_PIDS 里的 PID，后端返的扩展 PID（Cotton Bag /
+      // PC Portable / Paper Shade / Manolito 等）一律不进团队 tab
+      const allPids = [...OFFICIAL_25_PIDS]
       const mergedGroups = allPids.map(pid => apiByPid[pid] || {
         product_id: pid,
         product_name: RAW.short_names?.[pid] || pid,
