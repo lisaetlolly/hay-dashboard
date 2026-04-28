@@ -101,9 +101,7 @@ const AdsPage = defineComponent({
     const totalProductSpend = computed(() => catRows.value.reduce((a,b)=>a+b.spend,0))
     const totalProductSpendWan = computed(() => (totalProductSpend.value/10000).toFixed(1))
 
-    // ── 人群花费 ──
-    // 1) API 成功 → 用 fact_wxst_audience.spend 真实合计
-    // 2) API 失败 → 回退到 totalProductSpend × 历史比例
+    // ── 5 个场景花费（fact_wxst_scene 全口径，万象台后台权威源）──
     const audienceSpend = computed(() => {
       if (apiSpend.value && apiSpend.value.audience_spend != null) {
         return +Number(apiSpend.value.audience_spend).toFixed(2)
@@ -115,6 +113,14 @@ const AdsPage = defineComponent({
         return +Number(apiSpend.value.keyword_spend).toFixed(2)
       }
       return +(totalProductSpend.value * FALLBACK_KEYWORD_RATIO).toFixed(2)
+    })
+    const shopDirectSpend = computed(() => {
+      const v = apiSpend.value && apiSpend.value.shop_direct_spend
+      return v != null ? +Number(v).toFixed(2) : 0
+    })
+    const allSceneSpend = computed(() => {
+      const v = apiSpend.value && apiSpend.value.all_scene_spend
+      return v != null ? +Number(v).toFixed(2) : 0
     })
 
     // ── 短视频花费 ──
@@ -153,20 +159,29 @@ const AdsPage = defineComponent({
       return tags.join(' · ')
     })
 
+    // 总投放 = 5 个场景之和（人群+关键词+店铺直达+货品全站+短视频）
+    // 优先用后端 channel-split 的 total_scene_spend（fact_wxst_scene 全场景汇总，万象台后台「全营销场景报表」权威数）
     const totalPaidSpend = computed(() => {
+      if (apiSpend.value && apiSpend.value.total_scene_spend != null) {
+        return +Number(apiSpend.value.total_scene_spend).toFixed(2)
+      }
+      // fallback：手动加 5 个分量
       const a = +audienceSpend.value || 0
       const k = +keywordSpend.value || 0
       const v = +videoSpend.value || 0
-      const sum = a + k + v
-      // 数据自检：如果某个分量超过 sum，说明分量来源不一致（API 实时 vs RAW 快照混搭），
-      // 把日志打到 console 让你能 F12 看，但 UI 显示 max(sum, components) 避免视觉冲突
-      const maxComponent = Math.max(a, k, v)
-      if (maxComponent > sum + 0.01) {
-        console.warn('[AdsPage 总投放] 分量大于汇总：', { audience:a, keyword:k, video:v, sum, max: maxComponent })
-      }
-      return +Math.max(sum, maxComponent).toFixed(2)
+      const s = +shopDirectSpend.value || 0
+      const f = +allSceneSpend.value || 0
+      return +(a + k + s + f + v).toFixed(2)
     })
     const totalPaidSpendWan = computed(() => (totalPaidSpend.value/10000).toFixed(1))
+    // 商品推广合计（不含短视频，对应万象台后台的「商品推广」总数）
+    const productPromoSpend = computed(() => {
+      const a = +audienceSpend.value || 0
+      const k = +keywordSpend.value || 0
+      const s = +shopDirectSpend.value || 0
+      const f = +allSceneSpend.value || 0
+      return +(a + k + s + f).toFixed(2)
+    })
 
     const buildChannelItems = (total, channelKey) => {
       const base = productStats.value.slice(0,12)
@@ -664,6 +679,11 @@ const AdsPage = defineComponent({
         return
       }
       expandedTaskId.value = taskId
+      // 自动聚焦 textarea（用户展开后不用再点一下）
+      Vue.nextTick(() => {
+        const el = document.querySelector(`[data-comment-textarea="${taskId}"]`)
+        if (el) el.focus()
+      })
       if (!taskComments.value[taskId]) {
         try {
           const res = await fetch(`/api/tasks/${taskId}/comments`)
@@ -680,35 +700,55 @@ const AdsPage = defineComponent({
       }
     }
 
-    // 多图选择：累加到 images 数组
-    const onCommentImagePick = (taskId, event) => {
-      const files = Array.from(event.target.files || [])
+    // 多图：通用入口（支持 input picker / drag-drop / 粘贴板）
+    const _addImagesFromFiles = (taskId, fileList) => {
+      const files = Array.from(fileList || []).filter(f => f && f.type && f.type.startsWith('image/'))
       if (!files.length) return
       const cur = commentDraft.value[taskId] || { text: '', images: [], sending: false }
       const images = [...(cur.images || [])]
       let processed = 0
-      let oversized = []
+      const oversized = []
+      const finish = () => {
+        commentDraft.value[taskId] = { ...cur, images }
+        if (oversized.length) alert('以下图片过大（>1MB）已跳过：\n' + oversized.join('\n'))
+      }
       files.forEach(file => {
         if (file.size > 1000000) {
-          oversized.push(file.name)
+          oversized.push(file.name || '截图')
           processed++
-          if (processed === files.length && oversized.length)
-            alert('以下图片过大（>1MB）已跳过：\n' + oversized.join('\n'))
+          if (processed === files.length) finish()
           return
         }
         const reader = new FileReader()
         reader.onload = e => {
           images.push(e.target.result)
-          commentDraft.value[taskId] = { ...cur, images }
           processed++
-          if (processed === files.length && oversized.length) {
-            alert('以下图片过大（>1MB）已跳过：\n' + oversized.join('\n'))
-          }
+          if (processed === files.length) finish()
         }
         reader.readAsDataURL(file)
       })
-      // 清空 input 让用户能再次选同一文件
+    }
+    const onCommentImagePick = (taskId, event) => {
+      _addImagesFromFiles(taskId, event.target.files)
       if (event.target) event.target.value = ''
+    }
+    const onCommentDrop = (taskId, event) => {
+      _addImagesFromFiles(taskId, event.dataTransfer && event.dataTransfer.files)
+    }
+    const onCommentPaste = (taskId, event) => {
+      const items = event.clipboardData && event.clipboardData.items
+      if (!items) return
+      const files = []
+      for (const it of items) {
+        if (it.kind === 'file') {
+          const f = it.getAsFile()
+          if (f) files.push(f)
+        }
+      }
+      if (files.length) {
+        event.preventDefault()
+        _addImagesFromFiles(taskId, files)
+      }
     }
     const removeCommentImage = (taskId, idx) => {
       const cur = commentDraft.value[taskId]
@@ -919,7 +959,7 @@ const AdsPage = defineComponent({
       // 任务评论
       expandedTaskId, taskComments, commentDraft, previewImage,
       toggleTaskExpand, onCommentImagePick, sendComment, deleteComment, fmtCommentTime,
-      removeCommentImage,
+      removeCommentImage, onCommentDrop, onCommentPaste,
       // 权限 + 删除
       me, isAdmin, canDelete, canEditTask, deleteTaskRow,
       // Excel 式单元格编辑
@@ -956,13 +996,15 @@ const AdsPage = defineComponent({
   </div>
 
   <template v-if="activeTab==='delivery'">
-    <div class="kpi-grid" style="grid-template-columns:repeat(6,1fr)">
-      <div class="kpi-card"><div class="kpi-label">总投放<span class="info-btn">?<span class="tooltip">总投放 = 商品报表(人群+关键词) + 内容报表(短视频)。<br/>· 商品报表来源：fact_wxst_audience.spend + fact_wxst_keyword.spend，三方对账时和淘宝商家后台「万象台商品报表合计」对得上<br/>· 短视频来源：fact_wxst_content（光合、达人等内容投放），万象台后台是单独一个 tab，不在商品报表里<br/>· 如果你只想看「淘宝平台广告」口径，应该看「类目拆分额」（商品报表）；带短视频的应该看这个「总投放」</span></span></div><div class="kpi-value">¥{{ totalPaidSpendWan }}万</div><div class="kpi-footer"><span>商品报表 ¥{{ ((audienceSpend+keywordSpend)/10000).toFixed(1) }}万 ｜ 短视频 ¥{{ (videoSpend/10000).toFixed(1) }}万</span></div></div>
-      <div class="kpi-card"><div class="kpi-label">人群<span class="info-btn">?<span class="tooltip">万象台「人群推广」渠道花费，来源：fact_wxst_audience.spend SUM。计划侧重看品类拆分（家具63/配饰30/灯具5/其他2），不是看总占比。</span></span></div><div class="kpi-value">{{ fmtMoney(audienceSpend) }}</div><div class="kpi-footer"><span>{{ apiSpend ? '实时' : 'RAW快照' }}</span></div></div>
-      <div class="kpi-card"><div class="kpi-label">关键词<span class="info-btn">?<span class="tooltip">万象台「关键词推广」渠道花费，来源：fact_wxst_keyword.spend SUM。无品类计划要求。</span></span></div><div class="kpi-value">{{ fmtMoney(keywordSpend) }}</div><div class="kpi-footer"><span>{{ apiSpend ? '实时' : 'RAW快照' }}</span></div></div>
-      <div class="kpi-card"><div class="kpi-label">短视频<span class="info-btn">?<span class="tooltip">内容报表「短视频」类型花费，与搜推报表独立统计，不叠加在人群/关键词中。来源：推广报表→内容报表。</span></span></div><div class="kpi-value">{{ fmtMoney(videoSpend) }}</div><div class="kpi-footer"><span>内容报表口径</span></div></div>
-      <div class="kpi-card"><div class="kpi-label">类目拆分额<span class="info-btn">?<span class="tooltip">商品报表口径的各品类投放花费，直接来自商品级数据累加，不经渠道比例换算，用于类目计划 vs 实际对比。</span></span></div><div class="kpi-value">¥{{ totalProductSpendWan }}万</div><div class="kpi-footer"><span>商品报表口径</span></div></div>
-      <div class="kpi-card"><div class="kpi-label">推广 CTR<span class="info-btn">?<span class="tooltip">加权 CTR = SUM(点击量) ÷ SUM(展现量) × 100%。和万象台后台口径一致。<br/>之前用算术均值（每个商品 CTR 平均）会让小曝光商品权重虚高，已修复。</span></span></div><div class="kpi-value">{{ adsCtr != null ? adsCtr.toFixed(2)+'%' : '—' }}</div><div class="kpi-footer"><span>加权（点击/曝光）</span></div></div>
+    <!-- 第 1 行：总投放 + 商品推广（人群/关键词/店铺直达/货品全站） + 短视频 + CTR -->
+    <div class="kpi-grid" style="grid-template-columns:repeat(7,1fr)">
+      <div class="kpi-card"><div class="kpi-label">总投放<span class="info-btn">?<span class="tooltip">万象台「全营销场景报表」5 个场景合计：人群推广 + 关键词推广 + 店铺直达 + 货品全站推广 + 超级短视频。<br/>和万象台后台首页显示的「总投放」一致，老板钦定的口径。</span></span></div><div class="kpi-value">¥{{ totalPaidSpendWan }}万</div><div class="kpi-footer"><span>商品推广 ¥{{ (productPromoSpend/10000).toFixed(1) }}万 ｜ 短视频 ¥{{ (videoSpend/10000).toFixed(1) }}万</span></div></div>
+      <div class="kpi-card"><div class="kpi-label">人群<span class="info-btn">?<span class="tooltip">万象台「人群推广」场景花费。商品推广的最大头，按品类配比（家具63/配饰30/灯具5/其他2）。</span></span></div><div class="kpi-value">{{ fmtMoney(audienceSpend) }}</div><div class="kpi-footer"><span>{{ totalPaidSpend > 0 ? (audienceSpend/totalPaidSpend*100).toFixed(1)+'%' : '—' }} 占总投放</span></div></div>
+      <div class="kpi-card"><div class="kpi-label">关键词<span class="info-btn">?<span class="tooltip">万象台「关键词推广」场景花费。包含淘宝搜索关键词竞价和品牌词等。</span></span></div><div class="kpi-value">{{ fmtMoney(keywordSpend) }}</div><div class="kpi-footer"><span>{{ totalPaidSpend > 0 ? (keywordSpend/totalPaidSpend*100).toFixed(1)+'%' : '—' }} 占总投放</span></div></div>
+      <div class="kpi-card"><div class="kpi-label">店铺直达<span class="info-btn">?<span class="tooltip">万象台「店铺直达」场景花费。以引导用户到店铺主页为目的的展示位投放。</span></span></div><div class="kpi-value">{{ fmtMoney(shopDirectSpend) }}</div><div class="kpi-footer"><span>{{ totalPaidSpend > 0 ? (shopDirectSpend/totalPaidSpend*100).toFixed(1)+'%' : '—' }} 占总投放</span></div></div>
+      <div class="kpi-card"><div class="kpi-label">货品全站<span class="info-btn">?<span class="tooltip">万象台「货品全站推广」场景花费。系统智能投放，跨站位综合优化。</span></span></div><div class="kpi-value">{{ fmtMoney(allSceneSpend) }}</div><div class="kpi-footer"><span>{{ totalPaidSpend > 0 ? (allSceneSpend/totalPaidSpend*100).toFixed(1)+'%' : '—' }} 占总投放</span></div></div>
+      <div class="kpi-card"><div class="kpi-label">短视频<span class="info-btn">?<span class="tooltip">万象台「超级短视频」场景花费。内容投放，与商品推广独立。</span></span></div><div class="kpi-value">{{ fmtMoney(videoSpend) }}</div><div class="kpi-footer"><span>{{ totalPaidSpend > 0 ? (videoSpend/totalPaidSpend*100).toFixed(1)+'%' : '—' }} 占总投放</span></div></div>
+      <div class="kpi-card"><div class="kpi-label">推广 CTR<span class="info-btn">?<span class="tooltip">加权 CTR = SUM(点击量) ÷ SUM(展现量) × 100%。和万象台后台口径一致。</span></span></div><div class="kpi-value">{{ adsCtr != null ? adsCtr.toFixed(2)+'%' : '—' }}</div><div class="kpi-footer"><span>加权（点击/曝光）</span></div></div>
     </div>
 
     <div style="display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px">
@@ -1289,8 +1331,12 @@ const AdsPage = defineComponent({
                     style="font-size:10px;padding:3px 7px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626;flex-shrink:0">×</button>
                 </div>
               </div>
-              <!-- 展开的评论区 -->
-              <div v-if="expandedTaskId === task.id" style="padding:14px 16px;background:#fff7ed;border-bottom:1px solid var(--border)" @click.stop>
+              <!-- 展开的评论区（支持拖拽图片到任意位置）-->
+              <div v-if="expandedTaskId === task.id"
+                   style="padding:14px 16px;background:#fff7ed;border-bottom:1px solid var(--border)"
+                   @click.stop
+                   @dragover.prevent
+                   @drop.prevent="onCommentDrop(task.id, $event)">
                 <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
                   <div v-if="!(taskComments[task.id]||[]).length" style="font-size:11px;color:var(--muted);font-style:italic">还没有反馈，下面写一条</div>
                   <div v-for="c in (taskComments[task.id]||[])" :key="c.id"
@@ -1314,12 +1360,16 @@ const AdsPage = defineComponent({
                     </div>
                   </div>
                 </div>
-                <!-- 添加评论 -->
+                <!-- 添加评论：textarea 支持粘贴图（Cmd+V）；可拖拽到整个区域；可点 Cmd+Enter 发送 -->
                 <div style="display:flex;gap:8px;align-items:flex-start">
                   <textarea
+                    :data-comment-textarea="task.id"
                     :value="(commentDraft[task.id]||{}).text || ''"
                     @input="commentDraft[task.id] = {...(commentDraft[task.id]||{}), text: $event.target.value}"
-                    placeholder="写记录或反馈，可附图（可多张）..." rows="2"
+                    @paste="onCommentPaste(task.id, $event)"
+                    @keydown.meta.enter="sendComment(task.id)"
+                    @keydown.ctrl.enter="sendComment(task.id)"
+                    placeholder="写记录或反馈。可拖图、可粘贴截图（Cmd+V）、Cmd+Enter 发送" rows="2"
                     style="flex:1;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;resize:vertical;font-family:inherit"></textarea>
                   <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;align-items:stretch">
                     <label style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--muted);text-align:center">
