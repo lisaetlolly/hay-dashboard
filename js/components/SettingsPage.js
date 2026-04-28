@@ -38,6 +38,17 @@ const SettingsPage = defineComponent({
             const admin = dbUsers.value.find(u => u.username === 'admin') || dbUsers.value[0]
             if (admin) state.currentUserId = admin.id
           }
+          // 关键：同步写 localStorage('hay_current_user')，让 api.js 的 X-Username header 始终对得上
+          // 不然 toggle 权限会 401「未登录或缺少 X-Username header」
+          const cur = dbUsers.value.find(u => u.id === state.currentUserId)
+          if (cur && cur.username) {
+            try {
+              localStorage.setItem('hay_current_user', JSON.stringify({
+                id: cur.id, username: cur.username, display_name: cur.display_name,
+                role: cur.role, permissions: cur.permissions || [],
+              }))
+            } catch {}
+          }
           persistAppState()
         }
       } catch (e) { console.warn('[loadDbUsers]', e) }
@@ -66,17 +77,25 @@ const SettingsPage = defineComponent({
     const toggleExpand = id => { expandedUserId.value = expandedUserId.value === id ? '' : id }
     const setMe = id => {
       state.currentUserId = id
-      persistAppState()
-      // 强制提示一下，避免用户以为切换没生效
       const u = (state.users||[]).find(x => x.id === id)
+      // 关键：同步写到 localStorage('hay_current_user')，这样 api.js 的 X-Username header 也会跟着变
+      // 不然「测试角色切到 jas」但写操作还是用真账号身份，权限检查会错。
+      if (u && u.username) {
+        try {
+          localStorage.setItem('hay_current_user', JSON.stringify({
+            id: u.id, username: u.username, display_name: u.display_name,
+            role: u.role, permissions: u.permissions || [],
+          }))
+        } catch {}
+      }
+      persistAppState()
       if (u) {
-        // 用 Vue.nextTick 等下一个 tick，确保 me.computed 已经响应新值
         Vue.nextTick(() => {
           const tag = document.getElementById('role-switch-toast')
           if (tag) {
-            tag.textContent = `已切换到「${u.display_name}」(${u.role})`
+            tag.textContent = `已切换到「${u.display_name}」(${u.role}) — 接口写操作也按这个身份发送`
             tag.style.opacity = '1'
-            setTimeout(() => { tag.style.opacity = '0' }, 1800)
+            setTimeout(() => { tag.style.opacity = '0' }, 2400)
           }
         })
       }
@@ -177,6 +196,11 @@ const SettingsPage = defineComponent({
     const togglePerm = async (u, code) => {
       if (!can('permission.assign')) return alert('无权限分配权限')
       if ((u.permissions||[]).includes('*')) return alert('管理员拥有全部权限')
+      // 检查 X-Username 来源
+      let cur = null
+      try { cur = JSON.parse(localStorage.getItem('hay_current_user') || 'null') } catch {}
+      if (!cur || !cur.username) return alert('当前没登录身份，请到设置 → 当前角色选一个真实账号（如 admin）')
+
       const s = new Set(u.permissions || [])
       s.has(code) ? s.delete(code) : s.add(code)
       const newPerms = [...s]
@@ -193,13 +217,15 @@ const SettingsPage = defineComponent({
             const err = await res.json().catch(()=>({detail:'保存失败'}))
             return alert('保存失败：' + (err.detail || res.status))
           }
-          u.permissions = newPerms
+          // 立即用 API 返回的最新数据更新本地（防止其他逻辑覆盖）
+          const fresh = await res.json().catch(()=>null)
+          if (fresh && fresh.permissions) u.permissions = Array.isArray(fresh.permissions) ? fresh.permissions : newPerms
+          else u.permissions = newPerms
           persistAppState()
         } catch (e) {
           alert('保存失败：' + e.message)
         }
       } else {
-        // 旧 localStorage 账号（u_admin 等）—— 现在不应该再出现，但留个兼容
         u.permissions = newPerms
         persistAppState()
       }
@@ -442,6 +468,35 @@ const SettingsPage = defineComponent({
       state.actions = (state.actions||[]).filter(x => x.id !== a.id); persistAppState()
     }
 
+    // ── 数据异常检测：哪些日期缺数据 ──
+    const dataGaps = Vue.computed(() => {
+      const gaps = []
+      const start = RAW.data_start || '2026-04-01'
+      const end = RAW.data_end || new Date().toISOString().slice(0, 10)
+      // 生成预期日期范围
+      const expectedDates = []
+      const sd = new Date(start), ed = new Date(end)
+      for (let d = new Date(sd); d <= ed; d.setDate(d.getDate() + 1)) {
+        expectedDates.push(d.toISOString().slice(0, 10))
+      }
+      // 1) syzt：检查所有商品至少有 1 行数据 / 天
+      const syztDates = new Set((RAW.syzt || []).map(r => r.d))
+      for (const d of expectedDates) {
+        if (!syztDates.has(d)) gaps.push({ report: '生意参谋商品报表', date: d })
+      }
+      // 2) wxst：同上
+      const wxstDates = new Set((RAW.wxst || []).map(r => r.d))
+      for (const d of expectedDates) {
+        if (!wxstDates.has(d)) gaps.push({ report: '万象台商品报表', date: d })
+      }
+      // 3) 短视频：内容报表
+      const videoDates = new Set(Object.keys(RAW.video_daily || {}))
+      for (const d of expectedDates) {
+        if (!videoDates.has(d)) gaps.push({ report: '内容报表(短视频)', date: d })
+      }
+      return gaps.slice(0, 30)  // 最多展示 30 条
+    })
+
     // ── 手工数据录入 ─────────────────────────────────────────
     const manualInputPid = Vue.ref('')
     const manualInputDate = Vue.ref(new Date().toISOString().slice(0,10))
@@ -516,6 +571,7 @@ const SettingsPage = defineComponent({
       aiConfig, aiSavedAt, aiShowKey, saveAiConfig, resetAiConfig,
       allProductsForManage,productModal,openAddProduct,openEditProduct,saveProductModal,toggleHideProduct,deleteCustomProduct,
       manualInputPid,manualInputDate,manualInputFields,manualProductOptions,saveManualData,
+      dataGaps,
       productNameByPid: pid => RAW.products?.[pid]?.name || pid,
       ...(() => {
         // ── 数据底表导入 ──────────────────────────────────────
@@ -561,15 +617,11 @@ const SettingsPage = defineComponent({
       </select>
       <span style="font-size:11px;color:#16a34a;font-weight:600">当前：{{ me?.display_name }} · {{ me?.role }} · {{ (me?.permissions||[]).includes('*') ? '全部权限' : ((me?.permissions||[]).length + ' 项权限') }}</span>
       <span id="role-switch-toast" style="font-size:11px;background:#dcfce7;color:#166534;padding:4px 10px;border-radius:99px;opacity:0;transition:opacity 0.3s"></span>
-      <div style="display:flex;gap:8px;margin-left:auto">
-        <button @click="exportState" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer">导出配置 JSON</button>
-        <button @click="importState" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;cursor:pointer">导入配置 JSON</button>
-      </div>
     </div>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start">
-    <!-- 用户与权限 -->
+  <!-- 用户与权限 -->
+  <div>
     <div class="card" style="padding:16px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div><span class="card-title">用户权限管理</span><span class="card-sub">{{ users.length }} 个用户</span></div>
@@ -630,56 +682,6 @@ const SettingsPage = defineComponent({
       </div>
     </div>
 
-    <div style="display:flex;flex-direction:column;gap:16px">
-      <!-- 指标配置 -->
-      <div class="card" style="padding:16px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div><span class="card-title">指标配置</span><span class="card-sub">元数据登记表（key/label/口径说明）</span></div>
-          <button @click="openAddMetric" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">新增指标</button>
-        </div>
-        <div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px 10px;margin-bottom:10px;line-height:1.6">
-          ⚠️ <strong>当前是登记表</strong>：在这里加/删指标只改 metricRegistry（前端 localStorage），<strong>不影响</strong>总览/单品/投放面板上实际显示的指标——那些是在各页组件里硬编码的。
-          <br/>下版本接通：让这里的列表驱动各页面的指标卡片选择 + tooltip 来源。
-        </div>
-        <div style="display:flex;flex-direction:column;gap:8px;max-height:240px;overflow:auto">
-          <div v-for="m in (metrics || [])" :key="m.id" @click="openEditMetric(m)"
-            style="padding:10px;border:1px solid var(--border);border-radius:10px;background:#fafaf9;cursor:pointer;transition:border-color .15s"
-            :style="{'border-color':'var(--border)'}" @mouseenter="$event.currentTarget.style.borderColor='var(--accent)'" @mouseleave="$event.currentTarget.style.borderColor='var(--border)'">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px">
-              <div style="font-size:12px;font-weight:700">{{ m.label }}</div>
-              <div style="display:flex;gap:5px" @click.stop>
-                <button @click="deleteMetric(m)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">删除</button>
-              </div>
-            </div>
-            <div style="font-size:10px;color:var(--muted)">key: {{ m.key }} · 模块: {{ m.module }} · 单位: {{ m.unit }}</div>
-            <div v-if="m.note" style="font-size:10px;color:var(--muted)">{{ m.note }}</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 会议要点 CRUD -->
-      <div class="card" style="padding:16px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-          <div><span class="card-title">会议要点管理</span><span class="card-sub">{{ meetings.length }} 条</span></div>
-          <button @click="openAddMeeting" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">新增会议要点</button>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow:auto">
-          <div v-for="m in (meetings || [])" :key="m.id" @click="openEditMeeting(m)"
-            style="padding:10px;border:1px solid var(--border);border-radius:10px;background:#fafaf9;cursor:pointer">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px">
-              <div>
-                <div style="font-size:12px;font-weight:700">{{ m.title }}</div>
-                <div style="font-size:11px;color:var(--muted)">{{ m.meeting_date }} · {{ m.week_label }}</div>
-              </div>
-              <div style="display:flex;gap:5px;flex-shrink:0" @click.stop>
-                <button @click="deleteMeeting(m)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">删除</button>
-              </div>
-            </div>
-            <div style="font-size:11px;color:var(--muted);line-height:1.7">{{ m.content }}</div>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- 运营动作管理 -->
@@ -739,9 +741,22 @@ const SettingsPage = defineComponent({
     </div>
   </div>
 
-  <!-- 手工数据录入 -->
+  <!-- 数据异常 / 手工补录 -->
   <div class="card" style="padding:16px">
-    <div class="card-header" style="margin-bottom:12px"><span class="card-title">手工数据录入</span><span class="card-sub">补录缺失的每日数据</span></div>
+    <div class="card-header" style="margin-bottom:12px">
+      <span class="card-title">数据异常</span>
+      <span class="card-sub">下方提示有缺失的日期，可手动补录</span>
+    </div>
+    <!-- 缺失数据提示（自动检测）-->
+    <div v-if="dataGaps && dataGaps.length" style="margin-bottom:12px;padding:10px 12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:12px;line-height:1.7;color:#92400e">
+      ⚠️ 检测到以下日期数据缺失：
+      <div v-for="g in dataGaps" :key="g.report+'-'+g.date" style="margin-top:3px">
+        · <strong>{{ g.report }}</strong> 缺 <span style="font-weight:600">{{ g.date }}</span>
+      </div>
+    </div>
+    <div v-else style="margin-bottom:12px;padding:8px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;font-size:12px;color:#166534">
+      ✓ 当前周期数据完整，无缺失
+    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
       <div>
         <div style="font-size:12px;color:var(--muted);margin-bottom:4px">选择商品</div>

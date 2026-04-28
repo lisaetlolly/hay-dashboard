@@ -190,13 +190,18 @@ async function syncStateFromServer() {
     const initial = createInitialAppState()
     const serverTaskJson = JSON.stringify((state && state.tasksByPid) || {})
     const migrated = migrateState(state)
-    // 同 loadAppState：保留用户改过的权限/用户列表，server 没数据才退回默认
+    // users 不从 app-state JSON 读（那是旧 localStorage 备份），始终从 /api/users 拉真实账号。
+    // 这里保留当前 APP_STATE.value.users（SettingsPage loadDbUsers 已经设了），免被旧 state 覆盖。
+    const currentUsers = APP_STATE.value.users || []
     APP_STATE.value = {
       ...initial,
       ...migrated,
       permissionGroups: (migrated.permissionGroups && migrated.permissionGroups.length)
         ? migrated.permissionGroups : initial.permissionGroups,
-      users: (migrated.users && migrated.users.length) ? migrated.users : initial.users,
+      // 优先保留当前已加载的真账号；只有页面刚启动还没拉到时才退回 initial
+      users: (currentUsers.length && currentUsers.some(u => /^\d+$/.test(u.id || ''))) ? currentUsers
+           : (migrated.users && migrated.users.length) ? migrated.users
+           : initial.users,
     }
     writeStore(APP_STORAGE_KEY, APP_STATE.value)
     // 若迁移修复了任务数据，立即回写服务器，防止下次同步再覆盖
