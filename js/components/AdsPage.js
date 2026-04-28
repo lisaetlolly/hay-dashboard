@@ -655,7 +655,7 @@ const AdsPage = defineComponent({
     // ── 任务评论 / 反馈 ─────────────────────────────────────
     const expandedTaskId = ref(null)
     const taskComments = ref({})    // { task_id: [comments...] }
-    const commentDraft = ref({})    // { task_id: { text, image, sending } }
+    const commentDraft = ref({})    // { task_id: { text, images: [...], sending } }
     const previewImage = ref('')    // 点击放大显示
 
     const toggleTaskExpand = async (taskId) => {
@@ -671,35 +671,77 @@ const AdsPage = defineComponent({
         } catch { taskComments.value[taskId] = [] }
       }
       if (!commentDraft.value[taskId]) {
-        commentDraft.value[taskId] = { text: '', image: '', sending: false }
+        commentDraft.value[taskId] = { text: '', images: [], sending: false }
+      }
+      // 旧格式兼容：把 image 字段迁到 images 数组
+      const d = commentDraft.value[taskId]
+      if (d.image && (!d.images || !d.images.length)) {
+        commentDraft.value[taskId] = { ...d, images: [d.image], image: '' }
       }
     }
 
+    // 多图选择：累加到 images 数组
     const onCommentImagePick = (taskId, event) => {
-      const file = event.target.files?.[0]
-      if (!file) return
-      if (file.size > 1000000) { alert('图片过大（>1MB），请先压缩'); return }
-      const reader = new FileReader()
-      reader.onload = e => {
-        commentDraft.value[taskId] = { ...commentDraft.value[taskId], image: e.target.result }
-      }
-      reader.readAsDataURL(file)
+      const files = Array.from(event.target.files || [])
+      if (!files.length) return
+      const cur = commentDraft.value[taskId] || { text: '', images: [], sending: false }
+      const images = [...(cur.images || [])]
+      let processed = 0
+      let oversized = []
+      files.forEach(file => {
+        if (file.size > 1000000) {
+          oversized.push(file.name)
+          processed++
+          if (processed === files.length && oversized.length)
+            alert('以下图片过大（>1MB）已跳过：\n' + oversized.join('\n'))
+          return
+        }
+        const reader = new FileReader()
+        reader.onload = e => {
+          images.push(e.target.result)
+          commentDraft.value[taskId] = { ...cur, images }
+          processed++
+          if (processed === files.length && oversized.length) {
+            alert('以下图片过大（>1MB）已跳过：\n' + oversized.join('\n'))
+          }
+        }
+        reader.readAsDataURL(file)
+      })
+      // 清空 input 让用户能再次选同一文件
+      if (event.target) event.target.value = ''
+    }
+    const removeCommentImage = (taskId, idx) => {
+      const cur = commentDraft.value[taskId]
+      if (!cur || !cur.images) return
+      const images = [...cur.images]
+      images.splice(idx, 1)
+      commentDraft.value[taskId] = { ...cur, images }
     }
 
     const sendComment = async (taskId) => {
       const draft = commentDraft.value[taskId] || {}
-      if (!draft.text?.trim() && !draft.image) return
+      const imgs = draft.images || []
+      if (!draft.text?.trim() && !imgs.length) return
       commentDraft.value[taskId] = { ...draft, sending: true }
       try {
+        // 多张图：image_data 传 JSON 数组（后端兼容字符串/数组两种格式）
+        const body = {
+          content: draft.text,
+          // 单图：传字符串保持兼容；多图：传数组
+          image_data: imgs.length === 0 ? null
+                    : imgs.length === 1 ? imgs[0]
+                    : imgs,  // 数组
+          images: imgs,  // 显式数组字段，未来用
+        }
         const res = await fetch(`/api/tasks/${taskId}/comments`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ content: draft.text, image_data: draft.image })
+          body: JSON.stringify(body)
         })
         if (res.ok) {
           const c = await res.json()
           taskComments.value[taskId] = [...(taskComments.value[taskId]||[]), c]
-          commentDraft.value[taskId] = { text: '', image: '', sending: false }
+          commentDraft.value[taskId] = { text: '', images: [], sending: false }
         } else {
           const err = await res.json().catch(()=>({detail:'网络错误'}))
           alert('发送失败：' + (err.detail || res.status))
@@ -797,11 +839,42 @@ const AdsPage = defineComponent({
     })
 
     // 新建周期 modal
-    const periodModal = ref({ show:false, start_date:'', end_date:'', set_current:true, saving:false })
+    // 周期编辑：modal 既能新建也能改老周期
+    const periodModal = ref({ show:false, mode:'add', id:null, start_date:'', end_date:'', set_current:true, saving:false })
+    const openPeriodEdit = () => {
+      if (!isAdmin.value) return alert('需要管理员权限')
+      const cur = apiTaskPeriods.value.find(p => p.label === selectedPeriod.value)
+        || apiTaskPeriods.value.find(p => p.is_current)
+        || apiTaskPeriods.value[0]
+      if (!cur) return alert('当前无周期可编辑，先新建一个')
+      Object.assign(periodModal.value, {
+        show: true, mode: 'edit', id: cur.id,
+        start_date: cur.start_date, end_date: cur.end_date,
+        set_current: !!cur.is_current, saving: false,
+      })
+    }
+    const deleteCurrentPeriod = async () => {
+      if (!isAdmin.value) return alert('需要管理员权限')
+      const cur = apiTaskPeriods.value.find(p => p.label === selectedPeriod.value)
+      if (!cur) return alert('请在下拉里选一个周期再删')
+      if (!confirm(`确认删除周期「${cur.label}」？该周期下所有任务也会被删除！`)) return
+      try {
+        const res = await fetch(`/api/task-periods/${cur.id}`, { method:'DELETE' })
+        if (!res.ok) {
+          const err = await res.json().catch(()=>({detail:'删除失败'}))
+          throw new Error(err.detail || ('HTTP ' + res.status))
+        }
+        const data = await res.json()
+        alert(`已删除周期 ${data.deleted_label}（连带 ${data.deleted_tasks} 条任务）`)
+        await loadTaskPeriods()
+        selectedPeriod.value = ''
+        await loadTasksWithMetrics()
+      } catch (e) { alert('删除失败：' + e.message) }
+    }
     const openPeriodModal = () => {
       if (!isAdmin.value && !myPerms.value.includes('task.create')) return alert('需要管理员权限新建周期')
       const today = new Date().toISOString().slice(0,10)
-      Object.assign(periodModal.value, { show:true, start_date: today, end_date: today, set_current:true, saving:false })
+      Object.assign(periodModal.value, { show:true, mode:'add', id:null, start_date: today, end_date: today, set_current:true, saving:false })
     }
     const closePeriodModal = () => { periodModal.value.show = false }
     const savePeriod = async () => {
@@ -810,22 +883,24 @@ const AdsPage = defineComponent({
       if (m.end_date < m.start_date) return alert('结束日期不能早于开始日期')
       m.saving = true
       try {
-        const res = await fetch('/api/task-periods', {
-          method:'POST', headers:{'Content-Type':'application/json'},
+        const isEdit = m.mode === 'edit' && m.id
+        const url = isEdit ? `/api/task-periods/${m.id}` : '/api/task-periods'
+        const method = isEdit ? 'PATCH' : 'POST'
+        const res = await fetch(url, {
+          method, headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ start_date: m.start_date, end_date: m.end_date, set_current: m.set_current }),
         })
         if (!res.ok) {
-          const err = await res.json().catch(()=>({detail:'创建失败'}))
+          const err = await res.json().catch(()=>({detail:'保存失败'}))
           throw new Error(err.detail || ('HTTP ' + res.status))
         }
-        const created = await res.json()
-        // 刷新周期列表 + 切到新周期
+        const data = await res.json()
         await loadTaskPeriods()
-        selectedPeriod.value = created.label || ''
+        selectedPeriod.value = data.label || ''
         await loadTasksWithMetrics()
         closePeriodModal()
       } catch (err) {
-        alert('创建失败：' + err.message)
+        alert('保存失败：' + err.message)
         m.saving = false
       }
     }
@@ -844,6 +919,7 @@ const AdsPage = defineComponent({
       // 任务评论
       expandedTaskId, taskComments, commentDraft, previewImage,
       toggleTaskExpand, onCommentImagePick, sendComment, deleteComment, fmtCommentTime,
+      removeCommentImage,
       // 权限 + 删除
       me, isAdmin, canDelete, canEditTask, deleteTaskRow,
       // Excel 式单元格编辑
@@ -852,6 +928,7 @@ const AdsPage = defineComponent({
       // 新增任务 + 周期 modal
       newTaskModal, openNewTask, closeNewTask, saveNewTask,
       periodModal, openPeriodModal, closePeriodModal, savePeriod,
+      openPeriodEdit, deleteCurrentPeriod, apiTaskPeriods,
     }
   },
   template: `
@@ -1060,6 +1137,10 @@ const AdsPage = defineComponent({
               </select>
               <button v-if="isAdmin" @click="openPeriodModal" title="新建任务周期"
                 style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;font-weight:600">+ 新周期</button>
+              <button v-if="isAdmin && selectedPeriod" @click="openPeriodEdit" title="改当前选中周期的起止日期"
+                style="border:1px solid var(--border);background:#fff;color:var(--muted);border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer">改</button>
+              <button v-if="isAdmin && selectedPeriod" @click="deleteCurrentPeriod" title="删除当前选中周期（连任务一起删）"
+                style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer">删</button>
             </div>
             <span style="font-size:11px;color:var(--muted)">
               当期：{{ activePeriodRange || '—' }}　·　对比上期：{{ prevPeriodLabel }} ({{ prevPeriodRange || '—' }})
@@ -1223,10 +1304,14 @@ const AdsPage = defineComponent({
                           style="font-size:10px;color:#dc2626;background:none;border:none;cursor:pointer;padding:0">删除</button>
                       </div>
                       <div v-if="c.content" style="font-size:12px;color:var(--text);line-height:1.5;white-space:pre-wrap;word-break:break-word">{{ c.content }}</div>
+                      <!-- 多图缩略（兼容旧 image_data 单字符串 + 新 images 数组）-->
+                      <div v-if="(c.images && c.images.length) || (c.image_data && (Array.isArray(c.image_data) ? c.image_data.length : true))"
+                           style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">
+                        <img v-for="(im, ii) in (c.images || (Array.isArray(c.image_data) ? c.image_data : [c.image_data]))" :key="ii"
+                             :src="im" @click="previewImage=im"
+                             style="width:60px;height:60px;object-fit:cover;border-radius:6px;cursor:zoom-in;border:1px solid var(--border)">
+                      </div>
                     </div>
-                    <!-- 图片缩略：60x60 -->
-                    <img v-if="c.image_data" :src="c.image_data" @click="previewImage=c.image_data"
-                      style="width:60px;height:60px;object-fit:cover;border-radius:6px;cursor:zoom-in;border:1px solid var(--border);flex-shrink:0">
                   </div>
                 </div>
                 <!-- 添加评论 -->
@@ -1234,12 +1319,12 @@ const AdsPage = defineComponent({
                   <textarea
                     :value="(commentDraft[task.id]||{}).text || ''"
                     @input="commentDraft[task.id] = {...(commentDraft[task.id]||{}), text: $event.target.value}"
-                    placeholder="写记录或反馈，可附图..." rows="2"
+                    placeholder="写记录或反馈，可附图（可多张）..." rows="2"
                     style="flex:1;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;resize:vertical;font-family:inherit"></textarea>
                   <div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;align-items:stretch">
                     <label style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;color:var(--muted);text-align:center">
-                      📷 选图
-                      <input type="file" accept="image/*" @change="onCommentImagePick(task.id, $event)" style="display:none">
+                      📷 选图（多张）
+                      <input type="file" accept="image/*" multiple @change="onCommentImagePick(task.id, $event)" style="display:none">
                     </label>
                     <button @click="sendComment(task.id)" :disabled="(commentDraft[task.id]||{}).sending"
                       style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:4px 14px;font-size:11px;cursor:pointer;font-weight:600;white-space:nowrap">
@@ -1247,11 +1332,13 @@ const AdsPage = defineComponent({
                     </button>
                   </div>
                 </div>
-                <!-- 图片预览 -->
-                <div v-if="(commentDraft[task.id]||{}).image" style="margin-top:8px;display:flex;align-items:center;gap:6px">
-                  <img :src="(commentDraft[task.id]||{}).image" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border)">
-                  <button @click="commentDraft[task.id] = {...(commentDraft[task.id]||{}), image:''}"
-                    style="font-size:10px;color:#dc2626;background:none;border:none;cursor:pointer">移除</button>
+                <!-- 多图预览 -->
+                <div v-if="((commentDraft[task.id]||{}).images || []).length" style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px">
+                  <div v-for="(img, idx) in (commentDraft[task.id]||{}).images" :key="idx" style="position:relative">
+                    <img :src="img" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border);display:block">
+                    <button @click="removeCommentImage(task.id, idx)"
+                      style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;border:1px solid #fecaca;background:#fff;color:#dc2626;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
+                  </div>
                 </div>
               </div>
               </template>
@@ -1319,7 +1406,7 @@ const AdsPage = defineComponent({
   <div v-if="periodModal.show" @click.self="closePeriodModal"
     style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
     <div style="width:380px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
-      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新建任务周期</div>
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">{{ periodModal.mode === 'edit' ? '修改任务周期' : '新建任务周期' }}</div>
       <div style="display:flex;flex-direction:column;gap:10px">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div>

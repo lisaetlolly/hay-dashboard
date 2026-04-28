@@ -6,7 +6,7 @@ HAY 电商数据看板 — API 服务（连接 Neon PostgreSQL）
 import hashlib
 import os
 from contextlib import contextmanager
-from typing import Optional
+from typing import Optional, Any
 from datetime import date
 
 import psycopg2
@@ -794,13 +794,45 @@ def get_channel_split(
     end: str = Query(default=None),
 ):
     """
-    人群 vs 关键词 渠道花费比例（实时计算）。
-    数据源：fact_wxst_audience.spend  +  fact_wxst_keyword.spend
-    注意：这里返回的是**实际花费**比例，没有"计划值"概念。
-         真正的"计划"是按品类（家具/配饰/灯具/其他）拆，见 /api/settings/audience-plan
+    渠道花费按场景拆分（实时计算）。
+    优先级：fact_wxst_scene（万象台后台「全营销场景报表」权威源，老板钦定）→ 没数据时回退到 fact_wxst_audience+keyword
     """
     s, e = start or CAMPAIGN_START, end or date.today().isoformat()
     with db() as conn:
+        # 优先用全营销场景报表（万象台后台口径，含店铺直达/货品全站等）
+        scene_rows = []
+        try:
+            scene_rows = rows(conn, """
+                SELECT scene_name, COALESCE(SUM(spend), 0) AS s
+                FROM fact_wxst_scene
+                WHERE stat_date BETWEEN %s AND %s
+                GROUP BY scene_name
+            """, (s, e))
+        except Exception:
+            scene_rows = []
+        scene_map = {r["scene_name"]: float(r["s"] or 0) for r in scene_rows}
+        if scene_map:
+            a = scene_map.get("人群推广", 0) + scene_map.get("精准人群推广", 0)
+            k = scene_map.get("关键词推广", 0)
+            v = scene_map.get("超级短视频", 0)
+            shop = scene_map.get("店铺直达", 0)
+            allscene = scene_map.get("货品全站推广", 0)
+            total_all = sum(scene_map.values())
+            return {
+                "period":         {"start": s, "end": e},
+                "source":         "fact_wxst_scene",
+                "audience_spend": round(a, 2),
+                "keyword_spend":  round(k, 2),
+                "video_spend":    round(v, 2),
+                "shop_direct_spend":   round(shop, 2),
+                "all_scene_spend":     round(allscene, 2),
+                "total_scene_spend":   round(total_all, 2),
+                "by_scene":            {n: round(v, 2) for n, v in scene_map.items()},
+                "total":          round(a + k, 2),  # 兼容老前端
+                "audience_pct":   round(a / (a + k) * 100, 1) if (a + k) > 0 else None,
+                "keyword_pct":    round(k / (a + k) * 100, 1) if (a + k) > 0 else None,
+            }
+        # fallback: 老 audience+keyword 表
         aud = row(conn, """
             SELECT COALESCE(SUM(spend), 0) AS s
             FROM fact_wxst_audience
@@ -816,6 +848,7 @@ def get_channel_split(
         total = a + k
         return {
             "period":         {"start": s, "end": e},
+            "source":         "fact_wxst_audience+keyword",
             "audience_spend": round(a, 2),
             "keyword_spend":  round(k, 2),
             "total":          round(total, 2),
@@ -1056,18 +1089,31 @@ _ensure_task_comment_table()
 @app.get("/api/tasks/{task_id}/comments")
 def list_task_comments(task_id: int):
     with db() as conn:
-        return rows(conn, """
-            SELECT id, task_id, author_username, author_name, content, image_data,
-                   created_at, updated_at
-            FROM task_comment
-            WHERE task_id = %s
-            ORDER BY created_at ASC
-        """, (task_id,))
+        try:
+            return rows(conn, """
+                SELECT id, task_id, author_username, author_name, content,
+                       image_data, images,
+                       created_at, updated_at
+                FROM task_comment
+                WHERE task_id = %s
+                ORDER BY created_at ASC
+            """, (task_id,))
+        except Exception:
+            # images 列还没建（老 DB），降级
+            return rows(conn, """
+                SELECT id, task_id, author_username, author_name, content, image_data,
+                       created_at, updated_at
+                FROM task_comment
+                WHERE task_id = %s
+                ORDER BY created_at ASC
+            """, (task_id,))
 
 
 class CommentCreate(BaseModel):
     content: Optional[str] = None
-    image_data: Optional[str] = None
+    # 兼容三种：单图 base64 字符串、多图字符串数组、新字段 images
+    image_data: Optional[Any] = None
+    images: Optional[list] = None
 
 
 @app.post("/api/tasks/{task_id}/comments", status_code=201)
@@ -1075,18 +1121,39 @@ def create_task_comment(task_id: int, body: CommentCreate,
                          user: Optional[dict] = Depends(get_current_user)):
     if not user:
         raise HTTPException(401, "未登录")
-    if not body.content and not body.image_data:
+    # 统一收集图片到一个 list
+    imgs = []
+    if body.images and isinstance(body.images, list):
+        imgs = [x for x in body.images if isinstance(x, str)]
+    elif isinstance(body.image_data, list):
+        imgs = [x for x in body.image_data if isinstance(x, str)]
+    elif isinstance(body.image_data, str):
+        imgs = [body.image_data]
+    if not body.content and not imgs:
         raise HTTPException(400, "评论内容和图片至少有一项")
-    # 限制图片大小（base64 ~1.4MB 起为约束 1MB 原始）
-    if body.image_data and len(body.image_data) > 1500000:
-        raise HTTPException(400, "图片过大（>1MB），请压缩后再上传")
+    # 单张图大小限制
+    for i, im in enumerate(imgs):
+        if len(im) > 1500000:
+            raise HTTPException(400, f"第 {i+1} 张图过大（>1MB）")
+    # 总大小限制 10MB
+    if sum(len(im) for im in imgs) > 10 * 1500000:
+        raise HTTPException(400, "图片总量过大（>10MB）")
+    # DB image_data 列存第一张（兼容旧前端）；images 列存全部 jsonb 数组
+    import json as _json
+    image_data_col = imgs[0] if imgs else None
+    images_col = _json.dumps(imgs) if imgs else None
     with db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # 自动加 images 列（如果还没有）
+        try:
+            cur.execute("ALTER TABLE task_comment ADD COLUMN IF NOT EXISTS images JSONB")
+        except Exception:
+            pass
         cur.execute("""
-            INSERT INTO task_comment (task_id, author_username, author_name, content, image_data)
-            VALUES (%s, %s, %s, %s, %s) RETURNING *
+            INSERT INTO task_comment (task_id, author_username, author_name, content, image_data, images)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb) RETURNING *
         """, (task_id, user.get("username") or "", user.get("display_name") or "",
-              body.content or "", body.image_data or None))
+              body.content or "", image_data_col, images_col))
         out = dict(cur.fetchone())
         conn.commit()
         return out
@@ -1457,6 +1524,62 @@ def create_task_period(body: TaskPeriodCreate):
         out = dict(cur.fetchone())
         conn.commit()
         return out
+
+
+class TaskPeriodUpdate(BaseModel):
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    set_current: Optional[bool] = None
+
+
+@app.patch("/api/task-periods/{period_id}")
+def update_task_period(period_id: int, body: TaskPeriodUpdate):
+    """改周期日期。如果起止日期变了，label 也跟着改成新格式 'YYYY-MM-DD~YYYY-MM-DD'，
+    并把 tasks 表里所有引用旧 label 的也一起改名（保持任务关联）。"""
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        existing = row(conn, "SELECT * FROM task_period WHERE id = %s", (period_id,))
+        if not existing:
+            raise HTTPException(404, "周期不存在")
+        new_start = body.start_date or str(existing["start_date"])
+        new_end   = body.end_date   or str(existing["end_date"])
+        new_label = f"{new_start}~{new_end}"
+        old_label = existing["label"]
+
+        if body.set_current is True:
+            cur.execute("UPDATE task_period SET is_current = FALSE")
+
+        cur.execute("""
+            UPDATE task_period
+            SET label = %s, start_date = %s::date, end_date = %s::date,
+                is_current = COALESCE(%s, is_current)
+            WHERE id = %s
+            RETURNING id, label, start_date::text AS start_date,
+                      end_date::text AS end_date, is_current
+        """, (new_label, new_start, new_end, body.set_current, period_id))
+        out = dict(cur.fetchone())
+
+        # 改名后同步 tasks 表里的 time_range_label
+        if old_label != new_label:
+            cur.execute("UPDATE tasks SET time_range_label = %s WHERE time_range_label = %s",
+                        (new_label, old_label))
+        conn.commit()
+        return out
+
+
+@app.delete("/api/task-periods/{period_id}")
+def delete_task_period(period_id: int):
+    """删周期。同时删除该周期下所有任务（避免孤立任务）。"""
+    with db() as conn:
+        cur = conn.cursor()
+        existing = row(conn, "SELECT label FROM task_period WHERE id = %s", (period_id,))
+        if not existing:
+            raise HTTPException(404, "周期不存在")
+        cur.execute("DELETE FROM tasks WHERE time_range_label = %s", (existing["label"],))
+        deleted_tasks = cur.rowcount
+        cur.execute("DELETE FROM task_period WHERE id = %s", (period_id,))
+        conn.commit()
+        return {"ok": True, "deleted_tasks": deleted_tasks, "deleted_label": existing["label"]}
 
 
 # ── 任务批量操作（一键生成本周 / 一键克隆上周） ──
