@@ -1610,8 +1610,10 @@ const AdsPage = defineComponent({
     //
     // 改状态 / 补录历史数据 不会变红（created_at 不变）
     // 只有管理员"+ 新增任务"填了自定义名称 才会打红点
-    const TEMPLATE_KEY = (cat, det) =>
-      String(cat||'').trim() + '||' + String(det||'').trim()
+    // 匹配 key：去掉中英文括号里的补充说明（如"迭代初版详情页（需确认是否做拆分）"→"迭代初版详情页"）
+    // 这样标准任务的变体（同主名 + 备注后缀）也算标准，不会误打红点
+    const _stripParens = (s) => String(s||'').replace(/[（(][^)）]*[)）]/g, '').trim()
+    const TEMPLATE_KEY = (cat, det) => _stripParens(cat) + '||' + _stripParens(det)
     const standardTaskKeys = computed(() => {
       const set = new Set()
       for (const t of (taskTemplates.value || [])) set.add(TEMPLATE_KEY(t.category, t.detail))
