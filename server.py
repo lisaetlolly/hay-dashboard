@@ -1270,19 +1270,24 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
         prev_period = {"label": _label(prev_mon, prev_sun), "start_date": prev_mon.isoformat(), "end_date": prev_sun.isoformat()}
         view_all = True  # 永远返回所有任务，前端按 25 PID 渲染
 
-        # 3. 任务列表 — 永远返回全部任务（不过滤 period）
+        # 3. 任务列表 — 全部任务，但同 (product_id, category, detail) 只保留最新一条
+        # （避免同一个任务在不同 period 多次发布产生的重复行）
+        # DISTINCT ON 取每组的"最新"：先按 updated_at DESC，再按 id DESC 兜底
         tasks = rows(conn, """
-            SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
+            SELECT DISTINCT ON (t.product_id, t.category, t.detail)
+                   t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
                    t.category, t.time_range_label, t.execution_note,
                    COALESCE(t.note_images, '[]'::jsonb) AS note_images,
                    t.template_id,
                    t.created_at::text         AS created_at,
                    t.start_date::text         AS start_date,
                    t.eta_date::text           AS eta_date,
-                   t.completed_at::text       AS completed_at
+                   t.completed_at::text       AS completed_at,
+                   t.updated_at::text         AS updated_at
             FROM tasks t
             WHERE t.product_id IS NOT NULL
-            ORDER BY t.product_id, t.id
+            ORDER BY t.product_id, t.category, t.detail,
+                     t.updated_at DESC NULLS LAST, t.id DESC
         """)
 
         # 4a. 25 个主链官方 PID — 硬编码，和前端 RAW.official_pids 完全一致。
