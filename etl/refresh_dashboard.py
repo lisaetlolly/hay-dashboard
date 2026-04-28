@@ -46,7 +46,12 @@ def _extract_top_object(s):
             if depth == 0:
                 return s[:i+1]
     raise ValueError('unterminated JSON object')
-raw_json_str = _extract_top_object(html[start:].lstrip())
+# lstrip 可能跳过了若干空白,记录实际 JSON 起点 offset,后面写回时用
+_after_start  = html[start:]
+_lstrip_count = len(_after_start) - len(_after_start.lstrip())
+json_start    = start + _lstrip_count
+raw_json_str  = _extract_top_object(_after_start.lstrip())
+json_end      = json_start + len(raw_json_str)
 raw   = json.loads(raw_json_str)
 
 product_ids  = set(raw.get('cat_map', {}).keys()) | set(raw.get('products', {}).keys())
@@ -350,8 +355,12 @@ raw['traffic']         = sorted(traffic_rows,  key=lambda x: (x['d'], x['l1'], x
 raw['data_end']        = all_dates[-1] if all_dates else raw.get('data_end')
 raw['loaded_at']       = datetime.now().strftime('%m-%d %H:%M')
 
-new_raw = 'const RAW = ' + json.dumps(raw, ensure_ascii=False) + '\n\n'
-html = html[:start] + new_raw + html[end:]
+# 只替换 JSON 字面量本体(从 `{` 到匹配的 `}`),保持前后 const RAW = 与后续代码不动
+new_json = json.dumps(raw, ensure_ascii=False)
+html = html[:json_start] + new_json + html[json_end:]
+# 简单备份,避免半成品覆盖
+backup = html_path.with_suffix(html_path.suffix + '.bak')
+backup.write_bytes(html_path.read_bytes())
 html_path.write_text(html, encoding='utf-8')
 print(f'[完成] data_end={raw["data_end"]}  loaded_at={raw["loaded_at"]}')
 print(f'       syzt={len(raw["syzt"])} wxst={len(raw["wxst"])} products={len(raw["products"])}')

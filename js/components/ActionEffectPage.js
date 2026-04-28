@@ -36,12 +36,16 @@ const ActionEffectPage = defineComponent({
         const vis = idx>=0?(p.vis?.[idx]||0):null, cart = idx>=0?(p.cart?.[idx]||0):null
         const pay = idx>=0?(p.pay?.[idx]||0):null
         const spend = idx>=0?(p.spend?.[idx]||0):null
+        // 转化率分子 = 支付买家数(优先 pay_buyers,缺则 new+old);避免和加购率混
+        const payBuyers = idx>=0
+          ? (p.pay_buyers?.[idx] ?? ((p.new_buyers?.[idx]||0)+(p.old_buyers?.[idx]||0)))
+          : null
         return { offset, date:ds,
           pay,
           vis,   cart,
           collect: idx>=0?((p.collect?.[idx]||0)+(p.cart?.[idx]||0)):null,
           cart_rate: vis!=null&&vis>0?(cart/vis*100):null,
-          conv_rate: vis!=null&&vis>0&&pay!=null&&pay>0?(cart/vis*100):null,
+          conv_rate: vis!=null&&vis>0&&payBuyers!=null?(payBuyers/vis*100):null,
           ad_roi: spend!=null&&spend>0&&pay!=null?(pay/spend):null,
           new_buyers: idx>=0?(p.new_buyers?.[idx]||0):null,
           pv: idx>=0?(p.pv?.[idx]??null):null,

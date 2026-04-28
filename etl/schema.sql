@@ -160,7 +160,10 @@ CREATE TABLE IF NOT EXISTS fact_wxst_keyword (
     natural_impressions   REAL,
     source_file           TEXT,
     loaded_at             TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(stat_date, keyword_name)
+    -- 4 维去重 key：同一关键词可在「关键词推广」「精准词包」「自定义词包」多场景同时投放
+    -- 之前用 (stat_date, keyword_name) 让多场景行被吞,4 月漏 24K(68%)。详见 数据口径核对清单 §2
+    -- ETL 写空字符串 ''（不写 NULL）保证去重在 keyword_id/scene_name 缺失时仍生效
+    CONSTRAINT fact_wxst_keyword_uniq_v2 UNIQUE (stat_date, keyword_id, scene_name, keyword_name)
 );
 
 -- 6b. 万象台全营销场景报表（场景级日数据，用于"总投放 ROI 口径"对账）
@@ -358,5 +361,12 @@ CREATE INDEX IF NOT EXISTS idx_tr_date      ON fact_traffic(stat_date);
 CREATE INDEX IF NOT EXISTS idx_paid_date    ON fact_paid_promo(stat_date);
 CREATE INDEX IF NOT EXISTS idx_xhs_time     ON fact_xhs_note(publish_time);
 CREATE INDEX IF NOT EXISTS idx_product_spu  ON dim_product(spu_id);
-CREATE INDEX IF NOT EXISTS idx_rq_date  ON fact_wxst_rq_product(stat_date);
-CREATE INDEX IF NOT EXISTS idx_kw_date  ON fact_wxst_kw_product(stat_date);
+CREATE INDEX IF NOT EXISTS idx_rq_product_date  ON fact_wxst_rq_product(stat_date);
+CREATE INDEX IF NOT EXISTS idx_rq_product_pid   ON fact_wxst_rq_product(product_id);
+-- 注意:之前这里也叫 idx_kw_date 与 line 359 重名,Postgres 索引名全库唯一会建表失败
+CREATE INDEX IF NOT EXISTS idx_kw_product_date  ON fact_wxst_kw_product(stat_date);
+CREATE INDEX IF NOT EXISTS idx_kw_product_pid   ON fact_wxst_kw_product(product_id);
+-- 流量按一级来源筛常用,加索引(P3#88)
+CREATE INDEX IF NOT EXISTS idx_tr_src1   ON fact_traffic(source_l1);
+-- fact_paid_promo 按 product_id 查也需索引
+CREATE INDEX IF NOT EXISTS idx_paid_pid  ON fact_paid_promo(product_id);

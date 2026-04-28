@@ -135,18 +135,39 @@ def spu_id(pid):
 def get_conn():
     return psycopg2.connect(NEON_DSN)
 
+# --reset 白名单:只允许 TRUNCATE 这些事实表,严禁 DROP 业务表(dim_product/users/tasks/...)
+# 历史教训:之前 --reset 把 dim_product 也 DROP,bootstrap_recovery.sql 手补的 4 个商品被冲,
+# 加上 users / tasks / task_template / task_period / category_audience_plan 不在 schema.sql 里,
+# 一旦执行就业务数据全断。详见 修改计划.md P0#19。
+RESETTABLE_TABLES = (
+    'fact_xhs_note_product', 'fact_xhs_note',
+    'fact_paid_promo', 'fact_traffic',
+    'fact_wxst_kw_product', 'fact_wxst_rq_product',
+    'fact_wxst_content', 'fact_wxst_scene',
+    'fact_wxst_keyword', 'fact_wxst_audience', 'fact_wxst_product',
+    'fact_syzt_product',
+)
+# 严禁出现在白名单里的表(出现即抛错,作为代码守卫)
+PROTECTED_TABLES = ('dim_product', 'users', 'tasks', 'task_template',
+                    'task_period', 'task_comment', 'category_audience_plan',
+                    'meeting_notes', 'app_state')
+
 def init_db(conn, reset=False):
     cur = conn.cursor()
     if reset:
-        print("  [RESET] 删除所有数据表...")
-        cur.execute("""
-            DROP TABLE IF EXISTS
-                fact_xhs_note_product, fact_xhs_note,
-                fact_paid_promo, fact_traffic,
-                fact_wxst_keyword, fact_wxst_audience, fact_wxst_product,
-                fact_syzt_product, dim_date, dim_product
-            CASCADE
-        """)
+        # 守卫:确保白名单里没误加业务表
+        bad = set(RESETTABLE_TABLES) & set(PROTECTED_TABLES)
+        assert not bad, f"RESETTABLE_TABLES 不允许包含业务表: {bad}"
+        print(f"  [RESET] 仅 TRUNCATE 事实表({len(RESETTABLE_TABLES)} 张),保留 dim_product/users/tasks 等业务表")
+        # 用 TRUNCATE 而不是 DROP:保留表结构与外键约束,只清行
+        # 不存在的表 TRUNCATE 会报错,所以包在 to_regclass 检查里
+        for tbl in RESETTABLE_TABLES:
+            cur.execute("SELECT to_regclass(%s)", (tbl,))
+            if cur.fetchone()[0] is not None:
+                cur.execute(f"TRUNCATE TABLE {tbl} RESTART IDENTITY CASCADE")
+                print(f"    [RESET] truncated {tbl}")
+            else:
+                print(f"    [RESET] {tbl} 不存在,跳过")
         conn.commit()
     with open(SCHEMA, 'r', encoding='utf-8') as f:
         sql = f.read()
@@ -373,6 +394,7 @@ def load_syzt_product(conn):
     total = 0
     loaded = _loaded_files(conn, 'fact_syzt_product')
     skipped_files = 0
+    # DO UPDATE 而非 DO NOTHING:平台经常补昨天数据,新值需覆盖旧值。修改计划 P0#20
     sql = """
         INSERT INTO fact_syzt_product (
             stat_date, product_id,
@@ -385,7 +407,20 @@ def load_syzt_product(conn):
             search_pay_cvr, search_visitors, search_pay_buyers,
             source_file
         ) VALUES %s
-        ON CONFLICT(stat_date, product_id) DO NOTHING
+        ON CONFLICT(stat_date, product_id) DO UPDATE SET
+            visitors=EXCLUDED.visitors, page_views=EXCLUDED.page_views,
+            avg_stay_duration=EXCLUDED.avg_stay_duration, bounce_rate=EXCLUDED.bounce_rate,
+            collect_users=EXCLUDED.collect_users, cart_qty=EXCLUDED.cart_qty, cart_users=EXCLUDED.cart_users,
+            order_buyers=EXCLUDED.order_buyers, order_qty=EXCLUDED.order_qty,
+            order_amount=EXCLUDED.order_amount, order_cvr=EXCLUDED.order_cvr,
+            pay_amount=EXCLUDED.pay_amount, pay_cvr=EXCLUDED.pay_cvr,
+            pay_new_buyers=EXCLUDED.pay_new_buyers, pay_old_buyers=EXCLUDED.pay_old_buyers,
+            old_buyer_pay_amount=EXCLUDED.old_buyer_pay_amount, visitor_avg_value=EXCLUDED.visitor_avg_value,
+            refund_amount=EXCLUDED.refund_amount, year_cum_pay=EXCLUDED.year_cum_pay,
+            month_cum_pay=EXCLUDED.month_cum_pay, month_cum_qty=EXCLUDED.month_cum_qty,
+            search_pay_cvr=EXCLUDED.search_pay_cvr, search_visitors=EXCLUDED.search_visitors,
+            search_pay_buyers=EXCLUDED.search_pay_buyers,
+            source_file=EXCLUDED.source_file
     """
     print(f"  生意参谋商品：{len(files)} 个 xls 文件（增量模式：已入库的跳过）")
     for fi, fpath in enumerate(files, 1):
@@ -475,7 +510,19 @@ def load_wxst_product(conn):
             guided_visits, avg_visit_pages, transaction_buyers, new_buyers,
             natural_gmv, natural_impressions, source_file
         ) VALUES %s
-        ON CONFLICT(stat_date, product_id) DO NOTHING
+        ON CONFLICT(stat_date, product_id) DO UPDATE SET
+            product_name=EXCLUDED.product_name,
+            impressions=EXCLUDED.impressions, clicks=EXCLUDED.clicks, spend=EXCLUDED.spend,
+            ctr=EXCLUDED.ctr, avg_cpc=EXCLUDED.avg_cpc, cpm=EXCLUDED.cpm,
+            total_gmv=EXCLUDED.total_gmv, direct_gmv=EXCLUDED.direct_gmv, indirect_gmv=EXCLUDED.indirect_gmv,
+            click_cvr=EXCLUDED.click_cvr, roi=EXCLUDED.roi,
+            cart_rate=EXCLUDED.cart_rate, cart_cnt=EXCLUDED.cart_cnt,
+            collect_item_cnt=EXCLUDED.collect_item_cnt, collect_shop_cnt=EXCLUDED.collect_shop_cnt,
+            total_collect_cart=EXCLUDED.total_collect_cart, item_collect_cart=EXCLUDED.item_collect_cart,
+            guided_visits=EXCLUDED.guided_visits, avg_visit_pages=EXCLUDED.avg_visit_pages,
+            transaction_buyers=EXCLUDED.transaction_buyers, new_buyers=EXCLUDED.new_buyers,
+            natural_gmv=EXCLUDED.natural_gmv, natural_impressions=EXCLUDED.natural_impressions,
+            source_file=EXCLUDED.source_file
     """
     seen = set()
     total = 0
@@ -552,7 +599,19 @@ def load_wxst_audience(conn):
             guided_visits, avg_visit_pages, new_buyers,
             natural_gmv, natural_impressions, source_file
         ) VALUES %s
-        ON CONFLICT(stat_date, audience_name) DO NOTHING
+        ON CONFLICT(stat_date, audience_name) DO UPDATE SET
+            product_name=EXCLUDED.product_name,
+            impressions=EXCLUDED.impressions, clicks=EXCLUDED.clicks, spend=EXCLUDED.spend,
+            ctr=EXCLUDED.ctr, avg_cpc=EXCLUDED.avg_cpc, cpm=EXCLUDED.cpm,
+            total_gmv=EXCLUDED.total_gmv, direct_gmv=EXCLUDED.direct_gmv, indirect_gmv=EXCLUDED.indirect_gmv,
+            click_cvr=EXCLUDED.click_cvr, roi=EXCLUDED.roi,
+            cart_rate=EXCLUDED.cart_rate, cart_cnt=EXCLUDED.cart_cnt,
+            collect_item_cnt=EXCLUDED.collect_item_cnt, collect_shop_cnt=EXCLUDED.collect_shop_cnt,
+            total_collect_cart=EXCLUDED.total_collect_cart, item_collect_cart=EXCLUDED.item_collect_cart,
+            guided_visits=EXCLUDED.guided_visits, avg_visit_pages=EXCLUDED.avg_visit_pages,
+            new_buyers=EXCLUDED.new_buyers,
+            natural_gmv=EXCLUDED.natural_gmv, natural_impressions=EXCLUDED.natural_impressions,
+            source_file=EXCLUDED.source_file
     """
     seen = set()
     total = 0
@@ -640,7 +699,19 @@ def load_wxst_keyword(conn):
             guided_visits, avg_visit_pages, new_buyers,
             natural_gmv, natural_impressions, source_file
         ) VALUES %s
-        ON CONFLICT (stat_date, keyword_id, scene_name, keyword_name) DO NOTHING
+        ON CONFLICT (stat_date, keyword_id, scene_name, keyword_name) DO UPDATE SET
+            keyword_type=EXCLUDED.keyword_type, product_name=EXCLUDED.product_name,
+            impressions=EXCLUDED.impressions, clicks=EXCLUDED.clicks, spend=EXCLUDED.spend,
+            ctr=EXCLUDED.ctr, avg_cpc=EXCLUDED.avg_cpc, cpm=EXCLUDED.cpm,
+            total_gmv=EXCLUDED.total_gmv, direct_gmv=EXCLUDED.direct_gmv, indirect_gmv=EXCLUDED.indirect_gmv,
+            click_cvr=EXCLUDED.click_cvr, roi=EXCLUDED.roi,
+            cart_rate=EXCLUDED.cart_rate, cart_cnt=EXCLUDED.cart_cnt,
+            collect_item_cnt=EXCLUDED.collect_item_cnt, collect_shop_cnt=EXCLUDED.collect_shop_cnt,
+            total_collect_cart=EXCLUDED.total_collect_cart, item_collect_cart=EXCLUDED.item_collect_cart,
+            guided_visits=EXCLUDED.guided_visits, avg_visit_pages=EXCLUDED.avg_visit_pages,
+            new_buyers=EXCLUDED.new_buyers,
+            natural_gmv=EXCLUDED.natural_gmv, natural_impressions=EXCLUDED.natural_impressions,
+            source_file=EXCLUDED.source_file
     """
     seen = set()
     total = 0
@@ -725,7 +796,17 @@ def load_wxst_content(conn):
             guided_visits, new_buyers, transaction_buyers,
             source_file
         ) VALUES %s
-        ON CONFLICT(stat_date, content_id, content_type) DO NOTHING
+        ON CONFLICT(stat_date, content_id, content_type) DO UPDATE SET
+            content_name=EXCLUDED.content_name,
+            impressions=EXCLUDED.impressions, clicks=EXCLUDED.clicks, spend=EXCLUDED.spend,
+            ctr=EXCLUDED.ctr, avg_cpc=EXCLUDED.avg_cpc, cpm=EXCLUDED.cpm,
+            total_gmv=EXCLUDED.total_gmv, direct_gmv=EXCLUDED.direct_gmv, indirect_gmv=EXCLUDED.indirect_gmv,
+            click_cvr=EXCLUDED.click_cvr, roi=EXCLUDED.roi,
+            cart_rate=EXCLUDED.cart_rate, cart_cnt=EXCLUDED.cart_cnt,
+            collect_item_cnt=EXCLUDED.collect_item_cnt, total_collect_cart=EXCLUDED.total_collect_cart,
+            guided_visits=EXCLUDED.guided_visits,
+            new_buyers=EXCLUDED.new_buyers, transaction_buyers=EXCLUDED.transaction_buyers,
+            source_file=EXCLUDED.source_file
     """
     for fpath in sorted(matches):
         fname = os.path.basename(fpath)
@@ -879,7 +960,12 @@ def load_traffic(conn):
             stat_date, source_l1, source_l2, source_l3, source_l4,
             visitors, pay_buyers, collect_buyers, cart_users, source_file
         ) VALUES %s
-        ON CONFLICT(stat_date, source_l1, source_l2, source_l3, source_l4) DO NOTHING
+        ON CONFLICT(stat_date, source_l1, source_l2, source_l3, source_l4) DO UPDATE SET
+            visitors=EXCLUDED.visitors,
+            pay_buyers=EXCLUDED.pay_buyers,
+            collect_buyers=EXCLUDED.collect_buyers,
+            cart_users=EXCLUDED.cart_users,
+            source_file=EXCLUDED.source_file
     """
     print(f"  无限店铺流量：开始处理 {len(files)} 个 xls 文件")
     for fi, fpath in enumerate(files, 1):

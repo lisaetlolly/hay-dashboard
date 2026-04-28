@@ -138,10 +138,11 @@ INSERT INTO users (username, password_hash, display_name, role, permissions) VAL
     ('doudou',   '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '豆豆（设计）',   'member', '["task.view_all","task.edit_own","task.view_own","action.view","meeting.view","metric.view","product.view","event.create"]'::jsonb),
     ('liuting',  '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', '刘婷（商品）',   'member', '["task.view_all","task.edit_own","task.view_own","action.view","meeting.view","metric.view","product.view","event.create"]'::jsonb),
     ('hay',      '84d3457b1b68ed4ca4afec84db7c6dd6e78a16487ffdf687a70e14f87e96a1f9', 'HAY（客户只读）','viewer', '["task.view_all","action.view","meeting.view","metric.view","product.view"]'::jsonb)
-ON CONFLICT (username) DO UPDATE SET
-    display_name = EXCLUDED.display_name,
-    role         = EXCLUDED.role,
-    permissions  = EXCLUDED.permissions;
+-- 改动:DO NOTHING 而非 DO UPDATE。原因:运营在 GUI 修改的 role/permissions/display_name
+-- 之前会被店长每次重跑 bootstrap 时回滚到模板默认值(改动记录第 30 项类似事故)。
+-- 后续若需要批量更新 display_name 等字段,请走专门的迁移脚本而不是 bootstrap_recovery。
+-- 修改计划 P0#21
+ON CONFLICT (username) DO NOTHING;
 
 
 -- ════════════════════════════════════════════════════════════════
@@ -230,6 +231,12 @@ ON CONFLICT (label) DO UPDATE SET
 -- 当只有一个周期 is_current=TRUE，确保唯一
 UPDATE task_period SET is_current = FALSE
  WHERE label != '2026-04-27~2026-04-30';
+
+-- 部分唯一索引:从数据库层面强制 is_current=TRUE 的行最多一条。
+-- 此索引保证:任何并发或人为 UPDATE 把多个周期同时置 TRUE 时,DB 直接拒绝,避免日历选错周。
+-- 修改计划 P0#22
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_task_period_current
+  ON task_period (is_current) WHERE is_current = TRUE;
 
 
 -- ════════════════════════════════════════════════════════════════
