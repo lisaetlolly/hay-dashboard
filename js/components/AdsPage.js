@@ -361,28 +361,31 @@ const AdsPage = defineComponent({
           }
         }
 
-        // 现在所有 picked 都是真任务（id 是数字），逐个 PATCH
-        for (const t of picked) {
-          if (typeof t.id !== 'number') continue  // 兜底：materialize 失败的跳过
-          const r = await fetch(`/api/tasks/${t.id}`, {
+        // 所有 picked 现在都是真任务（id 是数字），并发 PATCH（Promise.all）
+        const realPicked = picked.filter(t => typeof t.id === 'number')
+        const results = await Promise.all(realPicked.map(t =>
+          fetch(`/api/tasks/${t.id}`, {
             method:'PATCH', headers:{'Content-Type':'application/json'},
             body: JSON.stringify(body),
-          })
-          if (!r.ok) throw new Error('id=' + t.id + ' 改失败')
-          // 本地写值
-          for (const g of apiTasksData.value.groups || []) {
-            for (const tt of (g.tasks || [])) {
-              if (tt.id === t.id) {
-                if (m.start_date) tt.start_date = m.start_date
-                if (m.end_date)   tt.eta_date   = m.end_date
-                if (m.newStatus) {
-                  tt.status = m.newStatus
-                  if (['done','已完成','完成'].includes(m.newStatus)) {
-                    tt.completed_at = tt.completed_at || new Date().toISOString()
-                  } else {
-                    tt.completed_at = null
-                  }
-                }
+          }).then(r => ({ ok: r.ok, id: t.id }))
+        ))
+        const fails = results.filter(r => !r.ok)
+        if (fails.length) {
+          alert('部分失败 (' + fails.length + '/' + realPicked.length + ')；其余已保存')
+        }
+        // 本地写值（成功的）
+        const succeededIds = new Set(results.filter(r => r.ok).map(r => r.id))
+        for (const g of apiTasksData.value.groups || []) {
+          for (const tt of (g.tasks || [])) {
+            if (!succeededIds.has(tt.id)) continue
+            if (m.start_date) tt.start_date = m.start_date
+            if (m.end_date)   tt.eta_date   = m.end_date
+            if (m.newStatus) {
+              tt.status = m.newStatus
+              if (['done','已完成','完成'].includes(m.newStatus)) {
+                tt.completed_at = tt.completed_at || new Date().toISOString()
+              } else {
+                tt.completed_at = null
               }
             }
           }
@@ -964,21 +967,21 @@ const AdsPage = defineComponent({
         const body = {}
         if (m.start_date) body.start_date = m.start_date
         if (m.end_date) body.eta_date = m.end_date
-        // 一条一条 PATCH（后端 bulk-update 不接 start/eta_date）
-        for (const id of ids) {
-          const r = await fetch(`/api/tasks/${id}`, {
+        // 并发 PATCH（不再串行）
+        const results = await Promise.all(ids.map(id =>
+          fetch(`/api/tasks/${id}`, {
             method:'PATCH', headers:{'Content-Type':'application/json'},
             body: JSON.stringify(body),
-          })
-          if (!r.ok) throw new Error('id=' + id + ' 改失败')
-          // 本地写值
-          for (const g of apiTasksData.value.groups || []) {
-            for (const t of g.tasks || []) {
-              if (t.id === id) {
-                if (m.start_date) t.start_date = m.start_date
-                if (m.end_date) t.eta_date = m.end_date
-              }
-            }
+          }).then(r => ({ ok: r.ok, id }))
+        ))
+        const fails = results.filter(r => !r.ok)
+        if (fails.length) alert('部分失败 (' + fails.length + '/' + ids.length + ')')
+        const okIds = new Set(results.filter(r => r.ok).map(r => r.id))
+        for (const g of apiTasksData.value.groups || []) {
+          for (const t of g.tasks || []) {
+            if (!okIds.has(t.id)) continue
+            if (m.start_date) t.start_date = m.start_date
+            if (m.end_date) t.eta_date = m.end_date
           }
         }
         clearBatchSelect()
@@ -2082,7 +2085,7 @@ const AdsPage = defineComponent({
       taskMetricDefs, fmtMetric, fmtDiffPct, diffCls,
       activePeriodRange, prevPeriodLabel, prevPeriodRange,
       isViewingCurrentWeek, toggleCurrentWeek,
-      activePeriodRaw, lastWeekRefLabel,
+      activePeriodRaw,
       // 任务评论
       expandedTaskId, taskComments, commentDraft, previewImage,
       toggleTaskExpand, onCommentImagePick, sendComment, deleteComment, fmtCommentTime,
