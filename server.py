@@ -2098,6 +2098,34 @@ def bulk_delete_tasks(body: TasksBulkDelete,
         return {"deleted": affected}
 
 
+class HideTemplateBody(BaseModel):
+    product_id: str
+    category: str = ""
+    detail: str = ""
+
+
+@app.post("/api/tasks/hide-template")
+def hide_template_for_product(body: HideTemplateBody, _user=Depends(require_permission('task.delete'))):
+    """占位行删除：(pid, cat, detail) 写入 task_hidden 表，前端不再补占位。"""
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS task_hidden (
+              product_id TEXT NOT NULL,
+              category   TEXT NOT NULL DEFAULT '',
+              detail     TEXT NOT NULL DEFAULT '',
+              hidden_at  TIMESTAMPTZ DEFAULT now(),
+              PRIMARY KEY (product_id, category, detail)
+            )
+        """)
+        cur.execute("""
+            INSERT INTO task_hidden (product_id, category, detail)
+            VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
+        """, (body.product_id, body.category, body.detail))
+        conn.commit()
+        return {"ok": True}
+
+
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int, _user=Depends(require_permission('task.delete'))):
     """

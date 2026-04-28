@@ -1186,37 +1186,11 @@ const AdsPage = defineComponent({
           if (t.note === undefined) t.note = t.execution_note || ''
           return t
         })
-        // 占位行规则：
-        // - 永远补齐标准 9 项任务（按 cat+detail 比对真任务，缺的用占位）
-        // - task_hidden 里被删过的 (cat, detail) 跳过，不再补
-        // - 真任务里的"自定义任务"（不在标准 9 项）也显示，跟占位一起
-        let placeholderTasks = []
-        if (!filterMode) {
-          const hiddenSet = new Set(
-            (apiTasksData.value.hidden || [])
-              .filter(h => h.product_id === g.product_id)
-              .map(h => (h.category||'').trim() + '||' + (h.detail||'').trim())
-          )
-          // 真任务已占用的 (cat, detail) — 跳过这些占位
-          const usedKeys = new Set(realTasks.map(t =>
-            (t.category||'').trim() + '||' + (t.detail||'').trim()
-          ))
-          placeholderTasks = templates.filter(tpl => {
-            const k = (tpl.category||'').trim() + '||' + (tpl.detail||'').trim()
-            return !hiddenSet.has(k) && !usedKeys.has(k)
-          }).map(tpl => ({
-            id: 'tmpl_' + tpl.id + '_' + g.product_id,
-            template_id: tpl.id,
-            detail: tpl.detail,
-            owner: tpl.default_owner || '',
-            category: tpl.category || '',
-            status: '待开始',
-            note: '',
-            execution_note: '',
-            created_at: null, start_date: null, eta_date: null, completed_at: null,
-            is_template: true,
-          }))
-        }
+        // 占位行规则（终版 — 极简）：
+        // DB 里有几条就显示几条，没有"假任务"。前端不再生成占位行。
+        // 默认 9 任务由 SQL migration 一次性写进 DB（所有 25 主链商品都有 9 条）。
+        // admin 想删随便删，删完就少一条；想加用 + 新增任务。
+        const placeholderTasks = []
         // 真实任务排序：未完成在前 + eta 越近越靠前 + created 越近越靠前
         const STATUS_RANK = { '进行中':0, '待开始':1, '已完成':3 }  // 越小越靠前
         const sortKey = (t) => {
@@ -1413,12 +1387,42 @@ const AdsPage = defineComponent({
       if (!canDelete.value) return alert('无删除权限')
       if (!confirm(`确认删除「${task.detail}」？`)) return
       try {
+        // 占位行：没真实 id，直接写 task_hidden（不再补占位）
+        if (task.is_template || (typeof task.id === 'string' && String(task.id).startsWith('tmpl_'))) {
+          // 反查 pid
+          let pid = null
+          if (typeof task.id === 'string') {
+            const parts = String(task.id).split('_')
+            pid = parts[parts.length-1]
+          }
+          if (!pid) {
+            for (const grp of taskGroups.value) {
+              if (grp.tasks.some(t => t.id === task.id)) { pid = grp.pid; break }
+            }
+          }
+          if (!pid) throw new Error('占位定位失败')
+          const r = await fetch('/api/tasks/hide-template', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ product_id: pid, category: task.category || '', detail: task.detail || '' }),
+          })
+          if (!r.ok) {
+            const err = await r.json().catch(()=>({detail:'隐藏失败'}))
+            throw new Error(err.detail || ('HTTP ' + r.status))
+          }
+          // 本地的 hidden 列表也加上 + 从 groups 里剔除该占位
+          apiTasksData.value.hidden = apiTasksData.value.hidden || []
+          apiTasksData.value.hidden.push({ product_id: pid, category: task.category || '', detail: task.detail || '' })
+          for (const g of apiTasksData.value.groups || []) {
+            if (g.product_id === pid) g.tasks = (g.tasks || []).filter(t => t.id !== task.id)
+          }
+          return
+        }
+        // 真任务：DELETE
         const res = await fetch(`/api/tasks/${task.id}`, { method:'DELETE' })
         if (!res.ok) {
           const err = await res.json().catch(()=>({detail:'删除失败'}))
           throw new Error(err.detail || ('HTTP ' + res.status))
         }
-        // 本地剔除
         for (const g of apiTasksData.value.groups || []) {
           g.tasks = (g.tasks || []).filter(t => t.id !== task.id)
         }
@@ -1919,13 +1923,14 @@ const AdsPage = defineComponent({
       }
       return '—'
     }
-    // 截止日期是否落在**本周（ISO 当周 Mon-Sun）**内 — 任务紧迫度看本周，不看上周（metrics 参考期）
+    // 截止日期是否落在"当前展示周期"（即上周 4.20-26）内 → 橙色高亮
+    // 注：当前展示周期 = apiTasksData.value.period（后端合成的 Mon-Sun 上周）
     const etaInCurrentWeek = (task) => {
       if (!task || !task.eta_date) return false
-      const eta = new Date(String(task.eta_date).slice(0,10) + 'T12:00:00').getTime()
-      if (isNaN(eta)) return false
-      const [a, b] = currentWeekRange()  // 本周 Mon 0:00 ~ 本周 Sun 23:59
-      return eta >= a && eta <= b
+      const p = apiTasksData.value.period
+      if (!p || !p.start_date || !p.end_date) return false
+      const eta = String(task.eta_date).slice(0, 10)
+      return eta >= p.start_date && eta <= p.end_date
     }
     // 周期开始 / 结束日期（用于待开始/进行中时间列兜底显示 "4.27-4.30" 这种）
     const periodStartDateDisplay = computed(() => {
@@ -2513,7 +2518,7 @@ const AdsPage = defineComponent({
                   </div>
                   <button @click.stop="toggleTaskExpand(task.id)" :title="'评论 (' + (taskComments[task.id]||[]).length + ')'"
                     style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted);flex-shrink:0">💬{{ (taskComments[task.id]||[]).length }}</button>
-                  <button v-if="canDelete && !task.is_template" @click.stop="deleteTaskRow(task)" title="删除"
+                  <button v-if="canDelete" @click.stop="deleteTaskRow(task)" title="删除"
                     style="font-size:10px;padding:3px 7px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626;flex-shrink:0">×</button>
                 </div>
               </div>
