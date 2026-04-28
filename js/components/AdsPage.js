@@ -268,39 +268,11 @@ const AdsPage = defineComponent({
     // ── 任务面板：从 Neon 拉真实任务（含周期 + 当期/上期 metrics）──
     const apiTasksData = ref({ groups: [], period: null, prev_period: null, task_templates: [] })
     const apiTaskPeriods = ref([])
-    const selectedPeriod = ref('')
-
-    // 周一-周日为一周。
-    // 运营约定：每周看的都是上周一到上周日的复盘数据。
-    const pickDefaultPeriodLabel = (periods) => {
-      if (!periods || !periods.length) return ''
-      const now = new Date()
-      // 回退 7 天 → 落到上一周
-      const target = new Date(now)
-      target.setDate(now.getDate() - 7)
-      const ts = target.toISOString().slice(0,10)
-      // 1. 找包含上周某天的周期
-      let hit = periods.find(p => p.start_date <= ts && ts <= p.end_date)
-      if (hit) return hit.label
-      // 2. 找 is_current 的上一个（按 start_date 排序后取倒数第二）
-      const sortedAsc = [...periods].sort((a,b)=> (a.start_date||'').localeCompare(b.start_date||''))
-      const curIdx = sortedAsc.findIndex(p => p.is_current)
-      if (curIdx > 0) return sortedAsc[curIdx-1].label
-      if (curIdx === 0 || sortedAsc.length >= 2) return sortedAsc[Math.max(0, sortedAsc.length-2)].label
-      // 3. 兜底：start_date 最大的
-      return sortedAsc[sortedAsc.length-1].label
-    }
-
-    const loadTaskPeriods = async () => {
-      try {
-        const res = await fetch('/api/task-periods')
-        if (res.ok) apiTaskPeriods.value = await res.json()
-      } catch {}
-      // ⚠ selectedPeriod 永远空 = 让后端用 view_all 模式：返回所有任务（不按周过滤），
-      // metrics 自动用"上周 vs 上上周"作参考。任务时间在每条任务里独立显示。
-    }
-    // 给 header 用的"上周"参考（与 selectedPeriod 解耦，永远显示 4.20-26 类标签）
-    const lastWeekRefLabel = computed(() => pickDefaultPeriodLabel(apiTaskPeriods.value))
+    // ⚠ task_period 概念已从团队 tab 完全去除：selectedPeriod / apiTaskPeriods / pickDefaultPeriodLabel 等
+    // 都是死代码，不再需要。loadTaskPeriods 也不再调用。
+    // 后端默认 view_all 模式自动按"上周 vs 上上周"算 metrics（合成 Mon-Sun，跟 task_period 表完全解耦）
+    const selectedPeriod = ref('')   // 永远空，仅为兼容老 watch
+    const loadTaskPeriods = async () => {}  // no-op
     // ── 单品批量改时间 modal ──
     // 打开时把该商品下所有真任务列出来，admin 勾选 / 反选 + 设统一起止日期 + 保存
     const productBatchTimeModal = ref({
@@ -314,15 +286,20 @@ const AdsPage = defineComponent({
       if (!isAdmin.value) return alert('仅管理员可批量编辑')
       const realTasks = (item.tasks || []).filter(t => !t.is_template)
       if (!realTasks.length) return alert('该商品下没有真任务（占位行需先编辑落库）')
-      const p = apiTasksData.value.period
+      // 默认填**本周 Mon-Sun**（批量改时间多半是给本周用，跟 metrics 上周无关）
+      const [startMs, endMs] = currentWeekRange()
+      const fmtIso = (ms) => {
+        const d = new Date(ms)
+        return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+      }
       productBatchTimeModal.value = {
         show: true, pid: item.pid, name: item.name,
         tasks: realTasks.map(t => ({
           id: t.id, detail: t.detail, category: t.category, status: t.status,
           picked: !isStatusDone(t.status),
         })),
-        start_date: p?.start_date || new Date().toISOString().slice(0,10),
-        end_date:   p?.end_date   || new Date().toISOString().slice(0,10),
+        start_date: fmtIso(startMs),
+        end_date:   fmtIso(endMs),
         newStatus: '',
         saving: false,
       }
@@ -391,13 +368,16 @@ const AdsPage = defineComponent({
     })
     const openCardAddTask = (pid) => {
       if (!isAdmin.value) return alert('仅管理员可加任务')
-      // 默认起止填周期（admin 可改）；周期空时用今天
-      const p = apiTasksData.value.period
-      const today = new Date().toISOString().slice(0,10)
+      // 默认起止填**本周一-本周日**（用户加新任务多半是给本周用）
+      const [startMs, endMs] = currentWeekRange()
+      const fmtIso = (ms) => {
+        const d = new Date(ms)
+        return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+      }
       cardAddTaskModal.value = {
         show: true, pid, pickedCategory: '', pickedDetail: '', pickedOwner: '',
-        start_date: p?.start_date || today,
-        end_date: p?.end_date || today,
+        start_date: fmtIso(startMs),
+        end_date:   fmtIso(endMs),
         saving: false,
       }
     }
@@ -1866,18 +1846,10 @@ const AdsPage = defineComponent({
       if (task.template_id != null && task.template_id !== '' && task.template_id !== 0) return false
       // 条件 b/c：(category, detail) 命中已知标准
       if (standardTaskKeys.value.has(TEMPLATE_KEY(task.category, task.detail))) return false
-      // 周期窗：优先用 API 返回的 period；没有就退回当前 ISO 周（默认全景模式时）
+      // 红点窗 = 本周（ISO 当周）— 任务"新出现"指本周创建，跟 metrics 看的"上周"无关
       const t = new Date(task.created_at)
       if (isNaN(t.getTime())) return false
-      const p = apiTasksData.value.period
-      let startMs, endMs
-      if (p && p.start_date && p.end_date) {
-        startMs = new Date(p.start_date + 'T00:00:00').getTime()
-        endMs   = new Date(p.end_date   + 'T23:59:59').getTime()
-      } else {
-        const [a, b] = currentWeekRange()
-        startMs = a; endMs = b
-      }
+      const [startMs, endMs] = currentWeekRange()
       const tt = t.getTime()
       return tt >= startMs && tt <= endMs
     }
@@ -1902,13 +1874,13 @@ const AdsPage = defineComponent({
       }
       return '—'
     }
-    // 截止日期是否落在当前展示周期内（用于时间列高亮）
+    // 截止日期是否落在**本周（ISO 当周 Mon-Sun）**内 — 任务紧迫度看本周，不看上周（metrics 参考期）
     const etaInCurrentWeek = (task) => {
       if (!task || !task.eta_date) return false
-      const p = apiTasksData.value.period
-      if (!p || !p.start_date || !p.end_date) return false
-      const eta = String(task.eta_date).slice(0, 10)
-      return eta >= p.start_date && eta <= p.end_date
+      const eta = new Date(String(task.eta_date).slice(0,10) + 'T12:00:00').getTime()
+      if (isNaN(eta)) return false
+      const [a, b] = currentWeekRange()  // 本周 Mon 0:00 ~ 本周 Sun 23:59
+      return eta >= a && eta <= b
     }
     // 周期开始 / 结束日期（用于待开始/进行中时间列兜底显示 "4.27-4.30" 这种）
     const periodStartDateDisplay = computed(() => {
@@ -2472,34 +2444,17 @@ const AdsPage = defineComponent({
                     <textarea v-model="noteCellDraft.text" :data-cell-edit="task.id+'-note'"
                       @paste="onNoteCellPaste"
                       @keydown.esc="cancelNoteCell"
-                      placeholder="备注/链接（http(s) 自动变蓝可点）/附件/图片"
+                      placeholder="文字备注 / 链接（http(s) 自动变蓝可点）— 图片附件请到右边💬反馈区"
                       rows="2"
                       style="flex:1;font-size:11px;border:1px solid var(--accent);border-radius:4px;padding:3px 6px;outline:none;min-width:0;resize:vertical;font-family:inherit;line-height:1.5"></textarea>
-                    <!-- 工具按钮 + 缩略图 -->
+                    <!-- 工具按钮（备注只支持文字 + 链接；图片/附件去评论区做历史动态）-->
                     <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
                       <button @click="insertNoteLink" title="插入链接"
                         style="font-size:10px;padding:2px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">🔗 链接</button>
-                      <label title="上传图片" style="font-size:10px;padding:2px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">
-                        🖼 图片
-                        <input type="file" accept="image/*" multiple @change="onNoteCellImagePick" style="display:none">
-                      </label>
-                      <label title="上传附件" style="font-size:10px;padding:2px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">
-                        📎 附件
-                        <input type="file" multiple @change="onNoteCellAttachmentPick" style="display:none">
-                      </label>
+                      <span style="font-size:10px;color:var(--muted)">图片/附件 → 点右边 💬 反馈</span>
                       <span style="flex:1"></span>
                       <button @click="cancelNoteCell" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">取消</button>
                       <button @click="saveNoteCell" :disabled="noteCellDraft.saving" style="font-size:10px;padding:2px 10px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:4px;cursor:pointer;font-weight:600">{{ noteCellDraft.saving ? '...' : '保存' }}</button>
-                    </div>
-                    <div v-if="noteCellDraft.images.length || noteCellDraft.attachments.length" style="display:flex;flex-wrap:wrap;gap:4px">
-                      <div v-for="(img, idx) in noteCellDraft.images" :key="'img'+idx" style="position:relative">
-                        <img :src="img" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--border);cursor:pointer" @click="previewImage = img">
-                        <button @click="removeNoteCellImage(idx)" style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:8px;cursor:pointer;line-height:1">×</button>
-                      </div>
-                      <div v-for="(att, idx) in noteCellDraft.attachments" :key="'att'+idx" style="position:relative;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:#f5f5f4;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-                        📎 {{ att.name }}
-                        <button @click="removeNoteCellAttachment(idx)" style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:8px;cursor:pointer;line-height:1">×</button>
-                      </div>
                     </div>
                   </div>
                   <!-- 展示态：紧凑文本 + 角标 -->

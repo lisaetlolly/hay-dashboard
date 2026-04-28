@@ -1650,31 +1650,7 @@ def publish_tasks(body: TaskPublishBody):
         templates = cur.fetchall()
         if not templates:
             raise HTTPException(400, "模板不存在")
-        # 周期不存在时自动建（按 label 解析 Mon-Sun 范围）
-        prd = row(conn, "SELECT label FROM task_period WHERE label = %s", (body.period_label,))
-        if not prd:
-            from datetime import date, timedelta
-            import re
-            today = date.today()
-            mon = today - timedelta(days=today.weekday())
-            sun = mon + timedelta(days=6)
-            m1 = re.match(r'^(\d+)\.(\d+)-(?:(\d+)\.)?(\d+)$', body.period_label or '')
-            if m1:
-                yr = today.year
-                mo1 = int(m1.group(1)); d1 = int(m1.group(2))
-                mo2 = int(m1.group(3)) if m1.group(3) else mo1
-                d2 = int(m1.group(4))
-                try:
-                    mon = date(yr, mo1, d1)
-                    sun = date(yr, mo2, d2)
-                except ValueError:
-                    pass
-            cur.execute("""
-                INSERT INTO task_period (label, start_date, end_date, is_current)
-                VALUES (%s, %s, %s, FALSE)
-                ON CONFLICT (label) DO NOTHING
-            """, (body.period_label, mon.isoformat(), sun.isoformat()))
-            conn.commit()
+        # period_label 仅作为字符串标签存到 tasks.time_range_label，不再校验/建 task_period 表
         created = 0
         overwritten = 0
         for pid in body.product_ids:
@@ -1935,32 +1911,7 @@ def bulk_instantiate_tasks(body: TasksBulkInstantiate):
         if body.template_ids:
             tpl_filter = "AND id = ANY(%s)"
             params.append(body.template_ids)
-        # 周期不存在时自动建（解析 label 推算 Mon-Sun 范围；解析失败用本周）
-        prd = row(conn, "SELECT label FROM task_period WHERE label = %s", (body.period_label,))
-        if not prd:
-            from datetime import date, timedelta
-            import re
-            today = date.today()
-            mon = today - timedelta(days=today.weekday())
-            sun = mon + timedelta(days=6)
-            # 尝试从 "M.D-D" 或 "M.D-M.D" 解析
-            m1 = re.match(r'^(\d+)\.(\d+)-(?:(\d+)\.)?(\d+)$', body.period_label or '')
-            if m1:
-                yr = today.year
-                mo1 = int(m1.group(1)); d1 = int(m1.group(2))
-                mo2 = int(m1.group(3)) if m1.group(3) else mo1
-                d2 = int(m1.group(4))
-                try:
-                    mon = date(yr, mo1, d1)
-                    sun = date(yr, mo2, d2)
-                except ValueError:
-                    pass
-            cur.execute("""
-                INSERT INTO task_period (label, start_date, end_date, is_current)
-                VALUES (%s, %s, %s, FALSE)
-                ON CONFLICT (label) DO NOTHING
-            """, (body.period_label, mon.isoformat(), sun.isoformat()))
-            conn.commit()
+        # period_label 仅作为字符串标签存到 tasks.time_range_label，不再校验/建 task_period 表
         # 兜底：确保 (product_id, time_range_label, category, detail) 上有唯一索引（用于 ON CONFLICT 跳过）
         try:
             cur.execute("""
