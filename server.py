@@ -1270,27 +1270,11 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
         prev_period = {"label": _label(prev_mon, prev_sun), "start_date": prev_mon.isoformat(), "end_date": prev_sun.isoformat()}
         view_all = True  # 永远返回所有任务，前端按 25 PID 渲染
 
-        # 3. 任务列表
-        DONE = ('done', '已完成', '完成')
-        if view_all:
-            # 全部任务（默认）
-            tasks = rows(conn, """
-                SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
-                       t.category, t.time_range_label, t.execution_note,
-                       COALESCE(t.note_images, '[]'::jsonb) AS note_images,
-                       t.template_id,
-                       t.created_at::text         AS created_at,
-                       t.start_date::text         AS start_date,
-                       t.eta_date::text           AS eta_date,
-                       t.completed_at::text       AS completed_at
-                FROM tasks t
-                WHERE t.product_id IS NOT NULL
-                ORDER BY t.product_id, t.id
-            """)
-        else:
-            tasks = rows(conn, """
+        # 3. 任务列表 — 永远返回全部任务（不过滤 period）
+        tasks = rows(conn, """
             SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
                    t.category, t.time_range_label, t.execution_note,
+                   COALESCE(t.note_images, '[]'::jsonb) AS note_images,
                    t.template_id,
                    t.created_at::text         AS created_at,
                    t.start_date::text         AS start_date,
@@ -1298,26 +1282,8 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                    t.completed_at::text       AS completed_at
             FROM tasks t
             WHERE t.product_id IS NOT NULL
-              AND (
-                -- 主条件：当期任务
-                t.time_range_label = %(label)s
-                OR
-                -- 跨期保留：未完成 + 起止日期跟本期重叠（只要 start_date < period.end 且 eta_date >= period.start）
-                (
-                  COALESCE(t.status,'') NOT IN %(done)s
-                  AND t.start_date IS NOT NULL
-                  AND t.eta_date IS NOT NULL
-                  AND t.start_date <= %(end)s::date
-                  AND t.eta_date >= %(start)s::date
-                )
-              )
             ORDER BY t.product_id, t.id
-        """, {
-            "label": cur_period["label"],
-            "done":  DONE,
-            "start": cur_period["start_date"],
-            "end":   cur_period["end_date"],
-        })
+        """)
 
         # 4a. 25 个主链官方 PID — 硬编码，和前端 RAW.official_pids 完全一致。
         # 不再走 dim_product 推断（spu_id==product_id 在生产库里覆盖不全，会漏到 13~17 个）。
