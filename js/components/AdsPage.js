@@ -536,7 +536,7 @@ const AdsPage = defineComponent({
     const startCellEdit = (task, field) => {
       if (!canEditTask(task)) return alert('只能改自己负责的任务')
       // admin 才能改 category / detail / owner / eta_date；其他人只能改 status / note
-      const adminOnly = ['category', 'detail', 'owner', 'eta_date']
+      const adminOnly = ['category', 'detail', 'owner', 'eta_date', 'start_date', 'completed_at']
       if (adminOnly.includes(field) && !isAdmin.value) return
       editingCell.value = { id: task.id, field }
       cellDraft.value = field === 'note'
@@ -1162,6 +1162,19 @@ const AdsPage = defineComponent({
       }
       return '—'
     }
+    // 周期开始 / 结束日期（用于待开始/进行中时间列兜底显示 "4.27-4.30" 这种）
+    const periodStartDateDisplay = computed(() => {
+      const p = apiTasksData.value.period
+      if (!p || !p.start_date) return ''
+      const m = String(p.start_date).match(/^\d{4}-(\d{2})-(\d{2})/)
+      return m ? `${parseInt(m[1])}.${parseInt(m[2])}` : p.start_date
+    })
+    const periodEndDateDisplay = computed(() => {
+      const p = apiTasksData.value.period
+      if (!p || !p.end_date) return ''
+      const m = String(p.end_date).match(/^\d{4}-(\d{2})-(\d{2})/)
+      return m ? `${parseInt(m[1])}.${parseInt(m[2])}` : p.end_date
+    })
     // ETA 日期：YYYY-MM-DD → MM-DD
     const fmtEtaDate = (s) => {
       if (!s) return ''
@@ -1282,6 +1295,7 @@ const AdsPage = defineComponent({
       channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod, teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       // 任务时间/红点辅助
       isNewThisWeek, isStatusDone, isStatusInProgress, fmtCompletedAt, fmtCompletedSmart, fmtEtaDate,
+      periodStartDateDisplay, periodEndDateDisplay,
       adsCtr, ctrRankRows,
       channelCatData,
       // ── 新增：API 数据状态 + 品类计划
@@ -1630,31 +1644,44 @@ const AdsPage = defineComponent({
                   </span>
                 </div>
 
-                <!-- 时间列：
-                  · 已完成 → 展示 completed_at；admin 可点击改（补录用）
-                  · 待开始 / 进行中 → 展示 ETA（截止时间）；admin 可点击改
-                -->
-                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',cursor:isAdmin?'pointer':'default'}"
-                     @click="isAdmin && !isEditing(task.id, isStatusDone(task.status)?'completed_at':'eta_date') && startCellEdit(task, isStatusDone(task.status)?'completed_at':'eta_date')">
+                <!-- 时间列：开始 ~ 结束（任务自己的起止日，跨期可保留）-->
+                <!-- 已完成 → 完成时间；其它 → start_date ~ eta_date，缺啥用周期默认 -->
+                <div style="padding:6px 8px;display:flex;align-items:center;gap:4px;border-right:1px solid var(--border);font-size:11px">
                   <!-- 已完成 + 编辑 completed_at（仅管理员）-->
-                  <input v-if="isStatusDone(task.status) && isEditing(task.id,'completed_at')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-completed_at'"
-                    @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
-                    style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
-                  <!-- 已完成展示 -->
-                  <span v-else-if="isStatusDone(task.status)" style="font-size:11px;color:#16a34a"
-                    :title="isAdmin ? '点击改完成时间（管理员补录用）' : ('完成时间：' + (task.completed_at || '—'))">
-                    ✓ {{ fmtCompletedSmart(task) }}
-                  </span>
-                  <!-- 编辑 ETA -->
-                  <input v-else-if="isEditing(task.id,'eta_date')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-eta_date'"
-                    @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
-                    style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
-                  <!-- 显示 ETA -->
-                  <span v-else style="font-size:11px"
-                    :style="{color: task.eta_date ? '#f59e0b' : '#9ca3af'}"
-                    :title="isAdmin ? '点击设置/修改截止日期' : '任务截止日期'">
-                    {{ task.eta_date ? ('🕒 ' + fmtEtaDate(task.eta_date)) : (isAdmin ? '+ 设置截止时间' : '—') }}
-                  </span>
+                  <template v-if="isStatusDone(task.status)">
+                    <input v-if="isEditing(task.id,'completed_at')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-completed_at'"
+                      @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                      style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
+                    <span v-else style="color:#16a34a;cursor:pointer"
+                      :title="isAdmin ? '点击改完成时间' : '完成时间'"
+                      @click="isAdmin && startCellEdit(task,'completed_at')">
+                      ✓ {{ fmtCompletedSmart(task) }}
+                    </span>
+                  </template>
+                  <!-- 待开始 / 进行中：start_date ~ eta_date 双格 -->
+                  <template v-else>
+                    <!-- 开始日期 -->
+                    <input v-if="isEditing(task.id,'start_date')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-start_date'"
+                      @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                      style="font-size:11px;border:1px solid var(--accent);border-radius:4px;padding:1px 3px;background:#fff;width:48%">
+                    <span v-else
+                      :style="{color: task.start_date ? '#16a34a' : '#9ca3af', cursor: isAdmin?'pointer':'default'}"
+                      :title="isAdmin ? '点击改开始日期' : '开始日期'"
+                      @click="isAdmin && startCellEdit(task,'start_date')">
+                      {{ task.start_date ? fmtEtaDate(task.start_date) : periodStartDateDisplay || '—' }}
+                    </span>
+                    <span style="color:#9ca3af">~</span>
+                    <!-- 截止日期 -->
+                    <input v-if="isEditing(task.id,'eta_date')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-eta_date'"
+                      @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                      style="font-size:11px;border:1px solid var(--accent);border-radius:4px;padding:1px 3px;background:#fff;width:48%">
+                    <span v-else
+                      :style="{color: task.eta_date ? '#f59e0b' : '#9ca3af', cursor: isAdmin?'pointer':'default'}"
+                      :title="isAdmin ? '点击改截止日期' : '截止日期'"
+                      @click="isAdmin && startCellEdit(task,'eta_date')">
+                      {{ task.eta_date ? fmtEtaDate(task.eta_date) : periodEndDateDisplay || '—' }}
+                    </span>
+                  </template>
                 </div>
 
                 <!-- 备注（点击改）+ 评论 + 删除 -->

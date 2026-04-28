@@ -1026,7 +1026,8 @@ class TaskUpdate(BaseModel):
     priority: Optional[str] = None
     execution_note: Optional[str] = None
     time_range_label: Optional[str] = None
-    eta_date: Optional[str] = None         # 'YYYY-MM-DD' 或 '' 清空
+    start_date: Optional[str] = None       # 任务开始日期（'YYYY-MM-DD' 或 '' 清空）
+    eta_date: Optional[str] = None         # 任务截止日期（'YYYY-MM-DD' 或 '' 清空）
     completed_at: Optional[str] = None     # 管理员补录历史完成时间用（'YYYY-MM-DD' 或 ISO timestamp）
     category: Optional[str] = None
     template_id: Optional[int] = None
@@ -1255,25 +1256,46 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             ORDER BY start_date DESC LIMIT 1
         """, (cur_period["start_date"],))
 
-        # 兜底：老库可能还没有 eta_date / completed_at 列
+        # 兜底：老库可能还没有 start_date / eta_date / completed_at 列
         cur = conn.cursor()
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
         conn.commit()
 
-        # 3. 当前周期的所有任务，按 product_id 分组
+        # 3. 当前周期的所有任务 + 跨期未完成的任务（任务起止日期跨过本周期 且 status != 已完成）
+        # 这样 4.20-22 周期布置但拖到 4.27 还没完成的任务，会被带到 4.27-30 周期里继续显示。
+        DONE = ('done', '已完成', '完成')
         tasks = rows(conn, """
             SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
                    t.category, t.time_range_label, t.execution_note,
                    t.template_id,
                    t.created_at::text         AS created_at,
+                   t.start_date::text         AS start_date,
                    t.eta_date::text           AS eta_date,
                    t.completed_at::text       AS completed_at
             FROM tasks t
-            WHERE t.time_range_label = %s
-              AND t.product_id IS NOT NULL
+            WHERE t.product_id IS NOT NULL
+              AND (
+                -- 主条件：当期任务
+                t.time_range_label = %(label)s
+                OR
+                -- 跨期保留：未完成 + 起止日期跟本期重叠（只要 start_date < period.end 且 eta_date >= period.start）
+                (
+                  COALESCE(t.status,'') NOT IN %(done)s
+                  AND t.start_date IS NOT NULL
+                  AND t.eta_date IS NOT NULL
+                  AND t.start_date <= %(end)s::date
+                  AND t.eta_date >= %(start)s::date
+                )
+              )
             ORDER BY t.product_id, t.id
-        """, (cur_period["label"],))
+        """, {
+            "label": cur_period["label"],
+            "done":  DONE,
+            "start": cur_period["start_date"],
+            "end":   cur_period["end_date"],
+        })
 
         # 4a. 25 个主链官方 PID — 硬编码，和前端 RAW.official_pids 完全一致。
         # 不再走 dim_product 推断（spu_id==product_id 在生产库里覆盖不全，会漏到 13~17 个）。
@@ -1735,14 +1757,17 @@ def update_task(task_id: int, task: TaskUpdate, user: Optional[dict] = Depends(g
         else:
             extra_clauses.append("completed_at = NULL")
 
-    # 确保 eta_date / completed_at 列存在（首次运行自动建表）
+    # 确保 start_date / eta_date / completed_at 列存在（首次运行自动建表）
     with db() as conn:
         cur = conn.cursor()
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
         conn.commit()
 
-    # eta_date 空字符串 → SQL NULL
+    # start_date / eta_date 空字符串 → SQL NULL
+    if 'start_date' in fields and (fields['start_date'] == '' or fields['start_date'] is None):
+        fields['start_date'] = None
     if 'eta_date' in fields and (fields['eta_date'] == '' or fields['eta_date'] is None):
         fields['eta_date'] = None
     # completed_at 空字符串 → SQL NULL；'YYYY-MM-DD' → 加 12:00 时区中性时间
