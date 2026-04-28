@@ -294,14 +294,10 @@ const AdsPage = defineComponent({
     const loadTaskPeriods = async () => {
       try {
         const res = await fetch('/api/task-periods')
-        if (res.ok) {
-          apiTaskPeriods.value = await res.json()
-          // metrics 默认用"上周"作环比参考；任务列表本身不被这个 period 过滤（taskGroups 永远 25）
-          if (!selectedPeriod.value) {
-            selectedPeriod.value = pickDefaultPeriodLabel(apiTaskPeriods.value)
-          }
-        }
+        if (res.ok) apiTaskPeriods.value = await res.json()
       } catch {}
+      // ⚠ selectedPeriod 永远空 = 让后端用 view_all 模式：返回所有任务（不按周过滤），
+      // metrics 自动用"上周 vs 上上周"作参考。任务时间在每条任务里独立显示。
     }
     // 给 header 用的"上周"参考（与 selectedPeriod 解耦，永远显示 4.20-26 类标签）
     const lastWeekRefLabel = computed(() => pickDefaultPeriodLabel(apiTaskPeriods.value))
@@ -870,7 +866,7 @@ const AdsPage = defineComponent({
 
     // 25 个主链官方 PID — 前端写死，不依赖任何接口（投放面板团队 tab 永远 25 个）
     const OFFICIAL_25_PIDS = [
-      '1020175879777','580467335137','652664516885','975799789205','7660181033346',
+      '1020175879777','580467335137','652664516885','975799789205','1020815058332',
       '717349639294','824946188993','824607518747','824882661931','742092260504',
       '682036237751','886839411718','880816460277','965048597796','888002957800',
       '1016294283167','737675603229','583134215392','781547798998','679198301351',
@@ -910,10 +906,9 @@ const AdsPage = defineComponent({
         if (g && g.product_id) apiByPid[g.product_id] = g
       }
 
-      // 永远显示 25 OFFICIAL 商品 + 任何有真任务的扩展商品（Paper Shade / Cotton Bag 等）
-      // 不分模式 — 任务时间是任务自己的（start_date/eta_date），跟"看哪一周"没关系
-      const apiPids = Object.keys(apiByPid)
-      const allPids = [...new Set([...OFFICIAL_25_PIDS, ...apiPids])]
+      // 严格 25：只渲染 OFFICIAL_25_PIDS 里的 PID
+      // 后端可能返扩展 PID（Cotton Bag/Manolito/Paper Shade/PC Portable）的任务，但团队 tab 不显示
+      const allPids = [...OFFICIAL_25_PIDS]
       const filterMode = false  // 留下变量名以兼容下面的占位行生成逻辑
       const mergedGroups = allPids.map(pid => apiByPid[pid] || {
         product_id: pid,
@@ -980,11 +975,7 @@ const AdsPage = defineComponent({
           if (f.category && (t.category||'') !== f.category) return false
           return true
         })
-        // 显示规则：
-        // · 过滤模式（filterMode）：商品的真任务为空 → 跳过该商品
-        // · 默认模式：任务级过滤启用且筛后空 → 跳过；否则保留（25 商品全显）
-        if (filterMode && !filteredTasks.length) continue
-        if (!filterMode && hasTaskLevelFilter && !filteredTasks.length) continue
+        // 永远 25 商品全显示，只过滤卡内任务列表（即使过滤后任务为 0 也保留卡片）
         out.push({
           pid: g.product_id,
           // 名字兜底：API 没拿到 dim_product 的话用前端 short_names（覆盖如 Cotton Bag 564552361178 这种非主链但有任务的 PID）

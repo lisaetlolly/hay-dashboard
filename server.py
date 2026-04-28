@@ -1264,8 +1264,19 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             if not cur_period:
                 return {"error": "no current period found", "groups": [], "task_templates": []}
         else:
-            # 默认全部模式：metrics 仍以"最新周期"作为参考（卡头显示数据用）
-            cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period ORDER BY start_date DESC LIMIT 1")
+            # 默认全部模式：metrics 用"上周"作参考（运营约定 — 周一/周二看上周一-周日的数据）
+            # 找包含 today-7 那天的 period
+            from datetime import date, timedelta
+            target = (date.today() - timedelta(days=7)).isoformat()
+            cur_period = row(conn, """
+                SELECT label, start_date::text AS start_date, end_date::text AS end_date
+                FROM task_period
+                WHERE start_date <= %s::date AND end_date >= %s::date
+                ORDER BY start_date DESC LIMIT 1
+            """, (target, target))
+            if not cur_period:
+                # 兜底：DB 里没有覆盖上周的 period → 用最新一期
+                cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period ORDER BY start_date DESC LIMIT 1")
             if not cur_period:
                 cur_period = {"label": "—", "start_date": None, "end_date": None}
         # 2. 上期：start_date 小于当前的最近一个
@@ -1334,7 +1345,7 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             '580467335137',   # Basket 收纳篓
             '652664516885',   # Knit 衣架
             '975799789205',   # Canopy Umbrella 雨伞
-            '7660181033346',  # Barro Bowl & Plate 碗盘
+            '1020815058332',  # Barro Bowl & Plate 碗盘
             '717349639294',   # Weekday 长凳
             '824946188993',   # Taburete 8 Bar Stool 吧椅
             '824607518747',   # Colour Rack 落地衣架
