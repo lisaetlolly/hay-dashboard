@@ -270,17 +270,25 @@ const AdsPage = defineComponent({
     const apiTaskPeriods = ref([])
     const selectedPeriod = ref('')
 
-    // 周一-周日为一周；周一/周二默认看上周（数据未结算 / 上周完整窗口）
+    // 周一-周日为一周。
+    // 运营约定：每周看的都是上周一到上周日的复盘数据。
     const pickDefaultPeriodLabel = (periods) => {
       if (!periods || !periods.length) return ''
       const now = new Date()
-      const dow = now.getDay()  // 0=Sun, 1=Mon, ..., 6=Sat
+      // 回退 7 天 → 落到上一周
       const target = new Date(now)
-      if (dow === 1 || dow === 2) target.setDate(now.getDate() - 7)
+      target.setDate(now.getDate() - 7)
       const ts = target.toISOString().slice(0,10)
-      const hit = periods.find(p => p.start_date <= ts && ts <= p.end_date)
+      // 1. 找包含上周某天的周期
+      let hit = periods.find(p => p.start_date <= ts && ts <= p.end_date)
       if (hit) return hit.label
-      return (periods.find(p => p.is_current) || periods[0]).label
+      // 2. 找 is_current 的上一个（按 start_date 排序后取倒数第二）
+      const sortedAsc = [...periods].sort((a,b)=> (a.start_date||'').localeCompare(b.start_date||''))
+      const curIdx = sortedAsc.findIndex(p => p.is_current)
+      if (curIdx > 0) return sortedAsc[curIdx-1].label
+      if (curIdx === 0 || sortedAsc.length >= 2) return sortedAsc[Math.max(0, sortedAsc.length-2)].label
+      // 3. 兜底：start_date 最大的
+      return sortedAsc[sortedAsc.length-1].label
     }
 
     const loadTaskPeriods = async () => {
@@ -1087,6 +1095,16 @@ const AdsPage = defineComponent({
       const mm = d.getMinutes().toString().padStart(2,'0')
       return `${m}-${day} ${hh}:${mm}`
     }
+    // 智能完成时间：优先 completed_at，缺失则回退到任务所在周期的 end_date（4.27-30 这种老库 NULL 兜底）
+    const fmtCompletedSmart = (task) => {
+      if (task && task.completed_at) return fmtCompletedAt(task.completed_at)
+      const p = apiTasksData.value.period
+      if (p && p.end_date) {
+        const m = String(p.end_date).match(/^(\d{4})-(\d{2})-(\d{2})/)
+        if (m) return `${m[2]}-${m[3]}（周末）`
+      }
+      return '—'
+    }
     // ETA 日期：YYYY-MM-DD → MM-DD
     const fmtEtaDate = (s) => {
       if (!s) return ''
@@ -1206,7 +1224,7 @@ const AdsPage = defineComponent({
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
       channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod, teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       // 任务时间/红点辅助
-      isNewThisWeek, isStatusDone, isStatusInProgress, fmtCompletedAt, fmtEtaDate,
+      isNewThisWeek, isStatusDone, isStatusInProgress, fmtCompletedAt, fmtCompletedSmart, fmtEtaDate,
       adsCtr, ctrRankRows,
       channelCatData,
       // ── 新增：API 数据状态 + 品类计划
@@ -1424,33 +1442,23 @@ const AdsPage = defineComponent({
   </template>
 
   <template v-else>
-      <div class="card" style="padding:14px 16px">
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-          <div style="font-size:13px;font-weight:700;color:var(--text);margin-right:4px">任务周期</div>
-          <div style="display:flex;align-items:center;gap:6px;flex-direction:column;align-items:flex-start">
-            <div style="display:flex;align-items:center;gap:6px">
-              <span style="padding:5px 14px;font-size:12px;font-weight:600;background:var(--accent);color:#fff;border-radius:8px;white-space:nowrap">{{ activePeriod || '—' }}（周一-周日）</span>
-            </div>
-            <span style="font-size:11px;color:var(--muted)">
-              当期：{{ activePeriodRange || '—' }}　·　对比上期：{{ prevPeriodLabel }} ({{ prevPeriodRange || '—' }})
-            </span>
-          </div>
-          <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap">
-            <select v-model="teamFilters.owner" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
-              <option value="">全部负责人</option>
-              <option v-for="o in ownerOptions" :key="o" :value="o">{{ o }}</option>
-            </select>
-            <select v-model="teamFilters.category" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
-              <option value="">全部品类</option>
-              <option v-for="o in categoryOptions" :key="o" :value="o">{{ o }}</option>
-            </select>
-            <select v-model="teamFilters.status" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
-              <option value="">全部状态</option>
-              <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
-            </select>
-            <input v-model="teamFilters.productKeyword" placeholder="搜商品名" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;width:110px">
-            <button @click="teamFilters={ owner:'', category:'', productKeyword:'', status:'' }" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--muted)">重置</button>
-          </div>
+      <!-- 筛选栏（任务周期已去除，周维度由 pickDefaultPeriodLabel 自动按本周锁定）-->
+      <div class="card" style="padding:10px 14px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <select v-model="teamFilters.owner" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
+            <option value="">全部负责人</option>
+            <option v-for="o in ownerOptions" :key="o" :value="o">{{ o }}</option>
+          </select>
+          <select v-model="teamFilters.category" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
+            <option value="">全部品类</option>
+            <option v-for="o in categoryOptions" :key="o" :value="o">{{ o }}</option>
+          </select>
+          <select v-model="teamFilters.status" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
+            <option value="">全部状态</option>
+            <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
+          </select>
+          <input v-model="teamFilters.productKeyword" placeholder="搜商品名" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;width:110px">
+          <button @click="teamFilters={ owner:'', category:'', productKeyword:'', status:'' }" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--muted)">重置</button>
         </div>
       </div>
 
@@ -1568,8 +1576,8 @@ const AdsPage = defineComponent({
                 <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',cursor:(isStatusInProgress(task.status) && isAdmin)?'pointer':'default'}"
                      @click="isStatusInProgress(task.status) && isAdmin && !isEditing(task.id,'eta_date') && startCellEdit(task,'eta_date')">
                   <!-- 已完成 -->
-                  <span v-if="isStatusDone(task.status)" style="font-size:11px;color:#16a34a" :title="'完成时间：' + (task.completed_at || '—')">
-                    ✓ {{ fmtCompletedAt(task.completed_at) }}
+                  <span v-if="isStatusDone(task.status)" style="font-size:11px;color:#16a34a" :title="'完成时间：' + (task.completed_at || '周末兜底')">
+                    ✓ {{ fmtCompletedSmart(task) }}
                   </span>
                   <!-- 进行中：admin 可改 ETA -->
                   <input v-else-if="isEditing(task.id,'eta_date')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-eta_date'"

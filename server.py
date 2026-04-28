@@ -1368,21 +1368,10 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                 m["spend"] = round(float(r["spend"] or 0), 2)
                 m["ctr"] = round(float(r["ctr"] or 0), 2)
             # 光合渠道流量（来自 fact_wxst_content - 内容报表的引导访问）
-            try:
-                vc = rows(conn, """
-                    SELECT
-                        COALESCE(SUM(c.guided_visits), 0) AS content_visits
-                    FROM fact_wxst_content c
-                    WHERE c.stat_date BETWEEN %s AND %s
-                """, (start, end))
-                # 注意：内容报表是视频维度，不是商品维度，无法精确归到商品。
-                # 暂时取全店的"内容引导访问量"展示在每个商品的卡片上（同一值），
-                # 等"内容→商品"明细数据补齐后再细化。
-                shared_content = int(vc[0]["content_visits"] or 0) if vc else 0
-                for pid in pids:
-                    result.setdefault(pid, {})["content_visits"] = shared_content
-            except Exception:
-                pass
+            # ⚠️ 内容报表是视频维度，不是商品维度。之前把全店总和赋给每个商品（13188 同一个值），
+            # 完全没有可解读性，全部改为 0 — fmtMetric 会显示"/"，等"内容→商品"明细数据补齐再加。
+            for pid in pids:
+                result.setdefault(pid, {})["content_visits"] = 0
             # 小红书笔记数（按 publish_time 落在周期内 + 关联商品）
             try:
                 xhs = rows(conn, """
