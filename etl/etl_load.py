@@ -296,6 +296,22 @@ def read_xls(path):
         print(f"  [WARN] Failed to read {os.path.basename(path)}: {e}")
         return [], []
 
+# 去 NULL 字节：PostgreSQL 不允许字符串里有 \x00，xls 解析出来偶尔会带，全局清一遍
+def _strip_nul(v):
+    if isinstance(v, str):
+        return v.replace('\x00', '')
+    return v
+
+def _clean_row(t):
+    return tuple(_strip_nul(v) for v in t)
+
+# 全局 monkeypatch psycopg2.extras.execute_values，自动清掉所有 batch 里的 NUL
+_orig_execute_values = psycopg2.extras.execute_values
+def _safe_execute_values(cur, sql, argslist, *args, **kwargs):
+    cleaned = [_clean_row(r) if isinstance(r, (tuple, list)) else r for r in argslist]
+    return _orig_execute_values(cur, sql, cleaned, *args, **kwargs)
+psycopg2.extras.execute_values = _safe_execute_values
+
 def load_syzt_product(conn):
     d = os.path.join(DATA_DIR, '生意参谋商品')
     if not os.path.isdir(d):
@@ -330,6 +346,9 @@ def load_syzt_product(conn):
             pid = str(row.get('商品ID', '')).strip()
             if not pid:
                 continue
+            # 防御：淘宝 PID 最多 13 位，超过 30 字符的肯定是脏数据（Excel 单元格残留 / 合并单元 / 富文本）
+            if len(pid) > 30:
+                continue
             # Option A：灌全店所有 PID（不再过滤 25 主链）
             stat_date = str(row.get('统计日期', ''))
             if not stat_date or stat_date == 'nan':
@@ -340,7 +359,7 @@ def load_syzt_product(conn):
             stat_date = str(stat_date)[:10]
             def g(k):  return safe_float(row.get(k))
             def gp(k): return safe_pct(row.get(k))
-            batch.append((
+            batch.append(_clean_row((
                 stat_date, pid,
                 g('商品访客数'), g('商品浏览量'), g('平均停留时长'),
                 gp('商品详情页跳出率'),
@@ -353,7 +372,7 @@ def load_syzt_product(conn):
                 g('月累计支付件数'),
                 gp('搜索引导支付转化率'), g('搜索引导访客数'), g('搜索引导支付买家数'),
                 fname
-            ))
+            )))
         if batch:
             psycopg2.extras.execute_values(cur, sql, batch)
             conn.commit()  # 每个文件 commit 一次，不丢进度
@@ -414,6 +433,8 @@ def load_wxst_product(conn):
         for row in rs:
             pid = str(row.get('主体ID', '')).strip()
             if not pid:
+                continue
+            if len(pid) > 30:  # 同 syzt 防御：脏数据跳过
                 continue
             # Option A：灌全店所有 PID（不再过滤 25 主链）。
             # 前端「优化页 25 SKU 视图」靠 OFFICIAL Set 过滤，不依赖 ETL 过滤；
