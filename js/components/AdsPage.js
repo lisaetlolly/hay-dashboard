@@ -306,10 +306,12 @@ const AdsPage = defineComponent({
     const productBatchTimeModal = ref({
       show: false, pid: '', name: '',
       tasks: [],   // [{id, detail, category, status, picked: true}]
-      start_date: '', end_date: '', saving: false,
+      start_date: '', end_date: '',
+      newStatus: '',   // 新加：批量改状态（空 = 不改）
+      saving: false,
     })
     const openProductBatchTime = (item) => {
-      if (!isAdmin.value) return alert('仅管理员可批量改时间')
+      if (!isAdmin.value) return alert('仅管理员可批量编辑')
       const realTasks = (item.tasks || []).filter(t => !t.is_template)
       if (!realTasks.length) return alert('该商品下没有真任务（占位行需先编辑落库）')
       const p = apiTasksData.value.period
@@ -317,10 +319,11 @@ const AdsPage = defineComponent({
         show: true, pid: item.pid, name: item.name,
         tasks: realTasks.map(t => ({
           id: t.id, detail: t.detail, category: t.category, status: t.status,
-          picked: !isStatusDone(t.status),  // 已完成的默认不勾（避免误改）
+          picked: !isStatusDone(t.status),
         })),
         start_date: p?.start_date || new Date().toISOString().slice(0,10),
         end_date:   p?.end_date   || new Date().toISOString().slice(0,10),
+        newStatus: '',
         saving: false,
       }
     }
@@ -337,24 +340,35 @@ const AdsPage = defineComponent({
       const m = productBatchTimeModal.value
       const picked = m.tasks.filter(t => t.picked)
       if (!picked.length) return alert('请至少勾选 1 条任务')
-      if (!m.start_date && !m.end_date) return alert('起止时间至少填一个')
+      if (!m.start_date && !m.end_date && !m.newStatus) {
+        return alert('起止时间 / 状态 至少改一个')
+      }
       m.saving = true
       try {
         const body = {}
         if (m.start_date) body.start_date = m.start_date
         if (m.end_date)   body.eta_date   = m.end_date
+        if (m.newStatus)  body.status     = m.newStatus
         for (const t of picked) {
           const r = await fetch(`/api/tasks/${t.id}`, {
             method:'PATCH', headers:{'Content-Type':'application/json'},
             body: JSON.stringify(body),
           })
           if (!r.ok) throw new Error('id=' + t.id + ' 改失败')
-          // 本地写
+          // 本地写值（状态切已完成时立即填 completed_at）
           for (const g of apiTasksData.value.groups || []) {
             for (const tt of (g.tasks || [])) {
               if (tt.id === t.id) {
                 if (m.start_date) tt.start_date = m.start_date
                 if (m.end_date)   tt.eta_date   = m.end_date
+                if (m.newStatus) {
+                  tt.status = m.newStatus
+                  if (['done','已完成','完成'].includes(m.newStatus)) {
+                    tt.completed_at = tt.completed_at || new Date().toISOString()
+                  } else {
+                    tt.completed_at = null
+                  }
+                }
               }
             }
           }
@@ -2786,12 +2800,12 @@ const AdsPage = defineComponent({
     <div style="width:560px;max-width:94vw;max-height:88vh;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25);display:flex;flex-direction:column">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div>
-          <div style="font-size:14px;font-weight:700">批量改任务时间</div>
+          <div style="font-size:14px;font-weight:700">批量编辑任务（时间 + 状态）</div>
           <div style="font-size:11px;color:var(--muted);margin-top:2px">{{ productBatchTimeModal.name }}（{{ productBatchTimeModal.pid }}）</div>
         </div>
         <button @click="closeProductBatchTime" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--muted)">×</button>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
         <div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期</div>
           <input type="date" v-model="productBatchTimeModal.start_date"
@@ -2801,6 +2815,16 @@ const AdsPage = defineComponent({
           <div style="font-size:11px;color:var(--muted);margin-bottom:3px">截止日期</div>
           <input type="date" v-model="productBatchTimeModal.end_date"
             style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">状态（不选 = 不改）</div>
+          <select v-model="productBatchTimeModal.newStatus"
+            style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+            <option value="">— 不改 —</option>
+            <option value="待开始">待开始</option>
+            <option value="进行中">进行中</option>
+            <option value="已完成">已完成</option>
+          </select>
         </div>
       </div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">

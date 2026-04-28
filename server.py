@@ -1637,10 +1637,31 @@ def publish_tasks(body: TaskPublishBody):
         templates = cur.fetchall()
         if not templates:
             raise HTTPException(400, "模板不存在")
-        # 期间检查 / 自动建期
+        # 周期不存在时自动建（按 label 解析 Mon-Sun 范围）
         prd = row(conn, "SELECT label FROM task_period WHERE label = %s", (body.period_label,))
         if not prd:
-            raise HTTPException(400, f"周期 {body.period_label} 不存在，请先建周期")
+            from datetime import date, timedelta
+            import re
+            today = date.today()
+            mon = today - timedelta(days=today.weekday())
+            sun = mon + timedelta(days=6)
+            m1 = re.match(r'^(\d+)\.(\d+)-(?:(\d+)\.)?(\d+)$', body.period_label or '')
+            if m1:
+                yr = today.year
+                mo1 = int(m1.group(1)); d1 = int(m1.group(2))
+                mo2 = int(m1.group(3)) if m1.group(3) else mo1
+                d2 = int(m1.group(4))
+                try:
+                    mon = date(yr, mo1, d1)
+                    sun = date(yr, mo2, d2)
+                except ValueError:
+                    pass
+            cur.execute("""
+                INSERT INTO task_period (label, start_date, end_date, is_current)
+                VALUES (%s, %s, %s, FALSE)
+                ON CONFLICT (label) DO NOTHING
+            """, (body.period_label, mon.isoformat(), sun.isoformat()))
+            conn.commit()
         created = 0
         overwritten = 0
         for pid in body.product_ids:
@@ -1901,10 +1922,42 @@ def bulk_instantiate_tasks(body: TasksBulkInstantiate):
         if body.template_ids:
             tpl_filter = "AND id = ANY(%s)"
             params.append(body.template_ids)
-        # 验证周期存在
+        # 周期不存在时自动建（解析 label 推算 Mon-Sun 范围；解析失败用本周）
         prd = row(conn, "SELECT label FROM task_period WHERE label = %s", (body.period_label,))
         if not prd:
-            raise HTTPException(400, f"周期 {body.period_label} 不存在，请先创建")
+            from datetime import date, timedelta
+            import re
+            today = date.today()
+            mon = today - timedelta(days=today.weekday())
+            sun = mon + timedelta(days=6)
+            # 尝试从 "M.D-D" 或 "M.D-M.D" 解析
+            m1 = re.match(r'^(\d+)\.(\d+)-(?:(\d+)\.)?(\d+)$', body.period_label or '')
+            if m1:
+                yr = today.year
+                mo1 = int(m1.group(1)); d1 = int(m1.group(2))
+                mo2 = int(m1.group(3)) if m1.group(3) else mo1
+                d2 = int(m1.group(4))
+                try:
+                    mon = date(yr, mo1, d1)
+                    sun = date(yr, mo2, d2)
+                except ValueError:
+                    pass
+            cur.execute("""
+                INSERT INTO task_period (label, start_date, end_date, is_current)
+                VALUES (%s, %s, %s, FALSE)
+                ON CONFLICT (label) DO NOTHING
+            """, (body.period_label, mon.isoformat(), sun.isoformat()))
+            conn.commit()
+        # 兜底：确保 (product_id, time_range_label, category, detail) 上有唯一索引（用于 ON CONFLICT 跳过）
+        try:
+            cur.execute("""
+                ALTER TABLE tasks
+                ADD CONSTRAINT tasks_unique_pid_period_cat_det
+                UNIQUE (product_id, time_range_label, category, detail)
+            """)
+            conn.commit()
+        except Exception:
+            conn.rollback()  # 已存在
         cur.execute(f"""
             WITH product_list(product_id) AS (
                 SELECT unnest(%s::text[])
@@ -1913,7 +1966,7 @@ def bulk_instantiate_tasks(body: TasksBulkInstantiate):
             SELECT p.product_id, t.detail, t.default_owner, t.category, %s, '待开始', '中', t.id
             FROM product_list p CROSS JOIN task_template t
             WHERE t.is_active = TRUE {tpl_filter}
-            ON CONFLICT ON CONSTRAINT tasks_unique_dim DO NOTHING
+            ON CONFLICT (product_id, time_range_label, category, detail) DO NOTHING
             RETURNING id
         """, (body.product_ids, body.period_label, *([body.template_ids] if body.template_ids else [])))
         created = cur.rowcount
