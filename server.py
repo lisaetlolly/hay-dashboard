@@ -2892,16 +2892,37 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
     if not saved:
         raise HTTPException(400, "未识别到有效文件（需要 .xls/.xlsx/.csv）")
 
-    etl_script = os.path.join(base_dir, "etl", "refresh_dashboard.py")
-    if not os.path.exists(etl_script):
-        raise HTTPException(500, "ETL 脚本不存在：etl/refresh_dashboard.py")
+    # 双轨 ETL：先跑 etl_load.py 灌 Neon（dashboard 主要数据源），
+    # 再跑 refresh_dashboard.py 更新 dashboard.html RAW 快照（fallback 兜底）。
+    # 老接口只跑后者，导致前端从 Neon 读到的数据不会刷新。
+    neon_script = os.path.join(base_dir, "etl", "etl_load.py")
+    snapshot_script = os.path.join(base_dir, "etl", "refresh_dashboard.py")
+    if not os.path.exists(neon_script):
+        raise HTTPException(500, "ETL 脚本不存在：etl/etl_load.py")
 
+    logs = []
     try:
-        result = subprocess.run(
-            ["python3", etl_script],
-            cwd=base_dir,
-            capture_output=True, text=True, timeout=120
+        # 1) Neon: 直接灌库
+        env = os.environ.copy()
+        if not env.get("DATABASE_URL"):
+            raise HTTPException(500, "DATABASE_URL 未配置，无法灌 Neon")
+        r1 = subprocess.run(
+            ["python3", neon_script],
+            cwd=base_dir, env=env,
+            capture_output=True, text=True, timeout=300
         )
+        logs.append(f"[etl_load.py] rc={r1.returncode}\n{r1.stdout[-600:]}\n{r1.stderr[-600:]}")
+        if r1.returncode != 0:
+            raise HTTPException(500, f"Neon ETL 失败：{r1.stderr[-800:]}")
+        # 2) 快照（best-effort，不阻塞主流程）
+        if os.path.exists(snapshot_script):
+            r2 = subprocess.run(
+                ["python3", snapshot_script],
+                cwd=base_dir,
+                capture_output=True, text=True, timeout=120
+            )
+            logs.append(f"[refresh_dashboard.py] rc={r2.returncode}")
+        result = r1  # 返回值兼容老下游
         if result.returncode != 0:
             raise HTTPException(500, f"ETL 失败：{result.stderr[-800:]}")
         # Extract data_end from output

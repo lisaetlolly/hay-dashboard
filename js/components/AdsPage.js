@@ -3,6 +3,7 @@
 
 const AdsPage = defineComponent({
   name: 'AdsPage',
+  components: { InteractiveTrendChart },  // 投放趋势图表必须注册才能渲染
   props: ['start', 'end'],
   setup(props) {
     const activeTab = ref('delivery')
@@ -354,40 +355,59 @@ const AdsPage = defineComponent({
     }
     const canEditTask = (task) => isAdmin.value || (canEditOwn.value && isTaskOwner(task))
 
-    // ── 任务行内联编辑（状态 / 备注）─────────────────────
-    // editingTask = { id, status, note, saving } —— 同一时刻只编辑一行
-    const editingTask = ref(null)
-    const startInlineEdit = (task) => {
+    // ── Excel 式单元格编辑：每次只编辑一个 (taskId, field)，change/blur 自动保存
+    // editingCell = { id, field } — null 表示当前没有编辑中的单元格
+    const editingCell = ref(null)
+    const isEditing = (taskId, field) =>
+      editingCell.value && editingCell.value.id === taskId && editingCell.value.field === field
+    // 用于绑定 input 的 v-model 值（独立于任务对象，按需要保存）
+    const cellDraft = ref('')
+    const startCellEdit = (task, field) => {
       if (!canEditTask(task)) return alert('只能改自己负责的任务')
-      editingTask.value = { id: task.id, status: task.status, note: task.note || '', saving: false }
+      // admin 才能改 category / detail / owner；其他人只能改 status / note
+      const adminOnly = ['category', 'detail', 'owner']
+      if (adminOnly.includes(field) && !isAdmin.value) return
+      editingCell.value = { id: task.id, field }
+      cellDraft.value = field === 'note'
+        ? (task.execution_note || task.note || '')
+        : (task[field] != null ? task[field] : '')
+      // input/select 自动 focus
+      Vue.nextTick(() => {
+        const el = document.querySelector(`[data-cell-edit="${task.id}-${field}"]`)
+        if (el) { el.focus(); if (el.select) el.select() }
+      })
     }
-    const cancelInlineEdit = () => { editingTask.value = null }
-    const saveInlineEdit = async () => {
-      const e = editingTask.value
-      if (!e) return
-      e.saving = true
+    const cancelCellEdit = () => { editingCell.value = null }
+    const saveCellEdit = async (task) => {
+      const e = editingCell.value
+      if (!e || e.id !== task.id) return
+      const field = e.field
+      const val = cellDraft.value
+      // 没变就直接退出，不发请求
+      const cur = field === 'note' ? (task.execution_note || task.note || '') : (task[field] || '')
+      if (val === cur) { editingCell.value = null; return }
       try {
-        const res = await fetch(`/api/tasks/${e.id}`, {
+        const apiField = field === 'note' ? 'execution_note' : field
+        const res = await fetch(`/api/tasks/${task.id}`, {
           method: 'PATCH', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ status: e.status, execution_note: e.note }),
+          body: JSON.stringify({ [apiField]: val }),
         })
         if (!res.ok) {
           const err = await res.json().catch(()=>({detail:'保存失败'}))
           throw new Error(err.detail || ('HTTP ' + res.status))
         }
-        // 刷新这条任务在 apiTasksData 中的值
+        // 本地刷新
         for (const g of apiTasksData.value.groups || []) {
           for (const t of g.tasks || []) {
-            if (t.id === e.id) {
-              t.status = e.status
-              t.execution_note = e.note
+            if (t.id === task.id) {
+              if (field === 'note') t.execution_note = val
+              else t[field] = val
             }
           }
         }
-        editingTask.value = null
+        editingCell.value = null
       } catch (err) {
         alert('保存失败：' + err.message)
-        e.saving = false
       }
     }
 
@@ -727,13 +747,13 @@ const AdsPage = defineComponent({
       // 任务评论
       expandedTaskId, taskComments, commentDraft, previewImage,
       toggleTaskExpand, onCommentImagePick, sendComment, deleteComment, fmtCommentTime,
-      // 任务编辑权限 + 内联编辑 + 新增 + 批量
-      me, isAdmin, canDelete, canEditTask,
-      editingTask, startInlineEdit, cancelInlineEdit, saveInlineEdit, deleteTaskRow,
-      fullEditModal, openFullEdit, closeFullEdit, saveFullEdit, TASK_CATEGORIES_ALL, TASK_OWNERS_ALL,
+      // 权限 + 删除
+      me, isAdmin, canDelete, canEditTask, deleteTaskRow,
+      // Excel 式单元格编辑
+      editingCell, cellDraft, isEditing, startCellEdit, cancelCellEdit, saveCellEdit,
+      TASK_CATEGORIES_ALL, TASK_OWNERS_ALL,
+      // 新增任务 + 周期 modal
       newTaskModal, openNewTask, closeNewTask, saveNewTask,
-      selectedTaskIds, isTaskSelected, toggleSelectTask, clearSelectedTasks,
-      bulkAssignModal, openBulkAssign, closeBulkAssign, doBulkAssign,
       periodModal, openPeriodModal, closePeriodModal, savePeriod,
     }
   },
@@ -972,14 +992,9 @@ const AdsPage = defineComponent({
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;flex-wrap:wrap">
           <div>
             <span class="card-title">任务清单</span>
-            <span class="card-sub">{{ activePeriod }} · {{ taskGroups.length }} 个商品</span>
-            <span v-if="selectedTaskIds.size>0" style="margin-left:8px;font-size:11px;color:var(--accent);font-weight:600">已选 {{ selectedTaskIds.size }} 个</span>
+            <span class="card-sub">{{ activePeriod }} · {{ taskGroups.length }} 个商品 · 点击单元格直接编辑</span>
           </div>
           <div style="display:flex;gap:8px">
-            <button v-if="isAdmin && selectedTaskIds.size>0" @click="openBulkAssign"
-              style="padding:6px 12px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">批量分配（{{ selectedTaskIds.size }}）</button>
-            <button v-if="isAdmin && selectedTaskIds.size>0" @click="clearSelectedTasks"
-              style="padding:6px 12px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">清空选择</button>
             <button v-if="isAdmin || (me?.permissions||[]).includes('task.create')" @click="openNewTask('')"
               style="padding:6px 12px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">+ 新增任务</button>
           </div>
@@ -1019,74 +1034,81 @@ const AdsPage = defineComponent({
               </div>
             </div>
             <!-- 任务清单表头（5 列）-->
-            <div style="display:grid;grid-template-columns:100px minmax(0,1.6fr) 130px 110px minmax(0,1.4fr);gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
+            <div style="display:grid;grid-template-columns:110px minmax(0,1.6fr) 130px 100px minmax(0,1.4fr);gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务标签</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务名称</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">负责人</div>
-              <div style="padding:7px 12px;border-right:1px solid var(--border)">状态（点击改）</div>
-              <div style="padding:7px 12px">备注 / 操作</div>
+              <div style="padding:7px 12px;border-right:1px solid var(--border)">状态</div>
+              <div style="padding:7px 12px">备注</div>
             </div>
-            <!-- 任务行列表 -->
+            <!-- 任务行（Excel 式：点击单元格 → 直接编辑 → 失焦/回车自动保存）-->
             <div style="display:flex;flex-direction:column">
               <template v-for="(task, ti) in item.tasks" :key="task.id">
               <div
-                :style="{display:'grid',gridTemplateColumns:'100px minmax(0,1.6fr) 130px 110px minmax(0,1.4fr)',gap:'0',alignItems:'stretch',
+                :style="{display:'grid',gridTemplateColumns:'110px minmax(0,1.6fr) 130px 100px minmax(0,1.4fr)',gap:'0',alignItems:'stretch',
                   borderBottom: ti < item.tasks.length-1 ? '1px solid var(--border)' : 'none',
-                  background: expandedTaskId === task.id ? '#fff7ed' : (isTaskSelected(task.id) ? '#eff6ff' : (ti%2===0 ? '#fff' : '#fafaf9'))}">
-                <!-- 任务标签 + 勾选框（admin batch mode）-->
-                <div style="padding:9px 12px;display:flex;align-items:center;gap:6px;border-right:1px solid var(--border)">
-                  <input v-if="isAdmin" type="checkbox" :checked="isTaskSelected(task.id)" @change="toggleSelectTask(task.id)" style="cursor:pointer;flex-shrink:0">
-                  <span style="font-size:11px;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:99px;background:#fff;white-space:nowrap">{{ task.category || '—' }}</span>
+                  background: expandedTaskId === task.id ? '#fff7ed' : (ti%2===0 ? '#fff' : '#fafaf9')}">
+
+                <!-- 任务标签（admin 点击改）-->
+                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',cursor:isAdmin?'pointer':'default'}"
+                     @click="!isEditing(task.id,'category') && isAdmin && startCellEdit(task,'category')">
+                  <select v-if="isEditing(task.id,'category')" v-model="cellDraft" :data-cell-edit="task.id+'-category'"
+                    @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                    style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
+                    <option v-for="c in TASK_CATEGORIES_ALL" :key="c" :value="c">{{ c }}</option>
+                  </select>
+                  <span v-else style="font-size:11px;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:99px;background:#fff;white-space:nowrap">{{ task.category || '—' }}</span>
                 </div>
-                <!-- 任务名称 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
-                  <div style="font-size:12px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.detail">{{ task.detail }}</div>
+
+                <!-- 任务名称（admin 点击改）-->
+                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',overflow:'hidden',cursor:isAdmin?'pointer':'default'}"
+                     @click="!isEditing(task.id,'detail') && isAdmin && startCellEdit(task,'detail')">
+                  <input v-if="isEditing(task.id,'detail')" v-model="cellDraft" :data-cell-edit="task.id+'-detail'"
+                    @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                    style="flex:1;font-size:12px;border:1px solid var(--accent);border-radius:5px;padding:3px 6px;outline:none;min-width:0">
+                  <div v-else style="font-size:12px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%" :title="task.detail">{{ task.detail || '—' }}</div>
                 </div>
-                <!-- 负责人 -->
-                <div style="padding:9px 12px;display:flex;align-items:center;border-right:1px solid var(--border);overflow:hidden">
-                  <span style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="task.owner">{{ task.owner || '—' }}</span>
+
+                <!-- 负责人（点击改）-->
+                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',overflow:'hidden',cursor:canEditTask(task)?'pointer':'default'}"
+                     @click="!isEditing(task.id,'owner') && canEditTask(task) && startCellEdit(task,'owner')">
+                  <select v-if="isEditing(task.id,'owner')" v-model="cellDraft" :data-cell-edit="task.id+'-owner'"
+                    @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                    style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
+                    <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
+                  </select>
+                  <span v-else style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%" :title="task.owner">{{ task.owner || '—' }}</span>
                 </div>
-                <!-- 任务状态：可编辑下拉 -->
-                <div style="padding:9px 10px;display:flex;align-items:center;border-right:1px solid var(--border)">
-                  <select v-if="editingTask && editingTask.id === task.id" v-model="editingTask.status"
-                    style="font-size:11px;border:1px solid var(--accent);border-radius:6px;padding:3px 6px;background:#fff;width:100%">
+
+                <!-- 状态（点击改）-->
+                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',cursor:canEditTask(task)?'pointer':'default'}"
+                     @click="!isEditing(task.id,'status') && canEditTask(task) && startCellEdit(task,'status')">
+                  <select v-if="isEditing(task.id,'status')" v-model="cellDraft" :data-cell-edit="task.id+'-status'"
+                    @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                    style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
                     <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
                   </select>
-                  <span v-else @click="canEditTask(task) && startInlineEdit(task)"
-                    :style="{fontSize:'11px',fontWeight:'600',display:'flex',alignItems:'center',gap:'4px',color:statusColor(task.status),whiteSpace:'nowrap',cursor:canEditTask(task)?'pointer':'default'}"
-                    :title="canEditTask(task) ? '点击改状态' : '只能改自己的任务'">
+                  <span v-else :style="{fontSize:'11px',fontWeight:'600',display:'flex',alignItems:'center',gap:'4px',color:statusColor(task.status),whiteSpace:'nowrap'}">
                     <span :style="{width:'7px',height:'7px',borderRadius:'50%',background:statusColor(task.status),display:'inline-block',flexShrink:'0'}"></span>
                     {{ task.status||'—' }}
-                    <span v-if="canEditTask(task)" style="font-size:9px;color:var(--muted);margin-left:2px">✎</span>
                   </span>
                 </div>
-                <!-- 备注 + 操作（合并一列）-->
+
+                <!-- 备注（点击改）+ 评论 + 删除 -->
                 <div style="padding:7px 8px;display:flex;align-items:center;gap:6px;overflow:hidden">
-                  <input v-if="editingTask && editingTask.id === task.id" v-model="editingTask.note"
-                    placeholder="备注（卡片可见）"
-                    style="flex:1;font-size:11px;border:1px solid var(--accent);border-radius:6px;padding:4px 8px;outline:none;min-width:0">
-                  <div v-else @click="canEditTask(task) && startInlineEdit(task)"
-                    :style="{flex:'1',overflow:'hidden',cursor:canEditTask(task)?'pointer':'default',minWidth:'0'}"
-                    :title="canEditTask(task) ? '点击编辑备注' : ''">
-                    <div v-if="task.note" style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.note }}</div>
-                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">{{ canEditTask(task) ? '点击添加备注' : '—' }}</div>
+                  <input v-if="isEditing(task.id,'note')" v-model="cellDraft" :data-cell-edit="task.id+'-note'"
+                    @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                    placeholder="备注…"
+                    style="flex:1;font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:3px 6px;outline:none;min-width:0">
+                  <div v-else :style="{flex:1,overflow:'hidden',cursor:canEditTask(task)?'pointer':'default',minWidth:'0',padding:'2px 4px',borderRadius:'4px'}"
+                       @click="canEditTask(task) && startCellEdit(task,'note')">
+                    <div v-if="task.execution_note || task.note" style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ task.execution_note || task.note }}</div>
+                    <div v-else style="font-size:11px;color:#d1d5db;font-style:italic">{{ canEditTask(task) ? '点击添加…' : '—' }}</div>
                   </div>
-                  <div style="display:flex;gap:3px;flex-shrink:0">
-                    <template v-if="editingTask && editingTask.id === task.id">
-                      <button @click="saveInlineEdit" :disabled="editingTask.saving" title="保存"
-                        style="font-size:10px;padding:3px 8px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:4px;cursor:pointer">{{ editingTask.saving ? '...' : '✓' }}</button>
-                      <button @click="cancelInlineEdit" title="取消"
-                        style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">×</button>
-                    </template>
-                    <template v-else>
-                      <button @click="toggleTaskExpand(task.id)" :title="'评论 (' + (taskComments[task.id]||[]).length + ')'"
-                        style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">💬{{ (taskComments[task.id]||[]).length }}</button>
-                      <button v-if="isAdmin" @click="openFullEdit(task)" title="编辑全部字段"
-                        style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">编辑</button>
-                      <button v-if="canDelete" @click.stop="deleteTaskRow(task)" title="删除"
-                        style="font-size:10px;padding:3px 7px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626">×</button>
-                    </template>
-                  </div>
+                  <button @click.stop="toggleTaskExpand(task.id)" :title="'评论 (' + (taskComments[task.id]||[]).length + ')'"
+                    style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted);flex-shrink:0">💬{{ (taskComments[task.id]||[]).length }}</button>
+                  <button v-if="canDelete" @click.stop="deleteTaskRow(task)" title="删除"
+                    style="font-size:10px;padding:3px 7px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626;flex-shrink:0">×</button>
                 </div>
               </div>
               <!-- 展开的评论区 -->
@@ -1158,56 +1180,6 @@ const AdsPage = defineComponent({
     </div>
   </template>
 
-  <!-- 管理员全字段编辑任务 Modal -->
-  <div v-if="fullEditModal.show" @click.self="closeFullEdit"
-    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
-    <div style="width:460px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
-      <div style="font-size:14px;font-weight:700;margin-bottom:14px">编辑任务（管理员）</div>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称 *</div>
-          <input v-model="fullEditModal.detail" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">分类</div>
-            <select v-model="fullEditModal.category" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-              <option v-for="c in TASK_CATEGORIES_ALL" :key="c" :value="c">{{ c }}</option>
-            </select>
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人</div>
-            <select v-model="fullEditModal.owner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-              <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
-            </select>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">状态</div>
-            <select v-model="fullEditModal.status" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-              <option v-for="s in statusOptions" :key="s" :value="s">{{ s }}</option>
-            </select>
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">优先级</div>
-            <select v-model="fullEditModal.priority" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-              <option>高</option><option>中</option><option>低</option>
-            </select>
-          </div>
-        </div>
-        <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">备注（卡片可见）</div>
-          <textarea v-model="fullEditModal.execution_note" rows="2" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;resize:vertical;box-sizing:border-box;font-family:inherit"></textarea>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button @click="closeFullEdit" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="saveFullEdit" :disabled="fullEditModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ fullEditModal.saving ? '...' : '保存' }}</button>
-      </div>
-    </div>
-  </div>
-
   <!-- 新增任务 Modal -->
   <div v-if="newTaskModal.show" @click.self="closeNewTask"
     style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
@@ -1242,22 +1214,6 @@ const AdsPage = defineComponent({
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeNewTask" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
         <button @click="saveNewTask" :disabled="newTaskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ newTaskModal.saving ? '...' : '保存' }}</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 批量分配 Modal -->
-  <div v-if="bulkAssignModal.show" @click.self="closeBulkAssign"
-    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
-    <div style="width:380px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
-      <div style="font-size:14px;font-weight:700;margin-bottom:14px">批量分配负责人</div>
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">已选 {{ selectedTaskIds.size }} 个任务，统一改成：</div>
-      <select v-model="bulkAssignModal.owner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-        <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
-      </select>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button @click="closeBulkAssign" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="doBulkAssign" :disabled="bulkAssignModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ bulkAssignModal.saving ? '...' : '确认' }}</button>
       </div>
     </div>
   </div>

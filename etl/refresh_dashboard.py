@@ -24,9 +24,30 @@ html_path = base / 'dashboard.html'
 
 print('[1] 读取 dashboard.html …')
 html  = html_path.read_text(encoding='utf-8')
-start = html.index('const RAW = ')
-end   = html.index('const OFFICIAL = new Set(RAW.official_pids)')
-raw   = json.loads(html[start + len('const RAW = '):end].strip().rstrip('\n'))
+start = html.index('const RAW = ') + len('const RAW = ')
+# 旧逻辑假设 RAW JSON 紧跟 `const OFFICIAL = ...`，但中间已经塞了 _loadRawFromAPI 等代码。
+# 改成括号配对解析：从 `{` 开始数，到外层 `}` 闭合为止，截出 JSON。
+def _extract_top_object(s):
+    if s[0] != '{':
+        raise ValueError('expected JSON object starting with {')
+    depth = 0
+    in_str = False
+    esc = False
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc: esc = False
+            elif ch == '\\': esc = True
+            elif ch == '"': in_str = False
+            continue
+        if ch == '"': in_str = True
+        elif ch == '{': depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                return s[:i+1]
+    raise ValueError('unterminated JSON object')
+raw_json_str = _extract_top_object(html[start:].lstrip())
+raw   = json.loads(raw_json_str)
 
 product_ids  = set(raw.get('cat_map', {}).keys()) | set(raw.get('products', {}).keys())
 short_names  = raw.get('short_names', {})
