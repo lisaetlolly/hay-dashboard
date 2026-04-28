@@ -1087,24 +1087,22 @@ const AdsPage = defineComponent({
           if (t.note === undefined) t.note = t.execution_note || ''
           return t
         })
-        // 占位仅在默认模式下生成 — 过滤模式下严格只看真任务
+        // 占位行规则：只在该商品**完全没真任务**的情况下才生成 9 项默认（初始化用）
+        // 一旦有 ≥1 条真任务，认为是"管理中"商品，不再自动补占位 → 用户删了就是删了
         let placeholderTasks = []
-        if (!filterMode) {
-          const usedTplIds = new Set(realTasks.map(t => t.template_id).filter(Boolean))
-          placeholderTasks = templates
-            .filter(tpl => !usedTplIds.has(tpl.id))
-            .map(tpl => ({
-              id: 'tmpl_' + tpl.id + '_' + g.product_id,
-              template_id: tpl.id,
-              detail: tpl.detail,
-              owner: tpl.default_owner || '',
-              category: tpl.category || '',
-              status: '待开始',
-              note: '',
-              execution_note: '',
-              created_at: null, start_date: null, eta_date: null, completed_at: null,
-              is_template: true,
-            }))
+        if (!filterMode && realTasks.length === 0) {
+          placeholderTasks = templates.map(tpl => ({
+            id: 'tmpl_' + tpl.id + '_' + g.product_id,
+            template_id: tpl.id,
+            detail: tpl.detail,
+            owner: tpl.default_owner || '',
+            category: tpl.category || '',
+            status: '待开始',
+            note: '',
+            execution_note: '',
+            created_at: null, start_date: null, eta_date: null, completed_at: null,
+            is_template: true,
+          }))
         }
         // 真实任务排序：未完成在前 + eta 越近越靠前 + created 越近越靠前
         const STATUS_RANK = { '进行中':0, '待开始':1, '已完成':3 }  // 越小越靠前

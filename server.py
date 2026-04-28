@@ -1354,8 +1354,9 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                 return {}
             result = {}
             # syzt：gmv / vis / cart / cart_rate / pay_cvr / dwell_time
+            # 主 PID 严格匹配，不再用 spu_id 聚合关联子 PID（跟生意参谋页对齐）
             syzt = rows(conn, """
-                SELECT p.spu_id AS pid,
+                SELECT s.product_id AS pid,
                        COALESCE(SUM(s.pay_amount), 0)        AS gmv,
                        COALESCE(SUM(s.visitors), 0)          AS vis,
                        COALESCE(SUM(s.cart_users), 0)        AS cart,
@@ -1363,10 +1364,9 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                        COALESCE(SUM(s.pay_new_buyers + s.pay_old_buyers)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS pay_cvr,
                        COALESCE(SUM(s.avg_stay_duration * s.visitors)::numeric / NULLIF(SUM(s.visitors),0), 0) AS dwell_time
                 FROM fact_syzt_product s
-                JOIN dim_product p ON s.product_id = p.product_id
                 WHERE s.stat_date BETWEEN %s AND %s
-                  AND p.spu_id = ANY(%s)
-                GROUP BY p.spu_id
+                  AND s.product_id = ANY(%s)
+                GROUP BY s.product_id
             """, (start, end, pids))
             for r in syzt:
                 result[r["pid"]] = {
@@ -1379,14 +1379,13 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                 }
             # wxst：spend / ctr
             wxst = rows(conn, """
-                SELECT p.spu_id AS pid,
+                SELECT w.product_id AS pid,
                        COALESCE(SUM(w.spend), 0)         AS spend,
                        COALESCE(SUM(w.clicks)::numeric / NULLIF(SUM(w.impressions),0) * 100, 0) AS ctr
                 FROM fact_wxst_product w
-                JOIN dim_product p ON w.product_id = p.product_id
                 WHERE w.stat_date BETWEEN %s AND %s
-                  AND p.spu_id = ANY(%s)
-                GROUP BY p.spu_id
+                  AND w.product_id = ANY(%s)
+                GROUP BY w.product_id
             """, (start, end, pids))
             for r in wxst:
                 m = result.setdefault(r["pid"], {})
