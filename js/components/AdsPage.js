@@ -297,13 +297,305 @@ const AdsPage = defineComponent({
         if (res.ok) {
           const data = await res.json()
           apiTaskPeriods.value = data
-          // 仅在用户尚未选择时才填默认（避免覆盖用户切换）
+          // 默认锁定上周（上周一-周日），环比上上周
           if (!selectedPeriod.value) {
             selectedPeriod.value = pickDefaultPeriodLabel(data)
           }
         }
       } catch {}
     }
+    // ── 单卡 + 按钮（方式一：给单个商品加任务）──
+    const cardAddTaskModal = ref({
+      show: false, pid: '',
+      // 三向联动 lookup（标签/任务名/负责人 任一选了就过滤其它两个）
+      pickedCategory: '', pickedDetail: '', pickedOwner: '',
+      // 起止日期
+      start_date: '', end_date: '',
+      saving: false,
+    })
+    const openCardAddTask = (pid) => {
+      if (!isAdmin.value) return alert('仅管理员可加任务')
+      cardAddTaskModal.value = {
+        show: true, pid, pickedCategory: '', pickedDetail: '', pickedOwner: '',
+        start_date: '', end_date: '', saving: false,
+      }
+    }
+    const closeCardAddTask = () => { cardAddTaskModal.value.show = false }
+    // 三向联动选项 — 根据已选两项过滤第三项
+    const cardCategoriesAll = computed(() => {
+      const all = (taskTemplates.value && taskTemplates.value.length) ? taskTemplates.value : FALLBACK_TEMPLATES
+      const m = cardAddTaskModal.value
+      return [...new Set(all
+        .filter(t => !m.pickedDetail || t.detail === m.pickedDetail)
+        .filter(t => !m.pickedOwner ||
+                ((t.default_owners || [t.default_owner]).includes(m.pickedOwner)))
+        .map(t => t.category))]
+    })
+    const cardDetailsAll = computed(() => {
+      const all = (taskTemplates.value && taskTemplates.value.length) ? taskTemplates.value : FALLBACK_TEMPLATES
+      const m = cardAddTaskModal.value
+      return [...new Set(all
+        .filter(t => !m.pickedCategory || t.category === m.pickedCategory)
+        .filter(t => !m.pickedOwner ||
+                ((t.default_owners || [t.default_owner]).includes(m.pickedOwner)))
+        .map(t => t.detail))]
+    })
+    const cardOwnersAll = computed(() => {
+      const all = (taskTemplates.value && taskTemplates.value.length) ? taskTemplates.value : FALLBACK_TEMPLATES
+      const m = cardAddTaskModal.value
+      const set = new Set()
+      for (const t of all) {
+        if (m.pickedCategory && t.category !== m.pickedCategory) continue
+        if (m.pickedDetail && t.detail !== m.pickedDetail) continue
+        for (const o of (t.default_owners || [t.default_owner].filter(Boolean))) set.add(o)
+      }
+      return [...set]
+    })
+    // 选了 category+detail，自动找出唯一 owner（如果只匹配一个模板）
+    Vue.watch(() => [cardAddTaskModal.value.pickedCategory, cardAddTaskModal.value.pickedDetail], () => {
+      const m = cardAddTaskModal.value
+      if (m.pickedCategory && m.pickedDetail && !m.pickedOwner) {
+        const all = (taskTemplates.value && taskTemplates.value.length) ? taskTemplates.value : FALLBACK_TEMPLATES
+        const tpl = all.find(t => t.category === m.pickedCategory && t.detail === m.pickedDetail)
+        if (tpl) {
+          const owners = tpl.default_owners || [tpl.default_owner].filter(Boolean)
+          if (owners.length === 1) m.pickedOwner = owners[0]
+        }
+      }
+    })
+    const saveCardAddTask = async () => {
+      const m = cardAddTaskModal.value
+      if (!m.pickedCategory || !m.pickedDetail || !m.pickedOwner) {
+        return alert('请选齐 标签 + 任务名称 + 负责人')
+      }
+      m.saving = true
+      try {
+        const r = await fetch('/api/tasks', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            product_id: m.pid,
+            detail: m.pickedDetail,
+            owner: m.pickedOwner,
+            category: m.pickedCategory,
+            status: '待开始', priority: '中',
+            time_range_label: activePeriod.value || apiTasksData.value.period?.label || '',
+          }),
+        })
+        if (!r.ok) {
+          const err = await r.json().catch(()=>({detail:'保存失败'}))
+          throw new Error(err.detail || ('HTTP ' + r.status))
+        }
+        const newTask = await r.json()
+        // 起止日期单独 PATCH（POST 不接 start/eta_date）
+        if (m.start_date || m.end_date) {
+          await fetch(`/api/tasks/${newTask.id}`, {
+            method:'PATCH', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              start_date: m.start_date || undefined,
+              eta_date: m.end_date || undefined,
+            })
+          })
+        }
+        await loadTasksWithMetrics()
+        closeCardAddTask()
+      } catch (err) {
+        alert('保存失败：' + err.message)
+        m.saving = false
+      }
+    }
+
+    // ── 设置 modal（方式二：齿轮按钮）──
+    // 内含 3 个标签：新增任务配置 / 任务组管理 / 批量发布
+    const settingsModal = ref({ show:false, tab:'config' })  // tab: config | groups | publish
+    const openSettingsModal = () => {
+      if (!isAdmin.value) return alert('仅管理员可访问设置')
+      settingsModal.value = { show:true, tab:'config' }
+      loadTaskGroups()
+    }
+    const closeSettingsModal = () => { settingsModal.value.show = false }
+
+    // ── 任务组列表 ──
+    const taskGroupsList = ref([])
+    const loadTaskGroups = async () => {
+      try {
+        const r = await fetch('/api/task-groups')
+        if (r.ok) taskGroupsList.value = await r.json()
+      } catch {}
+    }
+    onMounted(loadTaskGroups)
+
+    // 子 modal 状态：新增任务配置
+    const tplCreateModal = ref({ show:false, category:'', detail:'', owners:[], saving:false })
+    const openTplCreate = () => {
+      tplCreateModal.value = { show:true, category:'', detail:'', owners:[], saving:false }
+    }
+    const closeTplCreate = () => { tplCreateModal.value.show = false }
+    const toggleTplOwner = (o) => {
+      const arr = tplCreateModal.value.owners
+      const i = arr.indexOf(o)
+      if (i >= 0) arr.splice(i,1); else arr.push(o)
+    }
+    const saveTplCreate = async () => {
+      const m = tplCreateModal.value
+      if (!m.category.trim()) return alert('请填标签')
+      if (!m.detail.trim()) return alert('请填任务名称')
+      if (!m.owners.length) return alert('请至少选 1 个负责人')
+      m.saving = true
+      try {
+        const r = await fetch('/api/task-templates', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            category: m.category.trim(), detail: m.detail.trim(),
+            default_owners: m.owners,
+          }),
+        })
+        if (!r.ok) {
+          const err = await r.json().catch(()=>({detail:'保存失败'}))
+          throw new Error(err.detail || ('HTTP ' + r.status))
+        }
+        await loadTasksWithMetrics()  // 刷新 task_templates
+        closeTplCreate()
+      } catch (err) { alert('保存失败：' + err.message); m.saving = false }
+    }
+
+    // 子 modal：新增任务组
+    const groupCreateModal = ref({ show:false, name:'', selectedTplIds:new Set(), saving:false })
+    const openGroupCreate = () => {
+      groupCreateModal.value = { show:true, name:'', selectedTplIds:new Set(), saving:false }
+    }
+    const closeGroupCreate = () => { groupCreateModal.value.show = false }
+    const toggleGroupTpl = (tplId) => {
+      const s = groupCreateModal.value.selectedTplIds
+      if (s.has(tplId)) s.delete(tplId); else s.add(tplId)
+      groupCreateModal.value.selectedTplIds = new Set(s)
+    }
+    const saveGroupCreate = async () => {
+      const m = groupCreateModal.value
+      if (!m.name.trim()) return alert('请填任务组名称')
+      if (!m.selectedTplIds.size) return alert('请至少勾选 1 个任务')
+      m.saving = true
+      try {
+        const r = await fetch('/api/task-groups', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ name: m.name.trim(), template_ids: [...m.selectedTplIds] }),
+        })
+        if (!r.ok) {
+          const err = await r.json().catch(()=>({detail:'保存失败'}))
+          throw new Error(err.detail || ('HTTP ' + r.status))
+        }
+        await loadTaskGroups()
+        closeGroupCreate()
+      } catch (err) { alert('保存失败：' + err.message); m.saving = false }
+    }
+
+    // 子 modal：批量发布
+    const publishModal = ref({
+      show:false,
+      mode:'group',  // group | tpls
+      productPidsText:'',  // 多选商品（PID 一行一个或逗号分隔）
+      selectedGroupId:'',
+      selectedTplIds:new Set(),
+      start_date:'',
+      end_date:'',
+      saving:false, lastResult:null,
+    })
+    const openPublishModal = () => {
+      publishModal.value = {
+        show:true, mode:'group',
+        productPidsText: OFFICIAL_25_PIDS.join(', '),  // 默认 25 个，admin 删减
+        selectedGroupId: (taskGroupsList.value.find(g => g.is_default)?.id) || '',
+        selectedTplIds: new Set(),
+        start_date:'', end_date:'',
+        saving:false, lastResult:null,
+      }
+    }
+    const closePublishModal = () => { publishModal.value.show = false }
+    const togglePublishTpl = (tplId) => {
+      const s = publishModal.value.selectedTplIds
+      if (s.has(tplId)) s.delete(tplId); else s.add(tplId)
+      publishModal.value.selectedTplIds = new Set(s)
+    }
+    const savePublish = async () => {
+      const m = publishModal.value
+      const pids = (m.productPidsText || '').split(/[\s,，;；\n]+/).map(s => s.trim()).filter(Boolean)
+      if (!pids.length) return alert('请填至少 1 个商品 PID')
+      if (m.mode === 'group' && !m.selectedGroupId) return alert('请选任务组')
+      if (m.mode === 'tpls' && !m.selectedTplIds.size) return alert('请勾选至少 1 个任务')
+      if (!m.start_date || !m.end_date) return alert('起止时间都要填')
+      m.saving = true
+      try {
+        const body = {
+          product_ids: pids,
+          period_label: activePeriod.value || apiTasksData.value.period?.label || '',
+          start_date: m.start_date, end_date: m.end_date,
+          overwrite: true,
+        }
+        if (m.mode === 'group') body.group_id = parseInt(m.selectedGroupId)
+        else body.template_ids = [...m.selectedTplIds]
+        const r = await fetch('/api/tasks/publish', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(body),
+        })
+        if (!r.ok) {
+          const err = await r.json().catch(()=>({detail:'发布失败'}))
+          throw new Error(err.detail || ('HTTP ' + r.status))
+        }
+        const data = await r.json()
+        m.lastResult = `✓ 新建 ${data.created} 条 / 覆盖 ${data.overwritten} 条 / 共 ${data.products} 商品 × ${data.templates} 任务`
+        m.saving = false
+        await loadTasksWithMetrics()
+      } catch (err) { alert('发布失败：' + err.message); m.saving = false }
+    }
+
+    // 批量改时间 state
+    const batchSelected = ref(new Set())  // 勾选的真实 task.id（数字）
+    const batchModal = ref({ show:false, start_date:'', end_date:'', saving:false })
+    const toggleBatchSelect = (taskId) => {
+      const s = new Set(batchSelected.value)
+      if (s.has(taskId)) s.delete(taskId); else s.add(taskId)
+      batchSelected.value = s
+    }
+    const clearBatchSelect = () => { batchSelected.value = new Set() }
+    const openBatchModal = () => {
+      if (!isAdmin.value) return alert('仅管理员可批量改时间')
+      if (!batchSelected.value.size) return alert('请先勾选至少一个任务')
+      batchModal.value = { show:true, start_date:'', end_date:'', saving:false }
+    }
+    const closeBatchModal = () => { batchModal.value.show = false }
+    const saveBatchTime = async () => {
+      const m = batchModal.value
+      if (!m.start_date && !m.end_date) return alert('开始/截止 至少填一个')
+      m.saving = true
+      try {
+        const ids = [...batchSelected.value]
+        const body = {}
+        if (m.start_date) body.start_date = m.start_date
+        if (m.end_date) body.eta_date = m.end_date
+        // 一条一条 PATCH（后端 bulk-update 不接 start/eta_date）
+        for (const id of ids) {
+          const r = await fetch(`/api/tasks/${id}`, {
+            method:'PATCH', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(body),
+          })
+          if (!r.ok) throw new Error('id=' + id + ' 改失败')
+          // 本地写值
+          for (const g of apiTasksData.value.groups || []) {
+            for (const t of g.tasks || []) {
+              if (t.id === id) {
+                if (m.start_date) t.start_date = m.start_date
+                if (m.end_date) t.eta_date = m.end_date
+              }
+            }
+          }
+        }
+        clearBatchSelect()
+        closeBatchModal()
+      } catch (err) {
+        alert('批量改失败：' + err.message)
+        m.saving = false
+      }
+    }
+
     // "查看本周任务" 按钮：切换到包含今天的那个周期；再点切回上周（toggle）
     const isViewingCurrentWeek = computed(() => {
       const p = apiTasksData.value.period
@@ -501,8 +793,25 @@ const AdsPage = defineComponent({
             created_at: null, eta_date: null, completed_at: null,
             is_template: true,
           }))
-        // 真实任务在前，占位任务在后；保持「9 个固定任务每个商品都看得到」
-        const mergedTasks = [...realTasks, ...placeholderTasks]
+        // 真实任务排序：未完成在前 + eta 越近越靠前 + created 越近越靠前
+        const STATUS_RANK = { '进行中':0, '待开始':1, '已完成':3 }  // 越小越靠前
+        const sortKey = (t) => {
+          const s = STATUS_RANK[t.status] != null ? STATUS_RANK[t.status] : 2
+          // eta 越近越靠前；没设的算很远（排后面）
+          const eta = t.eta_date ? new Date(t.eta_date).getTime() : 8e15
+          // created 越近越靠前 → 用负数（取反），缺失 = 0
+          const cre = t.created_at ? -new Date(t.created_at).getTime() : 0
+          return [s, eta, cre]
+        }
+        const sortedReal = [...realTasks].sort((a,b) => {
+          const ka = sortKey(a), kb = sortKey(b)
+          for (let i=0; i<ka.length; i++) {
+            if (ka[i] !== kb[i]) return ka[i] < kb[i] ? -1 : 1
+          }
+          return 0
+        })
+        // 真实任务（按规则排序）在前，占位任务在后
+        const mergedTasks = [...sortedReal, ...placeholderTasks]
         // 任务级过滤（owner / status）
         const filteredTasks = mergedTasks.filter(t => {
           if (hasOwnerFilter && t.owner !== f.owner) return false
@@ -1187,6 +1496,14 @@ const AdsPage = defineComponent({
       }
       return '—'
     }
+    // 截止日期是否落在当前展示周期内（用于时间列高亮）
+    const etaInCurrentWeek = (task) => {
+      if (!task || !task.eta_date) return false
+      const p = apiTasksData.value.period
+      if (!p || !p.start_date || !p.end_date) return false
+      const eta = String(task.eta_date).slice(0, 10)
+      return eta >= p.start_date && eta <= p.end_date
+    }
     // 周期开始 / 结束日期（用于待开始/进行中时间列兜底显示 "4.27-4.30" 这种）
     const periodStartDateDisplay = computed(() => {
       const p = apiTasksData.value.period
@@ -1320,7 +1637,18 @@ const AdsPage = defineComponent({
       channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod, teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       // 任务时间/红点辅助
       isNewThisWeek, isStatusDone, isStatusInProgress, fmtCompletedAt, fmtCompletedSmart, fmtEtaDate,
-      periodStartDateDisplay, periodEndDateDisplay,
+      periodStartDateDisplay, periodEndDateDisplay, etaInCurrentWeek,
+      batchSelected, batchModal, toggleBatchSelect, clearBatchSelect,
+      openBatchModal, closeBatchModal, saveBatchTime,
+      // 单卡 + 按钮
+      cardAddTaskModal, openCardAddTask, closeCardAddTask, saveCardAddTask,
+      cardCategoriesAll, cardDetailsAll, cardOwnersAll,
+      // 设置 modal + 子模块
+      settingsModal, openSettingsModal, closeSettingsModal,
+      taskGroupsList,
+      tplCreateModal, openTplCreate, closeTplCreate, toggleTplOwner, saveTplCreate,
+      groupCreateModal, openGroupCreate, closeGroupCreate, toggleGroupTpl, saveGroupCreate,
+      publishModal, openPublishModal, closePublishModal, togglePublishTpl, savePublish,
       adsCtr, ctrRankRows,
       channelCatData,
       // ── 新增：API 数据状态 + 品类计划
@@ -1557,6 +1885,10 @@ const AdsPage = defineComponent({
           </select>
           <input v-model="teamFilters.productKeyword" placeholder="搜商品名" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff;width:110px">
           <button @click="teamFilters={ owner:'', category:'', productKeyword:'', status:'' }" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;color:var(--muted)">重置</button>
+          <span style="flex:1"></span>
+          <!-- 设置按钮（齿轮）：仅管理员可见 - 任务配置 / 任务组 / 批量发布 -->
+          <button v-if="isAdmin" @click="openSettingsModal" title="任务设置：新增任务配置 / 任务组 / 批量发布"
+            style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:5px 10px;font-size:14px;cursor:pointer;color:var(--text);font-weight:600">⚙</button>
         </div>
       </div>
 
@@ -1588,9 +1920,14 @@ const AdsPage = defineComponent({
               </div>
               <!-- 右：商品信息 + 指标 -->
               <div style="flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0">
-                <div>
-                  <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.name }}</div>
-                  <div style="font-size:11px;color:var(--muted)">{{ item.pid }}</div>
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+                  <div style="flex:1;min-width:0">
+                    <div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ item.name }}</div>
+                    <div style="font-size:11px;color:var(--muted)">{{ item.pid }}</div>
+                  </div>
+                  <!-- 单卡 + 按钮（仅 admin）-->
+                  <button v-if="isAdmin" @click="openCardAddTask(item.pid)" title="给该商品加一行任务"
+                    style="border:1px solid #d97706;background:#fff;color:#d97706;border-radius:50%;width:26px;height:26px;font-size:16px;font-weight:700;cursor:pointer;flex-shrink:0;line-height:1">+</button>
                 </div>
                 <div>
                   <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px 12px">
@@ -1685,28 +2022,28 @@ const AdsPage = defineComponent({
                       ✓ {{ fmtCompletedSmart(task) }}
                     </span>
                   </template>
-                  <!-- 待开始 / 进行中：start_date ~ eta_date 双格 -->
+                  <!-- 待开始 / 进行中：start_date ~ eta_date 双格（开始时间中性色，截止时间在本周内才高亮）-->
                   <template v-else>
-                    <!-- 开始日期 -->
+                    <!-- 开始日期：中性色 -->
                     <input v-if="isEditing(task.id,'start_date')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-start_date'"
                       @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
                       style="font-size:11px;border:1px solid var(--accent);border-radius:4px;padding:1px 3px;background:#fff;width:48%">
                     <span v-else
-                      :style="{color: task.start_date ? '#16a34a' : '#9ca3af', cursor: isAdmin?'pointer':'default'}"
+                      :style="{color: '#6b7280', cursor: isAdmin?'pointer':'default'}"
                       :title="isAdmin ? '点击改开始日期' : '开始日期'"
                       @click="isAdmin && startCellEdit(task,'start_date')">
-                      {{ task.start_date ? fmtEtaDate(task.start_date) : periodStartDateDisplay || '—' }}
+                      {{ task.start_date ? fmtEtaDate(task.start_date) : (periodStartDateDisplay || '—') }}
                     </span>
                     <span style="color:#9ca3af">~</span>
-                    <!-- 截止日期 -->
+                    <!-- 截止日期：在当前展示周期内 → 橙色高亮；否则中性色 -->
                     <input v-if="isEditing(task.id,'eta_date')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-eta_date'"
                       @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
                       style="font-size:11px;border:1px solid var(--accent);border-radius:4px;padding:1px 3px;background:#fff;width:48%">
                     <span v-else
-                      :style="{color: task.eta_date ? '#f59e0b' : '#9ca3af', cursor: isAdmin?'pointer':'default'}"
+                      :style="{color: etaInCurrentWeek(task) ? '#f59e0b' : '#6b7280', fontWeight: etaInCurrentWeek(task) ? 700 : 400, cursor: isAdmin?'pointer':'default'}"
                       :title="isAdmin ? '点击改截止日期' : '截止日期'"
                       @click="isAdmin && startCellEdit(task,'eta_date')">
-                      {{ task.eta_date ? fmtEtaDate(task.eta_date) : periodEndDateDisplay || '—' }}
+                      {{ task.eta_date ? fmtEtaDate(task.eta_date) : (periodEndDateDisplay || '—') }}
                     </span>
                   </template>
                 </div>
@@ -1810,6 +2147,217 @@ const AdsPage = defineComponent({
       </div>
     </div>
   </template>
+
+  <!-- ========================================================================== -->
+  <!-- 单卡 + 按钮 modal：给指定单品加一行任务（三向联动） -->
+  <!-- ========================================================================== -->
+  <div v-if="cardAddTaskModal.show" @click.self="closeCardAddTask"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:520px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">给商品 {{ cardAddTaskModal.pid }} 加任务</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务标签（一级分类）</div>
+          <select v-model="cardAddTaskModal.pickedCategory" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+            <option value="">— 全部 —</option>
+            <option v-for="c in cardCategoriesAll" :key="c" :value="c">{{ c }}</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称（二级分类）</div>
+          <select v-model="cardAddTaskModal.pickedDetail" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+            <option value="">— 全部 —</option>
+            <option v-for="d in cardDetailsAll" :key="d" :value="d">{{ d }}</option>
+          </select>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人</div>
+          <select v-model="cardAddTaskModal.pickedOwner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+            <option value="">— 全部 —</option>
+            <option v-for="o in cardOwnersAll" :key="o" :value="o">{{ o }}</option>
+          </select>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期</div>
+            <input type="date" v-model="cardAddTaskModal.start_date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">截止日期</div>
+            <input type="date" v-model="cardAddTaskModal.end_date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--muted)">三个下拉互相联动：选标签后名称只显示该标签下的；先选名称会过滤标签和负责人。</div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeCardAddTask" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveCardAddTask" :disabled="cardAddTaskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ cardAddTaskModal.saving ? '...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================== -->
+  <!-- 设置 modal（齿轮按钮）：3 个 tab：任务配置 / 任务组 / 批量发布 -->
+  <!-- ========================================================================== -->
+  <div v-if="settingsModal.show" @click.self="closeSettingsModal"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
+    <div style="width:680px;max-width:94vw;max-height:88vh;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25);display:flex;flex-direction:column">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:14px;font-weight:700">任务设置</div>
+        <button @click="closeSettingsModal" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--muted)">×</button>
+      </div>
+      <div style="display:flex;border-bottom:1px solid var(--border);margin-bottom:14px">
+        <button @click="settingsModal.tab='config'" :style="{padding:'8px 14px',fontSize:'12px',border:'none',cursor:'pointer',background:'transparent',color:settingsModal.tab==='config'?'var(--text)':'var(--muted)',borderBottom:settingsModal.tab==='config'?'2px solid var(--accent)':'2px solid transparent',fontWeight:settingsModal.tab==='config'?700:500}">新增任务配置</button>
+        <button @click="settingsModal.tab='groups'" :style="{padding:'8px 14px',fontSize:'12px',border:'none',cursor:'pointer',background:'transparent',color:settingsModal.tab==='groups'?'var(--text)':'var(--muted)',borderBottom:settingsModal.tab==='groups'?'2px solid var(--accent)':'2px solid transparent',fontWeight:settingsModal.tab==='groups'?700:500}">任务组</button>
+        <button @click="settingsModal.tab='publish'" :style="{padding:'8px 14px',fontSize:'12px',border:'none',cursor:'pointer',background:'transparent',color:settingsModal.tab==='publish'?'var(--text)':'var(--muted)',borderBottom:settingsModal.tab==='publish'?'2px solid var(--accent)':'2px solid transparent',fontWeight:settingsModal.tab==='publish'?700:500}">批量发布</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding-right:4px">
+        <!-- TAB 1：任务配置 -->
+        <div v-if="settingsModal.tab==='config'">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-size:12px;color:var(--muted)">已配置 {{ taskTemplates.length }} 个任务（标签/名称/负责人）</div>
+            <button @click="openTplCreate" style="padding:5px 12px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">+ 新增任务配置</button>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div v-for="t in taskTemplates" :key="t.id" style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:#fafaf9">
+              <span style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:99px;background:#fff;color:var(--muted)">{{ t.category }}</span>
+              <span style="flex:1;font-size:12px;font-weight:500">{{ t.detail }}</span>
+              <span style="font-size:11px;color:var(--muted)">{{ (t.default_owners && t.default_owners.length) ? t.default_owners.join(' / ') : t.default_owner }}</span>
+            </div>
+          </div>
+        </div>
+        <!-- TAB 2：任务组 -->
+        <div v-if="settingsModal.tab==='groups'">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-size:12px;color:var(--muted)">{{ taskGroupsList.length }} 个任务组</div>
+            <button @click="openGroupCreate" style="padding:5px 12px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">+ 新建任务组</button>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div v-for="g in taskGroupsList" :key="g.id" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fafaf9">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+                <div style="font-size:13px;font-weight:700">{{ g.name }} <span v-if="g.is_default" style="font-size:10px;color:#16a34a;font-weight:500">（默认）</span></div>
+                <span style="font-size:11px;color:var(--muted)">{{ g.templates ? g.templates.length : 0 }} 个任务</span>
+              </div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <span v-for="t in (g.templates || [])" :key="t.template_id" style="font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:99px;background:#fff;color:var(--muted)">{{ t.category }}·{{ t.detail }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- TAB 3：批量发布 -->
+        <div v-if="settingsModal.tab==='publish'">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <div>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:3px">商品 PID（多选，可手填新单品；逗号或换行分隔）</div>
+              <textarea v-model="publishModal.productPidsText" rows="3" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box;font-family:monospace"></textarea>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button @click="publishModal.mode='group'" :style="{flex:1,padding:'6px 10px',fontSize:'12px',border:'1px solid var(--border)',cursor:'pointer',background:publishModal.mode==='group'?'var(--accent)':'#fff',color:publishModal.mode==='group'?'#fff':'var(--text)',borderRadius:'6px'}">选任务组</button>
+              <button @click="publishModal.mode='tpls'" :style="{flex:1,padding:'6px 10px',fontSize:'12px',border:'1px solid var(--border)',cursor:'pointer',background:publishModal.mode==='tpls'?'var(--accent)':'#fff',color:publishModal.mode==='tpls'?'#fff':'var(--text)',borderRadius:'6px'}">选单个/多个任务</button>
+            </div>
+            <div v-if="publishModal.mode==='group'">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务组</div>
+              <select v-model="publishModal.selectedGroupId" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
+                <option value="">— 选任务组 —</option>
+                <option v-for="g in taskGroupsList" :key="g.id" :value="g.id">{{ g.name }}（{{ g.templates ? g.templates.length : 0 }} 任务）</option>
+              </select>
+            </div>
+            <div v-else>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:3px">勾选要发布的任务</div>
+              <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
+                <label v-for="t in taskTemplates" :key="t.id" style="display:flex;align-items:center;gap:6px;padding:3px 6px;cursor:pointer;font-size:12px">
+                  <input type="checkbox" :checked="publishModal.selectedTplIds.has(t.id)" @change="togglePublishTpl(t.id)">
+                  <span style="font-size:11px;padding:1px 6px;border:1px solid var(--border);border-radius:99px;background:#fff;color:var(--muted)">{{ t.category }}</span>
+                  <span>{{ t.detail }}</span>
+                </label>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期 *</div>
+                <input type="date" v-model="publishModal.start_date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:3px">截止日期 *</div>
+                <input type="date" v-model="publishModal.end_date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+              </div>
+            </div>
+            <div style="font-size:10px;color:var(--muted)">⚠ 同 product+周期+标签+任务名 重复时会**覆盖**：时间/状态更新，备注清空</div>
+            <div style="font-size:10px;color:var(--muted)">周期自动写：{{ activePeriod || '—' }}</div>
+            <div v-if="publishModal.lastResult" style="font-size:11px;color:#16a34a;font-weight:600">{{ publishModal.lastResult }}</div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+              <button @click="savePublish" :disabled="publishModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ publishModal.saving ? '...' : '发布任务' }}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 子 modal：新增任务配置 -->
+  <div v-if="tplCreateModal.show" @click.self="closeTplCreate"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:1100">
+    <div style="width:460px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新增任务配置</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务标签（已存在 → 自动归到该标签）</div>
+          <input v-model="tplCreateModal.category" list="tpl-create-cats" placeholder="如：标题优化"
+            style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          <datalist id="tpl-create-cats">
+            <option v-for="c in [...new Set(taskTemplates.map(t=>t.category))]" :key="c" :value="c"></option>
+          </datalist>
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称（二级分类）</div>
+          <input v-model="tplCreateModal.detail" placeholder="如：结合小红书/淘宝热搜词，优化链接标题"
+            style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人（可多选 — 该任务可指派的固定人选）</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            <label v-for="o in TASK_OWNERS_ALL" :key="o" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border:1px solid var(--border);border-radius:99px;font-size:11px;cursor:pointer;background:#fff">
+              <input type="checkbox" :checked="tplCreateModal.owners.includes(o)" @change="toggleTplOwner(o)">
+              {{ o }}
+            </label>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeTplCreate" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveTplCreate" :disabled="tplCreateModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ tplCreateModal.saving ? '...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 子 modal：新增任务组 -->
+  <div v-if="groupCreateModal.show" @click.self="closeGroupCreate"
+    style="position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:1100">
+    <div style="width:520px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px">新建任务组</div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务组名称</div>
+          <input v-model="groupCreateModal.name" placeholder="如：4月强化任务组"
+            style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+        </div>
+        <div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">勾选包含任务（{{ groupCreateModal.selectedTplIds.size }} / {{ taskTemplates.length }}）</div>
+          <div style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:6px">
+            <label v-for="t in taskTemplates" :key="t.id" style="display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;font-size:12px">
+              <input type="checkbox" :checked="groupCreateModal.selectedTplIds.has(t.id)" @change="toggleGroupTpl(t.id)">
+              <span style="font-size:11px;padding:1px 6px;border:1px solid var(--border);border-radius:99px;background:#fff;color:var(--muted)">{{ t.category }}</span>
+              <span>{{ t.detail }}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button @click="closeGroupCreate" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
+        <button @click="saveGroupCreate" :disabled="groupCreateModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ groupCreateModal.saving ? '...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 新增任务 Modal — 标签/名称 用 datalist：可以选已有的，也可以填全新的（全新的会打红点）-->
   <div v-if="newTaskModal.show" @click.self="closeNewTask"

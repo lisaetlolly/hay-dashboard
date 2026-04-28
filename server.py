@@ -1241,21 +1241,6 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                      xhs_count（小红书笔记数）
     """
     with db() as conn:
-        # 1. 当前周期
-        if period_label:
-            cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period WHERE label = %s", (period_label,))
-        else:
-            cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period WHERE is_current = TRUE ORDER BY start_date DESC LIMIT 1")
-        if not cur_period:
-            return {"error": "no current period found", "groups": []}
-        # 2. 上期：start_date 小于当前的最近一个
-        prev_period = row(conn, """
-            SELECT label, start_date::text AS start_date, end_date::text AS end_date
-            FROM task_period
-            WHERE start_date < %s::date
-            ORDER BY start_date DESC LIMIT 1
-        """, (cur_period["start_date"],))
-
         # 兜底：老库可能还没有 start_date / eta_date / completed_at 列
         cur = conn.cursor()
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
@@ -1263,10 +1248,50 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
         conn.commit()
 
-        # 3. 当前周期的所有任务 + 跨期未完成的任务（任务起止日期跨过本周期 且 status != 已完成）
-        # 这样 4.20-22 周期布置但拖到 4.27 还没完成的任务，会被带到 4.27-30 周期里继续显示。
+        # period_label 三种语义：
+        # · '' / 'all'   → 不过滤周期，返回全部任务（默认状态）
+        # · 具体 label   → 只看那期 + 跨期未完成
+        # · 缺省（None）  → 取最新一期
+        view_all = (period_label is None or period_label == '' or period_label == 'all')
+
+        # 1. 当前周期
+        if not view_all:
+            cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period WHERE label = %s", (period_label,))
+            if not cur_period:
+                return {"error": "no current period found", "groups": [], "task_templates": []}
+        else:
+            # 默认全部模式：metrics 仍以"最新周期"作为参考（卡头显示数据用）
+            cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period ORDER BY start_date DESC LIMIT 1")
+            if not cur_period:
+                cur_period = {"label": "—", "start_date": None, "end_date": None}
+        # 2. 上期：start_date 小于当前的最近一个
+        prev_period = None
+        if cur_period.get("start_date"):
+            prev_period = row(conn, """
+                SELECT label, start_date::text AS start_date, end_date::text AS end_date
+                FROM task_period
+                WHERE start_date < %s::date
+                ORDER BY start_date DESC LIMIT 1
+            """, (cur_period["start_date"],))
+
+        # 3. 任务列表
         DONE = ('done', '已完成', '完成')
-        tasks = rows(conn, """
+        if view_all:
+            # 全部任务（默认）
+            tasks = rows(conn, """
+                SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
+                       t.category, t.time_range_label, t.execution_note,
+                       t.template_id,
+                       t.created_at::text         AS created_at,
+                       t.start_date::text         AS start_date,
+                       t.eta_date::text           AS eta_date,
+                       t.completed_at::text       AS completed_at
+                FROM tasks t
+                WHERE t.product_id IS NOT NULL
+                ORDER BY t.product_id, t.id
+            """)
+        else:
+            tasks = rows(conn, """
             SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
                    t.category, t.time_range_label, t.execution_note,
                    t.template_id,
@@ -1466,6 +1491,226 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             "prev_period": prev_period,
             "groups":      groups,
             "task_templates": task_templates,
+        }
+
+
+# ===========================================================================
+# 团队 tab 新接口：新增任务配置 / 任务组 CRUD / 批量发布（覆盖式）
+# ===========================================================================
+
+class TaskTemplateCreate(BaseModel):
+    category: str
+    detail: str
+    default_owners: list  # ["晓东（运营）", ...] 或 ["xxx"] 单负责人也是数组
+    sort_order: Optional[int] = 999
+
+
+@app.post("/api/task-templates", status_code=201)
+def create_task_template(body: TaskTemplateCreate):
+    """新增任务配置（一级标签 + 二级名称 + 一个或多个固定负责人）。
+    标签若已存在 → 自动归到该标签下。"""
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # 兜底列
+        cur.execute("ALTER TABLE task_template ADD COLUMN IF NOT EXISTS default_owners TEXT[]")
+        conn.commit()
+        # 重复检查
+        existing = row(conn, """
+            SELECT id FROM task_template
+            WHERE category = %s AND detail = %s AND is_active = TRUE
+        """, (body.category, body.detail))
+        if existing:
+            raise HTTPException(409, f"模板已存在（id={existing['id']}）")
+        owners = body.default_owners or []
+        primary_owner = owners[0] if owners else ''
+        cur.execute("""
+            INSERT INTO task_template (category, detail, default_owner, default_owners, sort_order, is_active)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
+            RETURNING *
+        """, (body.category, body.detail, primary_owner, owners, body.sort_order))
+        conn.commit()
+        return cur.fetchone()
+
+
+@app.get("/api/task-groups")
+def list_task_groups():
+    """所有任务组及其包含的模板。"""
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS task_group (
+              id SERIAL PRIMARY KEY,
+              name TEXT NOT NULL UNIQUE,
+              is_default BOOLEAN DEFAULT FALSE,
+              created_at TIMESTAMPTZ DEFAULT now(),
+              updated_at TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS task_group_member (
+              group_id INT NOT NULL REFERENCES task_group(id) ON DELETE CASCADE,
+              template_id INT NOT NULL REFERENCES task_template(id) ON DELETE CASCADE,
+              sort_order INT DEFAULT 0,
+              PRIMARY KEY (group_id, template_id)
+            );
+        """)
+        conn.commit()
+        groups = rows(conn, """
+            SELECT g.id, g.name, g.is_default,
+                   COALESCE(json_agg(json_build_object(
+                     'template_id', m.template_id,
+                     'category',    t.category,
+                     'detail',      t.detail,
+                     'sort_order',  m.sort_order
+                   ) ORDER BY m.sort_order, m.template_id) FILTER (WHERE m.template_id IS NOT NULL), '[]') AS templates
+            FROM task_group g
+            LEFT JOIN task_group_member m ON m.group_id = g.id
+            LEFT JOIN task_template t ON t.id = m.template_id
+            GROUP BY g.id, g.name, g.is_default
+            ORDER BY g.is_default DESC, g.id
+        """)
+        return groups
+
+
+class TaskGroupCreate(BaseModel):
+    name: str
+    template_ids: list   # [1, 2, 3, ...]
+
+
+@app.post("/api/task-groups", status_code=201)
+def create_task_group(body: TaskGroupCreate):
+    if not body.name.strip():
+        raise HTTPException(400, "任务组名称不能空")
+    if not body.template_ids:
+        raise HTTPException(400, "任务组至少包含 1 个任务")
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        try:
+            cur.execute("""
+                INSERT INTO task_group (name) VALUES (%s) RETURNING *
+            """, (body.name.strip(),))
+            grp = cur.fetchone()
+            for i, tpl_id in enumerate(body.template_ids):
+                cur.execute("""
+                    INSERT INTO task_group_member (group_id, template_id, sort_order)
+                    VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
+                """, (grp["id"], tpl_id, i))
+            conn.commit()
+            return grp
+        except psycopg2.errors.UniqueViolation:
+            conn.rollback()
+            raise HTTPException(409, f"任务组名称 '{body.name}' 已存在")
+
+
+@app.delete("/api/task-groups/{group_id}")
+def delete_task_group(group_id: int):
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT is_default FROM task_group WHERE id = %s", (group_id,))
+        r = cur.fetchone()
+        if not r: raise HTTPException(404, "任务组不存在")
+        if r[0]: raise HTTPException(400, "默认任务组不能删除")
+        cur.execute("DELETE FROM task_group WHERE id = %s", (group_id,))
+        conn.commit()
+        return {"deleted": True}
+
+
+class TaskPublishBody(BaseModel):
+    product_ids: list           # ["679198301351", ...]
+    template_ids: Optional[list] = None   # 单选/多选模板
+    group_id: Optional[int] = None        # 或选任务组
+    period_label: str           # 必传，发布到哪个周期（如 '4.27-5.3'）
+    start_date: Optional[str] = None      # 'YYYY-MM-DD'
+    end_date: Optional[str] = None        # 'YYYY-MM-DD'
+    overwrite: Optional[bool] = True      # 重复时是否覆盖（默认是）
+
+
+@app.post("/api/tasks/publish", status_code=201)
+def publish_tasks(body: TaskPublishBody):
+    """
+    批量发布任务到一组商品。
+    - 重复（同 product_id + period_label + category + detail）→ 覆盖：更新时间、状态、清空备注
+    - 新的 → INSERT
+    """
+    if not body.product_ids:
+        raise HTTPException(400, "请选至少 1 个商品")
+    if not body.template_ids and not body.group_id:
+        raise HTTPException(400, "请选任务或任务组")
+    with db() as conn:
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # 兜底建表
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS task_group (
+              id SERIAL PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+              is_default BOOLEAN DEFAULT FALSE,
+              created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS task_group_member (
+              group_id INT NOT NULL REFERENCES task_group(id) ON DELETE CASCADE,
+              template_id INT NOT NULL REFERENCES task_template(id) ON DELETE CASCADE,
+              sort_order INT DEFAULT 0,
+              PRIMARY KEY (group_id, template_id)
+            );
+        """)
+        conn.commit()
+        # 解析模板 ID
+        tpl_ids = list(body.template_ids or [])
+        if body.group_id:
+            cur.execute("SELECT template_id FROM task_group_member WHERE group_id = %s ORDER BY sort_order", (body.group_id,))
+            tpl_ids.extend([r["template_id"] for r in cur.fetchall()])
+        tpl_ids = list({tid for tid in tpl_ids if tid})
+        if not tpl_ids:
+            raise HTTPException(400, "选中的任务/任务组里没有有效模板")
+        cur.execute("SELECT id, category, detail, default_owner FROM task_template WHERE id = ANY(%s)", (tpl_ids,))
+        templates = cur.fetchall()
+        if not templates:
+            raise HTTPException(400, "模板不存在")
+        # 期间检查 / 自动建期
+        prd = row(conn, "SELECT label FROM task_period WHERE label = %s", (body.period_label,))
+        if not prd:
+            raise HTTPException(400, f"周期 {body.period_label} 不存在，请先建周期")
+        created = 0
+        overwritten = 0
+        for pid in body.product_ids:
+            for tpl in templates:
+                # 查是否存在重复（同 product+period+category+detail）
+                cur.execute("""
+                    SELECT id FROM tasks
+                    WHERE product_id = %s
+                      AND COALESCE(time_range_label,'') = %s
+                      AND COALESCE(category,'') = %s
+                      AND COALESCE(detail,'')   = %s
+                """, (pid, body.period_label, tpl["category"] or '', tpl["detail"] or ''))
+                existing = cur.fetchone()
+                if existing:
+                    if body.overwrite:
+                        # 覆盖：时间/状态更新，备注清空
+                        cur.execute("""
+                            UPDATE tasks
+                            SET status = '待开始',
+                                start_date = %s::date,
+                                eta_date   = %s::date,
+                                completed_at = NULL,
+                                execution_note = NULL,
+                                updated_at = now()
+                            WHERE id = %s
+                        """, (body.start_date or None, body.end_date or None, existing["id"]))
+                        overwritten += 1
+                    # 否则跳过
+                else:
+                    cur.execute("""
+                        INSERT INTO tasks
+                          (product_id, detail, owner, category, time_range_label,
+                           status, priority, template_id, start_date, eta_date)
+                        VALUES (%s, %s, %s, %s, %s, '待开始', '中', %s, %s::date, %s::date)
+                    """, (pid, tpl["detail"], tpl["default_owner"] or '',
+                          tpl["category"], body.period_label, tpl["id"],
+                          body.start_date or None, body.end_date or None))
+                    created += 1
+        conn.commit()
+        return {
+            "created": created,
+            "overwritten": overwritten,
+            "products": len(body.product_ids),
+            "templates": len(templates),
         }
 
 
