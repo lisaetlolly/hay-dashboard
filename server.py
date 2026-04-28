@@ -265,8 +265,8 @@ def get_raw_data():
                 # 该 SPU 的所有有数据日期
                 syzt_rows = syzt_by_spu.get(spu_id, [])
                 wxst_rows = wxst_by_spu.get(spu_id, {})
-                if not syzt_rows and not wxst_rows:
-                    continue
+                # 不再跳过没数据的商品 —— 主链 SKU 没销售也要保留在列表里，
+                # 否则商品管理页 OFFICIAL 25 个会因为某个新品零数据少 1 个
                 all_dates = sorted({r["d"] for r in syzt_rows} | set(wxst_rows.keys()))
                 # 构建 dates 数组 + 各列时序
                 arr_pay, arr_vis, arr_cart, arr_collect, arr_refund = [], [], [], [], []
