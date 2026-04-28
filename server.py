@@ -1272,13 +1272,55 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             ORDER BY t.product_id, t.id
         """, (cur_period["label"],))
 
-        # 4. 涉及到的 product_id 列表
-        pids = sorted({t["product_id"] for t in tasks})
+        # 4a. 25 个主链官方 PID — 硬编码，和前端 RAW.official_pids 完全一致。
+        # 不再走 dim_product 推断（spu_id==product_id 在生产库里覆盖不全，会漏到 13~17 个）。
+        OFFICIAL_25_PIDS = [
+            '1020175879777',  # Grid Bag 尼龙包
+            '580467335137',   # Basket 收纳篓
+            '652664516885',   # Knit 衣架
+            '975799789205',   # Canopy Umbrella 雨伞
+            '7660181033346',  # Barro Bowl & Plate 碗盘
+            '717349639294',   # Weekday 长凳
+            '824946188993',   # Taburete 8 Bar Stool 吧椅
+            '824607518747',   # Colour Rack 落地衣架
+            '824882661931',   # Common Pendant & Table Cord 灯具组
+            '742092260504',   # Apex Lamp 台灯
+            '682036237751',   # Korpus 置物架
+            '886839411718',   # Empire Vase 花瓶
+            '880816460277',   # Apex Floor Lamp 落地灯
+            '965048597796',   # La Pittura 餐盘
+            '888002957800',   # Weekend Bag 帆布袋
+            '1016294283167',  # Facet Cabinet 边柜
+            '737675603229',   # Arcs Trolley 小推车
+            '583134215392',   # Jessica Hans Vase 花瓶
+            '781547798998',   # Slice Chopping Board 砧板
+            '679198301351',   # Colour Crate 收纳篮
+            '880120382310',   # Apex Wall Lamp 壁灯
+            '690221882602',   # Bowler Table 茶几
+            '1022489092196',  # Conical Vase 花瓶
+            '887041510904',   # Coco Door Mat 地垫
+            '689952405763',   # Revolver Stool & Bar Stool 吧椅
+        ]
+        official_pids = sorted(set(OFFICIAL_25_PIDS))
+
+        # 4b. 涉及到的 product_id：25 个主链 + 当期 tasks 表里实际出现的 PID
+        pids_with_tasks = {t["product_id"] for t in tasks}
+        pids = sorted(set(official_pids) | pids_with_tasks)
+
+        # 4c. 9 个固定任务模板（按 sort_order）—— 前端在空商品下当占位行用
+        task_templates = rows(conn, """
+            SELECT id, category, detail, default_owner, sort_order
+            FROM task_template
+            WHERE is_active = TRUE
+            ORDER BY sort_order, id
+        """)
+
         if not pids:
             return {
                 "period": cur_period,
                 "prev_period": prev_period,
                 "groups": [],
+                "task_templates": task_templates,
             }
 
         # 5. 每个 product_id 当期 + 上期的 metrics
@@ -1402,13 +1444,14 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                 "prev_metrics":   prev_m,
                 "diff_pct":       diff,
             })
-        # 按当期 GMV 从高到低
+        # 按当期 GMV 从高到低（GMV 为 0 的商品排到末尾，但仍然返回）
         groups.sort(key=lambda g: g["current_metrics"].get("gmv", 0), reverse=True)
 
         return {
             "period":      cur_period,
             "prev_period": prev_period,
             "groups":      groups,
+            "task_templates": task_templates,
         }
 
 
