@@ -2062,7 +2062,7 @@ const AdsPage = defineComponent({
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;flex-wrap:wrap">
           <div>
             <span class="card-title">任务清单</span>
-            <span class="card-sub">{{ taskGroups.length }} 个商品 · 任务时间各自独立 · 点击单元格直接编辑</span>
+            <span class="card-sub">数据统计 {{ activePeriod || '—' }}　环比 {{ prevPeriodLabel || '—' }}　·　{{ taskGroups.length }} 个商品 · 任务时间各自独立 · 点击单元格直接编辑</span>
           </div>
           <div style="display:flex;gap:8px">
             <button v-if="isAdmin" @click="openNewTask('')"

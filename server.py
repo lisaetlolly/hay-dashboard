@@ -1264,24 +1264,33 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             if not cur_period:
                 return {"error": "no current period found", "groups": [], "task_templates": []}
         else:
-            # 默认全部模式：metrics 用"上周"作参考（运营约定 — 周一/周二看上周一-周日的数据）
-            # 找包含 today-7 那天的 period
+            # 默认全部模式：metrics 用"上周一-周日"完整一周（不用 DB 里 task_period 的截短范围，
+            # 比如 "4.20-22" 只覆盖 3 天，会漏掉 4.23-26 的真实数据 → 商品看起来"没数据"）
             from datetime import date, timedelta
-            target = (date.today() - timedelta(days=7)).isoformat()
-            cur_period = row(conn, """
-                SELECT label, start_date::text AS start_date, end_date::text AS end_date
-                FROM task_period
-                WHERE start_date <= %s::date AND end_date >= %s::date
-                ORDER BY start_date DESC LIMIT 1
-            """, (target, target))
-            if not cur_period:
-                # 兜底：DB 里没有覆盖上周的 period → 用最新一期
-                cur_period = row(conn, "SELECT label, start_date::text AS start_date, end_date::text AS end_date FROM task_period ORDER BY start_date DESC LIMIT 1")
-            if not cur_period:
-                cur_period = {"label": "—", "start_date": None, "end_date": None}
+            today = date.today()
+            # today 的周一
+            this_mon = today - timedelta(days=today.weekday())  # weekday: Mon=0, Sun=6
+            last_mon = this_mon - timedelta(days=7)
+            last_sun = last_mon + timedelta(days=6)
+            week_before_mon = last_mon - timedelta(days=7)
+            week_before_sun = last_mon - timedelta(days=1)
+            cur_period = {
+                "label": f"{last_mon.month}.{last_mon.day}-{last_sun.day if last_sun.month==last_mon.month else f'{last_sun.month}.{last_sun.day}'}",
+                "start_date": last_mon.isoformat(),
+                "end_date":   last_sun.isoformat(),
+            }
+            # 这种合成的 cur_period 用于 metrics 计算；prev 也合成
+            synth_prev = {
+                "label": f"{week_before_mon.month}.{week_before_mon.day}-{week_before_sun.day if week_before_sun.month==week_before_mon.month else f'{week_before_sun.month}.{week_before_sun.day}'}",
+                "start_date": week_before_mon.isoformat(),
+                "end_date":   week_before_sun.isoformat(),
+            }
         # 2. 上期：start_date 小于当前的最近一个
         prev_period = None
-        if cur_period.get("start_date"):
+        if view_all:
+            # 全部模式：用上面合成的 Mon-Sun 上上周作 prev（不查 DB 的截短 period）
+            prev_period = synth_prev
+        elif cur_period.get("start_date"):
             prev_period = row(conn, """
                 SELECT label, start_date::text AS start_date, end_date::text AS end_date
                 FROM task_period
