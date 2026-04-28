@@ -295,15 +295,16 @@ const AdsPage = defineComponent({
       try {
         const res = await fetch('/api/task-periods')
         if (res.ok) {
-          const data = await res.json()
-          apiTaskPeriods.value = data
-          // 默认锁定上周（上周一-周日），环比上上周
+          apiTaskPeriods.value = await res.json()
+          // metrics 默认用"上周"作环比参考；任务列表本身不被这个 period 过滤（taskGroups 永远 25）
           if (!selectedPeriod.value) {
-            selectedPeriod.value = pickDefaultPeriodLabel(data)
+            selectedPeriod.value = pickDefaultPeriodLabel(apiTaskPeriods.value)
           }
         }
       } catch {}
     }
+    // 给 header 用的"上周"参考（与 selectedPeriod 解耦，永远显示 4.20-26 类标签）
+    const lastWeekRefLabel = computed(() => pickDefaultPeriodLabel(apiTaskPeriods.value))
     // ── 单卡 + 按钮（方式一：给单个商品加任务）──
     const cardAddTaskModal = ref({
       show: false, pid: '',
@@ -315,9 +316,14 @@ const AdsPage = defineComponent({
     })
     const openCardAddTask = (pid) => {
       if (!isAdmin.value) return alert('仅管理员可加任务')
+      // 默认起止填周期（admin 可改）；周期空时用今天
+      const p = apiTasksData.value.period
+      const today = new Date().toISOString().slice(0,10)
       cardAddTaskModal.value = {
         show: true, pid, pickedCategory: '', pickedDetail: '', pickedOwner: '',
-        start_date: '', end_date: '', saving: false,
+        start_date: p?.start_date || today,
+        end_date: p?.end_date || today,
+        saving: false,
       }
     }
     const closeCardAddTask = () => { cardAddTaskModal.value.show = false }
@@ -370,6 +376,9 @@ const AdsPage = defineComponent({
       }
       m.saving = true
       try {
+        // 匹配模板 → 带 template_id（避免变成"自定义任务"导致打红点）
+        const all = (taskTemplates.value && taskTemplates.value.length) ? taskTemplates.value : FALLBACK_TEMPLATES
+        const matched = all.find(t => t.category === m.pickedCategory && t.detail === m.pickedDetail)
         const r = await fetch('/api/tasks', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
@@ -378,23 +387,15 @@ const AdsPage = defineComponent({
             owner: m.pickedOwner,
             category: m.pickedCategory,
             status: '待开始', priority: '中',
-            time_range_label: activePeriod.value || apiTasksData.value.period?.label || '',
+            time_range_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
+            start_date: m.start_date || null,
+            eta_date: m.end_date || null,
+            template_id: matched && typeof matched.id === 'number' ? matched.id : null,
           }),
         })
         if (!r.ok) {
           const err = await r.json().catch(()=>({detail:'保存失败'}))
           throw new Error(err.detail || ('HTTP ' + r.status))
-        }
-        const newTask = await r.json()
-        // 起止日期单独 PATCH（POST 不接 start/eta_date）
-        if (m.start_date || m.end_date) {
-          await fetch(`/api/tasks/${newTask.id}`, {
-            method:'PATCH', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              start_date: m.start_date || undefined,
-              eta_date: m.end_date || undefined,
-            })
-          })
         }
         await loadTasksWithMetrics()
         closeCardAddTask()
@@ -526,7 +527,7 @@ const AdsPage = defineComponent({
       try {
         const body = {
           product_ids: pids,
-          period_label: activePeriod.value || apiTasksData.value.period?.label || '',
+          period_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
           start_date: m.start_date, end_date: m.end_date,
           overwrite: true,
         }
@@ -551,12 +552,24 @@ const AdsPage = defineComponent({
     const noteModal = ref({ show:false, taskId:null, text:'', images:[], saving:false })
     const openNoteModal = (task) => {
       if (!canEditTask(task)) return alert('只能改自己负责的任务')
-      // 占位行：先 materialize 再编辑
-      if (task.is_template || (typeof task.id === 'string' && String(task.id).startsWith('tmpl_'))) {
-        return alert('该商品下还没正式创建这条任务，先点单元格编辑任意字段触发落库后再加备注')
-      }
+      // 占位行：标记为待 materialize，保存时先建任务再 PATCH note
       noteModal.value = {
-        show: true, taskId: task.id,
+        show: true,
+        taskId: task.id,
+        // 占位上下文（materialize 用）
+        isPlaceholder: !!(task.is_template || (typeof task.id === 'string' && String(task.id).startsWith('tmpl_'))),
+        templateId: task.template_id || null,
+        productId: (() => {
+          if (typeof task.id === 'string' && String(task.id).startsWith('tmpl_')) {
+            // 'tmpl_<tplId>_<pid>' 解析
+            const parts = String(task.id).split('_')
+            return parts[parts.length-1]
+          }
+          // 真任务从 g.tasks 反查
+          for (const g of apiTasksData.value.groups || [])
+            if ((g.tasks || []).some(t => t.id === task.id)) return g.product_id
+          return null
+        })(),
         text: task.execution_note || task.note || '',
         images: Array.isArray(task.note_images) ? [...task.note_images] : [],
         saving: false,
@@ -615,7 +628,38 @@ const AdsPage = defineComponent({
       const m = noteModal.value
       m.saving = true
       try {
-        const r = await fetch(`/api/tasks/${m.taskId}`, {
+        let realTaskId = m.taskId
+        // 占位行：先 bulk-instantiate 落库
+        if (m.isPlaceholder) {
+          if (!m.productId || !m.templateId) {
+            throw new Error('占位任务定位失败')
+          }
+          const inst = await fetch('/api/tasks/bulk-instantiate', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              period_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
+              product_ids: [m.productId],
+              template_ids: [m.templateId],
+            }),
+          })
+          if (!inst.ok) {
+            const err = await inst.json().catch(()=>({detail:'落库失败'}))
+            throw new Error(err.detail || ('HTTP ' + inst.status))
+          }
+          await loadTasksWithMetrics()
+          // 找新建出来的任务
+          let real = null
+          for (const g of apiTasksData.value.groups || []) {
+            if (g.product_id !== m.productId) continue
+            for (const t of (g.tasks || [])) {
+              if (t.template_id === m.templateId) { real = t; break }
+            }
+            if (real) break
+          }
+          if (!real) throw new Error('找不到新建的任务')
+          realTaskId = real.id
+        }
+        const r = await fetch(`/api/tasks/${realTaskId}`, {
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
             execution_note: m.text || '',
@@ -629,7 +673,7 @@ const AdsPage = defineComponent({
         // 本地写值
         for (const g of apiTasksData.value.groups || []) {
           for (const t of g.tasks || []) {
-            if (t.id === m.taskId) {
+            if (t.id === realTaskId) {
               t.execution_note = m.text
               t.note = m.text
               t.note_images = [...m.images]
@@ -711,19 +755,14 @@ const AdsPage = defineComponent({
     })
     const toggleCurrentWeek = () => {
       const ts = new Date().toISOString().slice(0,10)
-      if (isViewingCurrentWeek.value) {
-        // 切回上周
-        const target = new Date()
-        target.setDate(target.getDate() - 7)
-        const tts = target.toISOString().slice(0,10)
-        const hit = (apiTaskPeriods.value || []).find(p => p.start_date <= tts && tts <= p.end_date)
-        if (hit) selectedPeriod.value = hit.label
-        else alert('找不到上周的周期数据')
+      if (selectedPeriod.value) {
+        // 已经在某个周期过滤中 → 切回全景
+        selectedPeriod.value = ''
       } else {
-        // 切到本周
+        // 全景 → 切到本周
         const hit = (apiTaskPeriods.value || []).find(p => p.start_date <= ts && ts <= p.end_date)
         if (hit) selectedPeriod.value = hit.label
-        else alert('当前周期还没建，请先 + 新周期')
+        else alert('当前周期还没建，请先在设置里 + 新周期')
       }
     }
 
@@ -784,6 +823,11 @@ const AdsPage = defineComponent({
       const p = enrichPeriod(apiTasksData.value.period)
       return (p && p.displayLabel) || selectedPeriod.value || ''
     })
+    // ⚠ 给 API 调用用：DB 里 period_label 的原值（如 "4.27-30"），不是 UI 的显示版（"4.27-5.3"）
+    const activePeriodRaw = computed(() => {
+      const p = apiTasksData.value.period
+      return (p && p.label) || selectedPeriod.value || ''
+    })
     const activePeriodRange = computed(() => {
       const p = apiTasksData.value.period
       if (!p) return ''
@@ -812,10 +856,15 @@ const AdsPage = defineComponent({
         for (const t of g.tasks || []) if (t.owner) s.add(t.owner)
       return [...s]
     })
+    // 任务标签下拉（之前误用商品品类 g.category_l1，导致选"标题优化"过滤后全空）
     const categoryOptions = computed(() => {
       const s = new Set()
-      for (const g of apiTasksData.value.groups || []) if (g.category_l1) s.add(g.category_l1)
-      return [...s]
+      // 来自任务模板（9 个固定标签 + 自定义新增的）
+      for (const t of (taskTemplates.value || [])) if (t.category) s.add(t.category)
+      // 也带上当前任务里出现的标签（兼容旧自定义任务）
+      for (const g of apiTasksData.value.groups || [])
+        for (const t of (g.tasks || [])) if (t.category) s.add(t.category)
+      return [...s].sort()
     })
     const statusOptions = ['待开始','进行中','已完成']
 
@@ -852,7 +901,8 @@ const AdsPage = defineComponent({
       const f = teamFilters.value
       const hasOwnerFilter   = !!f.owner
       const hasStatusFilter  = !!f.status
-      const hasTaskLevelFilter = hasOwnerFilter || hasStatusFilter
+      const hasCategoryFilter = !!f.category
+      const hasTaskLevelFilter = hasOwnerFilter || hasStatusFilter || hasCategoryFilter
 
       // 把后端返回的 groups 按 pid 索引一份
       const apiByPid = {}
@@ -860,18 +910,11 @@ const AdsPage = defineComponent({
         if (g && g.product_id) apiByPid[g.product_id] = g
       }
 
-      // ⚠ 关键模式分支：
-      // 1) 过滤模式（选了具体周期）→ 只显示真有任务的商品；不补占位
-      // 2) 默认模式（selectedPeriod 空）→ 25 OFFICIAL 商品兜底，PLUS 任何有真任务的扩展商品（Paper Shade / Cotton Bag 等）
-      const filterMode = !!selectedPeriod.value
+      // 永远显示 25 OFFICIAL 商品 + 任何有真任务的扩展商品（Paper Shade / Cotton Bag 等）
+      // 不分模式 — 任务时间是任务自己的（start_date/eta_date），跟"看哪一周"没关系
       const apiPids = Object.keys(apiByPid)
-      let allPids
-      if (filterMode) {
-        allPids = apiPids
-      } else {
-        // 25 OFFICIAL ∪ 后端实际返了任务的额外 PID → 保证 Paper Shade 这种扩展商品有任务时也出现
-        allPids = [...new Set([...OFFICIAL_25_PIDS, ...apiPids])]
-      }
+      const allPids = [...new Set([...OFFICIAL_25_PIDS, ...apiPids])]
+      const filterMode = false  // 留下变量名以兼容下面的占位行生成逻辑
       const mergedGroups = allPids.map(pid => apiByPid[pid] || {
         product_id: pid,
         product_name: RAW.short_names?.[pid] || pid,
@@ -883,7 +926,7 @@ const AdsPage = defineComponent({
       })
 
       for (const g of mergedGroups) {
-        if (f.category && g.category_l1 !== f.category) continue
+        // category 过滤现在指"任务标签"（在任务级过滤里跑），不在商品级过滤里
         if (f.productKeyword
             && !(g.product_name||'').toLowerCase().includes(f.productKeyword.toLowerCase())) continue
         // 真实任务（DB 有的）—— 不 map，直接透传原始对象引用，避免丢字段
@@ -930,10 +973,11 @@ const AdsPage = defineComponent({
         })
         // 真实任务（按规则排序）在前，占位任务在后
         const mergedTasks = [...sortedReal, ...placeholderTasks]
-        // 任务级过滤（owner / status）
+        // 任务级过滤（owner / status / category 任务标签）
         const filteredTasks = mergedTasks.filter(t => {
           if (hasOwnerFilter && t.owner !== f.owner) return false
           if (hasStatusFilter && (t.status||'') !== f.status) return false
+          if (f.category && (t.category||'') !== f.category) return false
           return true
         })
         // 显示规则：
@@ -1293,7 +1337,7 @@ const AdsPage = defineComponent({
           owner: m.owner,
           category: m.category.trim(),
           status: '待开始', priority: '中',
-          time_range_label: activePeriod.value || apiTasksData.value.period?.label || '',
+          time_range_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
         }
         if (matched && matched.id) body.template_id = matched.id
         const res = await fetch('/api/tasks', {
@@ -1586,14 +1630,20 @@ const AdsPage = defineComponent({
       if (task.template_id != null && task.template_id !== '' && task.template_id !== 0) return false
       // 条件 b/c：(category, detail) 命中已知标准
       if (standardTaskKeys.value.has(TEMPLATE_KEY(task.category, task.detail))) return false
-      // 周期窗
-      const p = apiTasksData.value.period
-      if (!p || !p.start_date || !p.end_date) return false
+      // 周期窗：优先用 API 返回的 period；没有就退回当前 ISO 周（默认全景模式时）
       const t = new Date(task.created_at)
       if (isNaN(t.getTime())) return false
-      const start = new Date(p.start_date + 'T00:00:00')
-      const end = new Date(p.end_date + 'T23:59:59')
-      return t >= start && t <= end
+      const p = apiTasksData.value.period
+      let startMs, endMs
+      if (p && p.start_date && p.end_date) {
+        startMs = new Date(p.start_date + 'T00:00:00').getTime()
+        endMs   = new Date(p.end_date   + 'T23:59:59').getTime()
+      } else {
+        const [a, b] = currentWeekRange()
+        startMs = a; endMs = b
+      }
+      const tt = t.getTime()
+      return tt >= startMs && tt <= endMs
     }
     // 完成时间格式化（保留分钟）
     const fmtCompletedAt = (iso) => {
@@ -1780,6 +1830,7 @@ const AdsPage = defineComponent({
       taskMetricDefs, fmtMetric, fmtDiffPct, diffCls,
       activePeriodRange, prevPeriodLabel, prevPeriodRange,
       isViewingCurrentWeek, toggleCurrentWeek,
+      activePeriodRaw, lastWeekRefLabel,
       // 任务评论
       expandedTaskId, taskComments, commentDraft, previewImage,
       toggleTaskExpand, onCommentImagePick, sendComment, deleteComment, fmtCommentTime,
@@ -1999,7 +2050,7 @@ const AdsPage = defineComponent({
             <option v-for="o in ownerOptions" :key="o" :value="o">{{ o }}</option>
           </select>
           <select v-model="teamFilters.category" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
-            <option value="">全部品类</option>
+            <option value="">全部任务标签</option>
             <option v-for="o in categoryOptions" :key="o" :value="o">{{ o }}</option>
           </select>
           <select v-model="teamFilters.status" style="border:1px solid var(--border);border-radius:8px;padding:5px 8px;font-size:12px;background:#fff">
@@ -2020,13 +2071,9 @@ const AdsPage = defineComponent({
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;flex-wrap:wrap">
           <div>
             <span class="card-title">任务清单</span>
-            <span class="card-sub">数据统计时间 {{ activePeriod || '—' }}　环比 {{ prevPeriodLabel || '—' }}　·　{{ taskGroups.length }} 个商品 · 点击单元格直接编辑</span>
+            <span class="card-sub">{{ taskGroups.length }} 个商品 · 任务时间各自独立 · 点击单元格直接编辑</span>
           </div>
           <div style="display:flex;gap:8px">
-            <button @click="toggleCurrentWeek"
-              :style="{padding:'6px 14px',fontSize:'13px',border:'1px solid var(--border)',background: isViewingCurrentWeek ? 'var(--accent)' : '#fff', color: isViewingCurrentWeek ? '#fff' : 'var(--text)', borderRadius:'6px',cursor:'pointer',fontWeight:'500'}">
-              {{ isViewingCurrentWeek ? '✓ 查看本周任务' : '查看本周任务' }}
-            </button>
             <button v-if="isAdmin" @click="openNewTask('')"
               style="padding:6px 14px;font-size:13px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)">+ 新增任务</button>
           </div>
@@ -2182,7 +2229,7 @@ const AdsPage = defineComponent({
                   </div>
                   <button @click.stop="toggleTaskExpand(task.id)" :title="'评论 (' + (taskComments[task.id]||[]).length + ')'"
                     style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted);flex-shrink:0">💬{{ (taskComments[task.id]||[]).length }}</button>
-                  <button v-if="canDelete" @click.stop="deleteTaskRow(task)" title="删除"
+                  <button v-if="canDelete && !task.is_template" @click.stop="deleteTaskRow(task)" title="删除"
                     style="font-size:10px;padding:3px 7px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626;flex-shrink:0">×</button>
                 </div>
               </div>

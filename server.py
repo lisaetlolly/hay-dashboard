@@ -1017,6 +1017,9 @@ class TaskCreate(BaseModel):
     category: str = ""
     time_range_label: str = ""
     execution_note: str = ""
+    start_date: Optional[str] = None
+    eta_date: Optional[str] = None
+    template_id: Optional[int] = None
 
 
 class TaskUpdate(BaseModel):
@@ -1954,11 +1957,16 @@ def bulk_instantiate_tasks(body: TasksBulkInstantiate):
 def create_task(task: TaskCreate, _user=Depends(require_permission('task.create'))):
     with db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
+        conn.commit()
         cur.execute("""
-            INSERT INTO tasks (product_id, detail, owner, status, priority, category, time_range_label, execution_note)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+            INSERT INTO tasks (product_id, detail, owner, status, priority, category,
+                               time_range_label, execution_note, start_date, eta_date, template_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::date, %s::date, %s) RETURNING id
         """, (task.product_id, task.detail, task.owner, task.status,
-              task.priority, task.category, task.time_range_label, task.execution_note))
+              task.priority, task.category, task.time_range_label, task.execution_note,
+              task.start_date or None, task.eta_date or None, task.template_id))
         new_id = cur.fetchone()["id"]
         conn.commit()
         return row(conn, "SELECT * FROM tasks WHERE id = %s", (new_id,))
