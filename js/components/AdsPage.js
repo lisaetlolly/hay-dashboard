@@ -947,6 +947,7 @@ const AdsPage = defineComponent({
 
     return {
       activeTab, openChannel, periodLabel, audienceSpend, keywordSpend, videoSpend, videoGmv,
+      shopDirectSpend, allSceneSpend, productPromoSpend,
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
       channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod, teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       adsCtr, ctrRankRows,

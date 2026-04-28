@@ -299,6 +299,28 @@ def load_dim_product(conn):
     print(f"  dim_product: {inserted} 行（主链 {main_count} + 副 SKU {sub_count}）")
     print(f"               SPU 合并: {len(SPU_MAP)} 个副 SKU 指向主链")
 
+    # 兜底：补几个不在「优化商品ID清单」但有任务/销售的 PID，
+    # 不然它们在 dim_product 里查不到，前端任务面板 / 商品列表只显示 PID 不显示名字
+    EXTRA_PRODUCTS = [
+        ('564552361178',  '564552361178',  'Cotton Bag 帆布包',         '配饰', '包袋', 0),
+        ('886901025905',  '886901025905',  'PC Portable Lamp 便携灯',   '灯具', '便携灯', 0),
+        ('818210888511',  '818210888511',  'Paper Shade 灯罩',          '灯具', '灯罩', 0),
+        ('824452791755',  '1016294283167', 'Facet Cabinet 边柜（多色）','家具', '边柜', 0),  # 副 SKU 合并到 1016
+        ('1020815058332', '1020815058332', 'Barro Bowl & Plate 碗盘',   '配饰', '餐具', 0),
+    ]
+    for pid, sid, title, l1, l2, inv in EXTRA_PRODUCTS:
+        cur.execute(
+            """INSERT INTO dim_product(product_id, spu_id, title, category_l1, category_l2, inventory)
+               VALUES(%s,%s,%s,%s,%s,%s)
+               ON CONFLICT(product_id) DO UPDATE SET
+                   title       = EXCLUDED.title,
+                   category_l1 = EXCLUDED.category_l1,
+                   category_l2 = EXCLUDED.category_l2""",
+            (pid, sid, title, l1, l2, inv)
+        )
+    conn.commit()
+    print(f"               补充：{len(EXTRA_PRODUCTS)} 个额外 PID（Cotton Bag / PC Portable / Paper Shade 等）")
+
 # ─────────────────────────────────────────────
 # 生意参谋商品报表
 # ─────────────────────────────────────────────
