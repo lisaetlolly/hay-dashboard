@@ -1103,23 +1103,36 @@ const AdsPage = defineComponent({
       const sun = new Date(mon); sun.setDate(mon.getDate() + 6); sun.setHours(23,59,59,999)
       return [mon.getTime(), sun.getTime()]
     }
-    // 红点 = "全新没出现过的任务"，只在以下条件全部满足时显示：
+    // 红点 = "全新没出现过的任务"——3 个条件全满足才打：
+    //
     // 1) 不是占位行（is_template）
-    // 2) 任务的 (category, detail) 组合 *不在* 9 个固定模板里
-    //    —— 用 (category,detail) 判定而非 template_id，避免旧数据 template_id 缺失误伤补录
-    // 3) created_at 落在当前展示周期内 → 持续一整周，下周自动消失
-    // 含义：只有管理员通过"+ 新增任务"加的自定义任务（或不在标准 9 项里的）才会打红点。
-    // 改状态、补录数据 都不会触发红点（因为 created_at 不会变）
+    // 2) 不是 9 个固定任务（标准任务）
+    //    判定方式（任一命中就算"标准"，不打）：
+    //      a. task.template_id 存在且不为空 → 是从 task_template 实例化出来的，标准
+    //      b. (category, detail) 在后端拉来的 taskTemplates 里 → 标准
+    //      c. (category, detail) 在前端 FALLBACK_TEMPLATES 里 → 标准（兼容后端没返时）
+    // 3) created_at 落在当前展示周期内 → 一整周显示，下周自动消失
+    //
+    // 改状态 / 补录历史数据 不会变红（created_at 不变）
+    // 只有管理员"+ 新增任务"填了自定义名称 才会打红点
+    const TEMPLATE_KEY = (cat, det) =>
+      String(cat||'').trim() + '||' + String(det||'').trim()
+    const standardTaskKeys = computed(() => {
+      const set = new Set()
+      for (const t of (taskTemplates.value || [])) set.add(TEMPLATE_KEY(t.category, t.detail))
+      // 兜底：后端没返 task_templates 时，仍认 9 项默认模板为标准
+      for (const t of FALLBACK_TEMPLATES) set.add(TEMPLATE_KEY(t.category, t.detail))
+      return set
+    })
     const isNewThisWeek = (task) => {
       if (!task) return false
       if (task.is_template) return false
       if (!task.created_at) return false
-      // (category, detail) 落在标准 9 项里 → 不打红点
-      const cat = (task.category || '').trim()
-      const det = (task.detail || '').trim()
-      const isStandard = taskTemplates.value.some(t =>
-        (t.category||'').trim() === cat && (t.detail||'').trim() === det)
-      if (isStandard) return false
+      // 条件 a：明确绑了 template_id
+      if (task.template_id != null && task.template_id !== '' && task.template_id !== 0) return false
+      // 条件 b/c：(category, detail) 命中已知标准
+      if (standardTaskKeys.value.has(TEMPLATE_KEY(task.category, task.detail))) return false
+      // 周期窗
       const p = apiTasksData.value.period
       if (!p || !p.start_date || !p.end_date) return false
       const t = new Date(task.created_at)
