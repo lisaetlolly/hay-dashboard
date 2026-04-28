@@ -2269,7 +2269,7 @@ const AdsPage = defineComponent({
               </div>
             </div>
             <!-- 任务清单表头（6 列：标签 / 任务名 / 负责人 / 状态 / 时间(ETA或完成) / 备注）-->
-            <div style="display:grid;grid-template-columns:100px minmax(0,1.6fr) 110px 100px 110px minmax(0,1.4fr);gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
+            <div style="display:grid;grid-template-columns:100px minmax(0,1.6fr) 150px 100px 130px minmax(0,1.4fr);gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务标签</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务名称</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">负责人</div>
@@ -2281,7 +2281,7 @@ const AdsPage = defineComponent({
             <div style="display:flex;flex-direction:column">
               <template v-for="(task, ti) in item.tasks" :key="task.id">
               <div
-                :style="{display:'grid',gridTemplateColumns:'100px minmax(0,1.6fr) 110px 100px 110px minmax(0,1.4fr)',gap:'0',alignItems:'stretch',
+                :style="{display:'grid',gridTemplateColumns:'100px minmax(0,1.6fr) 150px 100px 130px minmax(0,1.4fr)',gap:'0',alignItems:'stretch',
                   borderBottom: ti < item.tasks.length-1 ? '1px solid var(--border)' : 'none',
                   background: expandedTaskId === task.id ? '#fff7ed' : (ti%2===0 ? '#fff' : '#fafaf9')}">
 
@@ -2718,47 +2718,7 @@ const AdsPage = defineComponent({
     </div>
   </div>
 
-  <!-- ========================================================================== -->
-  <!-- 备注 Modal：textarea + 多图 + URL 自动 link -->
-  <!-- ========================================================================== -->
-  <div v-if="noteModal.show" @click.self="closeNoteModal"
-    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
-    <div style="width:560px;max-width:94vw;max-height:88vh;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25);display:flex;flex-direction:column"
-         @dragover.prevent @drop.prevent="onNoteDrop">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div style="font-size:14px;font-weight:700">编辑备注</div>
-        <button @click="closeNoteModal" style="border:none;background:transparent;font-size:18px;cursor:pointer;color:var(--muted)">×</button>
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:6px">支持文字、URL（自动转链接）、拖入/粘贴/选择多张图（≤1MB/张）</div>
-      <textarea v-model="noteModal.text" @paste="onNotePaste" rows="5"
-        placeholder="说明、链接、问题…  http(s):// 会自动变蓝可点击"
-        style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box;font-family:inherit;resize:vertical;outline:none;line-height:1.6"></textarea>
-
-      <!-- 图片预览区 -->
-      <div v-if="noteModal.images.length" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">
-        <div v-for="(img, idx) in noteModal.images" :key="idx" style="position:relative">
-          <img :src="img" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer"
-               @click="previewImage = img">
-          <button @click="removeNoteImage(idx)"
-            style="position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:10px;cursor:pointer;line-height:1">×</button>
-        </div>
-      </div>
-
-      <!-- 加图工具栏 -->
-      <div style="margin-top:10px;display:flex;align-items:center;gap:8px">
-        <label style="display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid var(--border);background:#fff;border-radius:6px;font-size:11px;cursor:pointer;color:var(--muted)">
-          📎 选图
-          <input type="file" accept="image/*" multiple @change="onNoteFilePick" style="display:none">
-        </label>
-        <span style="font-size:10px;color:var(--muted)">或直接拖拽 / 粘贴截图到这里</span>
-      </div>
-
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
-        <button @click="closeNoteModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="saveNoteModal" :disabled="noteModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ noteModal.saving ? '保存中…' : '保存' }}</button>
-      </div>
-    </div>
-  </div>
+  <!-- 备注 popup 已废弃（替换为表格内联编辑器，行内 textarea + 链接/图片/附件 3 按钮）-->
 
   <!-- 新增任务 Modal — 标签/名称 用 datalist：可以选已有的，也可以填全新的（全新的会打红点）-->
   <div v-if="newTaskModal.show" @click.self="closeNewTask"
