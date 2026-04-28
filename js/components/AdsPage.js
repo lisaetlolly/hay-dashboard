@@ -544,7 +544,158 @@ const AdsPage = defineComponent({
       } catch (err) { alert('发布失败：' + err.message); m.saving = false }
     }
 
-    // ── 备注 popup（textarea + 多图 + 自动 link）──
+    // ── 备注行内编辑（替代 popup）──
+    const noteCellDraft = ref({
+      taskId: null,
+      isPlaceholder: false,
+      templateId: null,
+      productId: null,
+      text: '',
+      images: [],          // [base64, ...]
+      attachments: [],     // [{name, dataURI}, ...]
+      saving: false,
+    })
+    const isEditingNote = (taskId) => noteCellDraft.value.taskId === taskId
+    const startNoteCellEdit = (task) => {
+      if (!canEditTask(task)) return alert('只能改自己负责的任务')
+      noteCellDraft.value = {
+        taskId: task.id,
+        isPlaceholder: !!(task.is_template || (typeof task.id === 'string' && String(task.id).startsWith('tmpl_'))),
+        templateId: task.template_id || null,
+        productId: (() => {
+          if (typeof task.id === 'string' && String(task.id).startsWith('tmpl_')) {
+            const parts = String(task.id).split('_')
+            return parts[parts.length-1]
+          }
+          for (const g of apiTasksData.value.groups || [])
+            if ((g.tasks || []).some(t => t.id === task.id)) return g.product_id
+          return null
+        })(),
+        text: task.execution_note || task.note || '',
+        images: Array.isArray(task.note_images) ? [...task.note_images] : [],
+        attachments: Array.isArray(task.note_attachments) ? [...task.note_attachments] : [],
+        saving: false,
+      }
+      Vue.nextTick(() => {
+        const el = document.querySelector(`[data-cell-edit="${task.id}-note"]`)
+        if (el) el.focus()
+      })
+    }
+    const cancelNoteCell = () => { noteCellDraft.value.taskId = null }
+    const insertNoteLink = () => {
+      const url = prompt('粘贴链接 URL:')
+      if (!url) return
+      const u = url.trim()
+      if (!u) return
+      const t = noteCellDraft.value.text || ''
+      noteCellDraft.value.text = t + (t && !t.endsWith(' ') ? ' ' : '') + u + ' '
+    }
+    const _addCellImagesFromFiles = (fileList) => {
+      const files = Array.from(fileList || []).filter(f => f && f.type && f.type.startsWith('image/'))
+      const oversized = []
+      let processed = 0
+      const finish = () => { if (oversized.length) alert('以下图片过大（>1MB）已跳过：\n' + oversized.join('\n')) }
+      files.forEach(f => {
+        if (f.size > 1000000) { oversized.push(f.name || '截图'); processed++; if (processed === files.length) finish(); return }
+        const r = new FileReader()
+        r.onload = e => { noteCellDraft.value.images.push(e.target.result); processed++; if (processed === files.length) finish() }
+        r.readAsDataURL(f)
+      })
+    }
+    const _addCellAttachmentsFromFiles = (fileList) => {
+      const files = Array.from(fileList || [])
+      const oversized = []
+      let processed = 0
+      const finish = () => { if (oversized.length) alert('以下文件过大（>2MB）已跳过：\n' + oversized.join('\n')) }
+      files.forEach(f => {
+        if (f.size > 2000000) { oversized.push(f.name); processed++; if (processed === files.length) finish(); return }
+        const r = new FileReader()
+        r.onload = e => {
+          noteCellDraft.value.attachments.push({ name: f.name, dataURI: e.target.result, size: f.size })
+          processed++; if (processed === files.length) finish()
+        }
+        r.readAsDataURL(f)
+      })
+    }
+    const onNoteCellImagePick = (event) => {
+      _addCellImagesFromFiles(event.target.files)
+      if (event.target) event.target.value = ''
+    }
+    const onNoteCellAttachmentPick = (event) => {
+      _addCellAttachmentsFromFiles(event.target.files)
+      if (event.target) event.target.value = ''
+    }
+    const onNoteCellPaste = (event) => {
+      const items = event.clipboardData && event.clipboardData.items
+      if (!items) return
+      const files = []
+      for (const it of items) {
+        if (it.kind === 'file') {
+          const f = it.getAsFile()
+          if (f) files.push(f)
+        }
+      }
+      if (files.length) {
+        event.preventDefault()
+        _addCellImagesFromFiles(files)
+      }
+    }
+    const removeNoteCellImage = (idx) => { noteCellDraft.value.images.splice(idx, 1) }
+    const removeNoteCellAttachment = (idx) => { noteCellDraft.value.attachments.splice(idx, 1) }
+    const saveNoteCell = async () => {
+      const m = noteCellDraft.value
+      m.saving = true
+      try {
+        let realTaskId = m.taskId
+        if (m.isPlaceholder) {
+          if (!m.productId || !m.templateId) throw new Error('占位任务定位失败')
+          const inst = await fetch('/api/tasks/bulk-instantiate', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({
+              period_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
+              product_ids: [m.productId], template_ids: [m.templateId],
+            }),
+          })
+          if (!inst.ok) throw new Error('落库失败')
+          await loadTasksWithMetrics()
+          let real = null
+          for (const g of apiTasksData.value.groups || []) {
+            if (g.product_id !== m.productId) continue
+            for (const t of (g.tasks || [])) if (t.template_id === m.templateId) { real = t; break }
+            if (real) break
+          }
+          if (!real) throw new Error('找不到新建的任务')
+          realTaskId = real.id
+        }
+        const r = await fetch(`/api/tasks/${realTaskId}`, {
+          method:'PATCH', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            execution_note: m.text || '',
+            note_images: m.images || [],
+            note_attachments: m.attachments || [],
+          }),
+        })
+        if (!r.ok) {
+          const err = await r.json().catch(()=>({detail:'保存失败'}))
+          throw new Error(err.detail || ('HTTP ' + r.status))
+        }
+        for (const g of apiTasksData.value.groups || []) {
+          for (const t of g.tasks || []) {
+            if (t.id === realTaskId) {
+              t.execution_note = m.text; t.note = m.text
+              t.note_images = [...m.images]
+              t.note_attachments = [...m.attachments]
+            }
+          }
+        }
+        cancelNoteCell()
+      } catch (err) {
+        alert('保存失败：' + err.message)
+        m.saving = false
+      }
+    }
+
+    // ── 备注 popup（textarea + 多图 + 自动 link）— 已废弃，下面的代码保留兼容性 ──
     const noteModal = ref({ show:false, taskId:null, text:'', images:[], saving:false })
     const openNoteModal = (task) => {
       if (!canEditTask(task)) return alert('只能改自己负责的任务')
@@ -1812,9 +1963,13 @@ const AdsPage = defineComponent({
       // 单卡 + 按钮
       cardAddTaskModal, openCardAddTask, closeCardAddTask, saveCardAddTask,
       cardCategoriesAll, cardDetailsAll, cardOwnersAll,
-      // 备注 popup
+      // 备注 popup（已废弃，保留兼容）
       noteModal, openNoteModal, closeNoteModal, saveNoteModal,
       onNoteFilePick, onNoteDrop, onNotePaste, removeNoteImage, renderNoteHtml,
+      // 备注行内编辑
+      noteCellDraft, isEditingNote, startNoteCellEdit, cancelNoteCell, saveNoteCell,
+      insertNoteLink, onNoteCellImagePick, onNoteCellAttachmentPick, onNoteCellPaste,
+      removeNoteCellImage, removeNoteCellAttachment,
       // 设置 modal + 子模块
       settingsModal, openSettingsModal, closeSettingsModal,
       taskGroupsList,
@@ -2217,12 +2372,49 @@ const AdsPage = defineComponent({
                   </template>
                 </div>
 
-                <!-- 备注（点击弹出 popup 改）+ 评论 + 删除 -->
+                <!-- 备注（行内编辑，3 个按钮：链接/附件/图片）+ 评论 + 删除 -->
                 <div style="padding:7px 8px;display:flex;align-items:center;gap:6px;overflow:hidden">
-                  <div :style="{flex:1,overflow:'hidden',cursor:canEditTask(task)?'pointer':'default',minWidth:'0',padding:'2px 4px',borderRadius:'4px',display:'flex',alignItems:'center',gap:'4px'}"
-                       @click="canEditTask(task) && openNoteModal(task)"
-                       :title="canEditTask(task) ? '点击编辑备注（支持链接和多张图）' : ''">
-                    <span v-if="(task.note_images||[]).length" style="font-size:10px;color:#0369a1;flex-shrink:0">📎{{ (task.note_images||[]).length }}</span>
+                  <!-- 编辑态：textarea + 3 按钮 + 缩略图 -->
+                  <div v-if="isEditingNote(task.id)" style="flex:1;display:flex;flex-direction:column;gap:4px;min-width:0">
+                    <textarea v-model="noteCellDraft.text" :data-cell-edit="task.id+'-note'"
+                      @paste="onNoteCellPaste"
+                      @keydown.esc="cancelNoteCell"
+                      placeholder="备注/链接（http(s) 自动变蓝可点）/附件/图片"
+                      rows="2"
+                      style="flex:1;font-size:11px;border:1px solid var(--accent);border-radius:4px;padding:3px 6px;outline:none;min-width:0;resize:vertical;font-family:inherit;line-height:1.5"></textarea>
+                    <!-- 工具按钮 + 缩略图 -->
+                    <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+                      <button @click="insertNoteLink" title="插入链接"
+                        style="font-size:10px;padding:2px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">🔗 链接</button>
+                      <label title="上传图片" style="font-size:10px;padding:2px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">
+                        🖼 图片
+                        <input type="file" accept="image/*" multiple @change="onNoteCellImagePick" style="display:none">
+                      </label>
+                      <label title="上传附件" style="font-size:10px;padding:2px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">
+                        📎 附件
+                        <input type="file" multiple @change="onNoteCellAttachmentPick" style="display:none">
+                      </label>
+                      <span style="flex:1"></span>
+                      <button @click="cancelNoteCell" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">取消</button>
+                      <button @click="saveNoteCell" :disabled="noteCellDraft.saving" style="font-size:10px;padding:2px 10px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:4px;cursor:pointer;font-weight:600">{{ noteCellDraft.saving ? '...' : '保存' }}</button>
+                    </div>
+                    <div v-if="noteCellDraft.images.length || noteCellDraft.attachments.length" style="display:flex;flex-wrap:wrap;gap:4px">
+                      <div v-for="(img, idx) in noteCellDraft.images" :key="'img'+idx" style="position:relative">
+                        <img :src="img" style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--border);cursor:pointer" @click="previewImage = img">
+                        <button @click="removeNoteCellImage(idx)" style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:8px;cursor:pointer;line-height:1">×</button>
+                      </div>
+                      <div v-for="(att, idx) in noteCellDraft.attachments" :key="'att'+idx" style="position:relative;padding:2px 6px;border:1px solid var(--border);border-radius:4px;background:#f5f5f4;font-size:10px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                        📎 {{ att.name }}
+                        <button @click="removeNoteCellAttachment(idx)" style="position:absolute;top:-4px;right:-4px;width:14px;height:14px;border-radius:50%;border:none;background:#dc2626;color:#fff;font-size:8px;cursor:pointer;line-height:1">×</button>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- 展示态：紧凑文本 + 角标 -->
+                  <div v-else :style="{flex:1,overflow:'hidden',cursor:canEditTask(task)?'pointer':'default',minWidth:'0',padding:'2px 4px',borderRadius:'4px',display:'flex',alignItems:'center',gap:'4px'}"
+                       @click="canEditTask(task) && startNoteCellEdit(task)"
+                       :title="canEditTask(task) ? '点击编辑备注' : ''">
+                    <span v-if="(task.note_images||[]).length" style="font-size:10px;color:#0369a1;flex-shrink:0">🖼{{ (task.note_images||[]).length }}</span>
+                    <span v-if="(task.note_attachments||[]).length" style="font-size:10px;color:#0369a1;flex-shrink:0">📎{{ (task.note_attachments||[]).length }}</span>
                     <div v-if="task.execution_note || task.note" style="font-size:11px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1" v-html="renderNoteHtml(task.execution_note || task.note)"></div>
                     <div v-else style="font-size:11px;color:#d1d5db;font-style:italic;flex:1">{{ canEditTask(task) ? '点击添加…' : '—' }}</div>
                   </div>
