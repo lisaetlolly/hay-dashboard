@@ -1166,11 +1166,20 @@ const AdsPage = defineComponent({
           if (t.note === undefined) t.note = t.execution_note || ''
           return t
         })
-        // 占位行规则：只在该商品**完全没真任务**的情况下才生成 9 项默认（初始化用）
-        // 一旦有 ≥1 条真任务，认为是"管理中"商品，不再自动补占位 → 用户删了就是删了
+        // 占位行规则：
+        // - 商品有 ≥1 条真任务 → 不补占位（手动管理）
+        // - 商品 0 真任务 → 补 9 项占位，但跳过 task_hidden 里被用户删过的 (pid, cat, detail)
         let placeholderTasks = []
         if (!filterMode && realTasks.length === 0) {
-          placeholderTasks = templates.map(tpl => ({
+          const hiddenSet = new Set(
+            (apiTasksData.value.hidden || [])
+              .filter(h => h.product_id === g.product_id)
+              .map(h => (h.category||'').trim() + '||' + (h.detail||'').trim())
+          )
+          placeholderTasks = templates.filter(tpl => {
+            const k = (tpl.category||'').trim() + '||' + (tpl.detail||'').trim()
+            return !hiddenSet.has(k)
+          }).map(tpl => ({
             id: 'tmpl_' + tpl.id + '_' + g.product_id,
             template_id: tpl.id,
             detail: tpl.detail,

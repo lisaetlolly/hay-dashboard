@@ -1246,11 +1246,20 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                      xhs_count（小红书笔记数）
     """
     with db() as conn:
-        # 兜底：老库可能还没有 start_date / eta_date / completed_at 列
+        # 兜底：老库可能还没有 start_date / eta_date / completed_at 列；task_hidden 表
         cur = conn.cursor()
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS task_hidden (
+              product_id TEXT NOT NULL,
+              category   TEXT NOT NULL DEFAULT '',
+              detail     TEXT NOT NULL DEFAULT '',
+              hidden_at  TIMESTAMPTZ DEFAULT now(),
+              PRIMARY KEY (product_id, category, detail)
+            )
+        """)
         conn.commit()
 
         # ⚠ 团队 tab 不再有 task_period 概念。
@@ -1460,11 +1469,15 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
         # 按当期 GMV 从高到低（GMV 为 0 的商品排到末尾，但仍然返回）
         groups.sort(key=lambda g: g["current_metrics"].get("gmv", 0), reverse=True)
 
+        # 拉 task_hidden — 用户主动删过的 (pid, category, detail)，前端占位生成时跳过
+        hidden_rows = rows(conn, "SELECT product_id, category, detail FROM task_hidden")
+
         return {
             "period":      cur_period,
             "prev_period": prev_period,
             "groups":      groups,
             "task_templates": task_templates,
+            "hidden": hidden_rows,
         }
 
 
@@ -2136,9 +2149,34 @@ def bulk_delete_tasks(body: TasksBulkDelete,
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int, _user=Depends(require_permission('task.delete'))):
+    """
+    DELETE 任务时，同时记录"用户主动删除了 (product_id, category, detail) 这条任务"，
+    这样占位行生成时不再补回这一项（避免"删了又诈尸"）。
+    """
     with db() as conn:
         cur = conn.cursor()
-        cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+        # 兜底建表
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS task_hidden (
+              product_id TEXT NOT NULL,
+              category   TEXT NOT NULL DEFAULT '',
+              detail     TEXT NOT NULL DEFAULT '',
+              hidden_at  TIMESTAMPTZ DEFAULT now(),
+              PRIMARY KEY (product_id, category, detail)
+            )
+        """)
+        conn.commit()
+        # 拿到这条任务的 (pid, cat, detail) 然后删任务 + 写入 hidden
+        cur.execute("SELECT product_id, COALESCE(category,''), COALESCE(detail,'') FROM tasks WHERE id = %s", (task_id,))
+        row_ = cur.fetchone()
+        if row_:
+            pid, cat, det = row_
+            cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+            if pid:
+                cur.execute("""
+                    INSERT INTO task_hidden (product_id, category, detail)
+                    VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
+                """, (pid, cat, det))
         conn.commit()
         return {"ok": True}
 
