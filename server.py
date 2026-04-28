@@ -350,8 +350,19 @@ def get_raw_data():
                 video_daily = {}
 
             # 9. official_pids = 主链 SPU 列表（dim_product 里 spu_id == product_id 的）
+            #    排除 ETL 的 EXTRA_PRODUCTS 兜底（Cotton Bag / PC Portable / Paper Shade / Manolito 等）
+            #    它们写进 dim_product 是为了让任务面板能查到名字，不是主链单品。
+            EXTRA_FALLBACK_PIDS = {
+                '564552361178',   # Cotton Bag
+                '886901025905',   # PC Portable Lamp
+                '818210888511',   # Paper Shade
+                '1021718193334',  # Manolito Stool
+                # Barro Bowl & Plate (1020815058332) 是真主链，留在 25 里
+                # Facet 副SKU (824452791755) spu!=pid，本来就不会被算进
+            }
             official_pids = sorted({d["spu_id"] for d in dim
-                                    if d["spu_id"] == d["product_id"]})
+                                    if d["spu_id"] == d["product_id"]
+                                    and d["product_id"] not in EXTRA_FALLBACK_PIDS})
 
             # 9a. img_map —— 实际扫描 25个商品图片/ 目录，避免幽灵路径
             img_map = {}
@@ -1015,6 +1026,7 @@ class TaskUpdate(BaseModel):
     priority: Optional[str] = None
     execution_note: Optional[str] = None
     time_range_label: Optional[str] = None
+    eta_date: Optional[str] = None         # 'YYYY-MM-DD' 或 '' 清空
 
 
 @app.get("/api/tasks")
@@ -1240,11 +1252,20 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             ORDER BY start_date DESC LIMIT 1
         """, (cur_period["start_date"],))
 
+        # 兜底：老库可能还没有 eta_date / completed_at 列
+        cur = conn.cursor()
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
+        conn.commit()
+
         # 3. 当前周期的所有任务，按 product_id 分组
         tasks = rows(conn, """
             SELECT t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
                    t.category, t.time_range_label, t.execution_note,
-                   t.template_id
+                   t.template_id,
+                   t.created_at::text         AS created_at,
+                   t.eta_date::text           AS eta_date,
+                   t.completed_at::text       AS completed_at
             FROM tasks t
             WHERE t.time_range_label = %s
               AND t.product_id IS NOT NULL
@@ -1666,12 +1687,35 @@ def update_task(task_id: int, task: TaskUpdate, user: Optional[dict] = Depends(g
             name_prefix = display.split("（")[0].split("(")[0].strip()
             if owner != display and not (len(name_prefix) >= 2 and name_prefix in owner):
                 raise HTTPException(403, "只能编辑自己的任务")
-    set_clause = ", ".join(f"{k} = %s" for k in fields)
+    # 状态切到 / 离开「已完成」时，同步 completed_at
+    # （已完成的别名：'done' / '已完成' / '完成'）
+    DONE_ALIASES = {'done', '已完成', '完成'}
+    extra_clauses = []
+    extra_values = []
+    if 'status' in fields:
+        if fields['status'] in DONE_ALIASES:
+            extra_clauses.append("completed_at = COALESCE(completed_at, now())")
+        else:
+            extra_clauses.append("completed_at = NULL")
+
+    # 确保 eta_date / completed_at 列存在（首次运行自动建表）
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
+        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
+        conn.commit()
+
+    # eta_date 空字符串 → SQL NULL
+    if 'eta_date' in fields and (fields['eta_date'] == '' or fields['eta_date'] is None):
+        fields['eta_date'] = None
+
+    set_parts = [f"{k} = %s" for k in fields] + extra_clauses
+    set_clause = ", ".join(set_parts)
     with db() as conn:
         cur = conn.cursor()
         cur.execute(
             f"UPDATE tasks SET {set_clause}, updated_at = now() WHERE id = %s",
-            (*fields.values(), task_id)
+            (*fields.values(), *extra_values, task_id)
         )
         conn.commit()
         return row(conn, "SELECT * FROM tasks WHERE id = %s", (task_id,))
@@ -2024,6 +2068,7 @@ class UserRoleUpdate(BaseModel):
     role: Optional[str] = None
     display_name: Optional[str] = None
     username: Optional[str] = None
+    password: Optional[str] = None  # 新密码（明文）；None 表示不改
 
 
 @app.patch("/api/users/{user_id}")
@@ -2032,6 +2077,8 @@ def update_user(user_id: int, body: UserRoleUpdate):
     if body.role is not None: fields['role'] = body.role
     if body.display_name is not None: fields['display_name'] = body.display_name
     if body.username is not None: fields['username'] = body.username
+    if body.password is not None and body.password.strip():
+        fields['password_hash'] = hashlib.sha256(body.password.encode()).hexdigest()
     if not fields:
         raise HTTPException(400, "no fields to update")
     set_clause = ", ".join(f"{k} = %s" for k in fields)

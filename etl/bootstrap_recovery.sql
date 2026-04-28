@@ -27,9 +27,14 @@ CREATE TABLE IF NOT EXISTS tasks (
     category         TEXT DEFAULT '',
     time_range_label TEXT DEFAULT '',
     execution_note   TEXT DEFAULT '',
+    eta_date         DATE,
+    completed_at     TIMESTAMPTZ,
     created_at       TIMESTAMPTZ DEFAULT now(),
     updated_at       TIMESTAMPTZ DEFAULT now()
 );
+-- 老库补列
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
 -- 小红书笔记表（如不存在则建；用户从单品页手动添加）
 CREATE TABLE IF NOT EXISTS fact_xhs_note (

@@ -348,6 +348,21 @@ def _safe_execute_values(cur, sql, argslist, *args, **kwargs):
     return _orig_execute_values(cur, sql, cleaned, *args, **kwargs)
 psycopg2.extras.execute_values = _safe_execute_values
 
+# ── 增量加载支持 ─────────────────────────────────────
+# FORCE_RELOAD = True 时所有文件都重新读；否则按 source_file 跳过已入库的
+FORCE_RELOAD = False
+
+def _loaded_files(conn, table):
+    """返回某表里已经入过库的 source_file 集合（增量跳过用）"""
+    if FORCE_RELOAD:
+        return set()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"SELECT DISTINCT source_file FROM {table} WHERE source_file IS NOT NULL")
+        return {r[0] for r in cur.fetchall() if r[0]}
+    except Exception:
+        return set()
+
 def load_syzt_product(conn):
     d = os.path.join(DATA_DIR, '生意参谋商品')
     if not os.path.isdir(d):
@@ -356,6 +371,8 @@ def load_syzt_product(conn):
     files = sorted(glob.glob(os.path.join(d, '*.xls')))
     cur = conn.cursor()
     total = 0
+    loaded = _loaded_files(conn, 'fact_syzt_product')
+    skipped_files = 0
     sql = """
         INSERT INTO fact_syzt_product (
             stat_date, product_id,
@@ -370,9 +387,12 @@ def load_syzt_product(conn):
         ) VALUES %s
         ON CONFLICT(stat_date, product_id) DO NOTHING
     """
-    print(f"  生意参谋商品：开始处理 {len(files)} 个 xls 文件")
+    print(f"  生意参谋商品：{len(files)} 个 xls 文件（增量模式：已入库的跳过）")
     for fi, fpath in enumerate(files, 1):
         fname = os.path.basename(fpath)
+        if fname in loaded:
+            skipped_files += 1
+            continue
         headers, rows = read_xls(fpath)
         if not headers:
             print(f"    [{fi}/{len(files)}] {fname}: 0 行（无表头）")
@@ -415,7 +435,7 @@ def load_syzt_product(conn):
         total += len(batch)
         if fi % 10 == 0 or fi == len(files):
             print(f"    [{fi}/{len(files)}] 累计 {total} 行")
-    print(f"  fact_syzt_product: {total} rows ({len(files)} files)")
+    print(f"  fact_syzt_product: {total} rows ({len(files)} files, {skipped_files} 跳过, {len(files)-skipped_files} 处理)")
 
 # ─────────────────────────────────────────────
 # 万象台推广报表（CSV）
@@ -443,6 +463,8 @@ def load_wxst_product(conn):
         print("  [SKIP] 万象台商品报表 not found")
         return
     cur = conn.cursor()
+    loaded = _loaded_files(conn, 'fact_wxst_product')
+    skipped_files = 0
     sql = """
         INSERT INTO fact_wxst_product (
             stat_date, product_id, product_name,
@@ -457,9 +479,12 @@ def load_wxst_product(conn):
     """
     seen = set()
     total = 0
-    print(f"  万象台商品报表：开始处理 {len(matches)} 个 CSV 文件")
+    print(f"  万象台商品报表：{len(matches)} 个 CSV（增量）")
     for fi, fpath in enumerate(sorted(matches), 1):
         fname = os.path.basename(fpath)
+        if fname in loaded:
+            skipped_files += 1
+            continue
         try:
             _, rs = read_csv_gbk(fpath)
         except Exception as e:
@@ -502,7 +527,7 @@ def load_wxst_product(conn):
             conn.commit()
         total += len(batch)
         print(f"    [{fi}/{len(matches)}] {fname}: +{len(batch)}（累计 {total}）")
-    print(f"  fact_wxst_product: {total} rows ({len(matches)} files)")
+    print(f"  fact_wxst_product: {total} rows ({len(matches)} files, {skipped_files} 跳过)")
 
 def load_wxst_audience(conn):
     """
@@ -515,6 +540,8 @@ def load_wxst_audience(conn):
         print("  [SKIP] 万象台人群报表 not found")
         return
     cur = conn.cursor()
+    loaded = _loaded_files(conn, 'fact_wxst_audience')
+    skipped_files = 0
     sql = """
         INSERT INTO fact_wxst_audience (
             stat_date, audience_name, product_name,
@@ -529,9 +556,12 @@ def load_wxst_audience(conn):
     """
     seen = set()
     total = 0
-    print(f"  万象台人群报表：开始处理 {len(matches)} 个 CSV 文件")
+    print(f"  万象台人群报表：{len(matches)} 个 CSV（增量）")
     for fi, fpath in enumerate(sorted(matches), 1):
         fname = os.path.basename(fpath)
+        if fname in loaded:
+            skipped_files += 1
+            continue
         try:
             _, rs = read_csv_gbk(fpath)
         except Exception as e:
@@ -567,7 +597,7 @@ def load_wxst_audience(conn):
             conn.commit()
         total += len(batch)
         print(f"    [{fi}/{len(matches)}] {fname}: +{len(batch)}（累计 {total}）")
-    print(f"  fact_wxst_audience: {total} rows ({len(matches)} files)")
+    print(f"  fact_wxst_audience: {total} rows ({len(matches)} files, {skipped_files} 跳过)")
 
 def load_wxst_keyword(conn):
     """
@@ -582,6 +612,8 @@ def load_wxst_keyword(conn):
         print("  [SKIP] 万象台关键词报表 not found")
         return
     cur = conn.cursor()
+    loaded = _loaded_files(conn, 'fact_wxst_keyword')
+    skipped_files = 0
     # 先把旧的窄 UNIQUE 拆掉（只跑一次也是幂等）
     cur.execute("""
         ALTER TABLE fact_wxst_keyword
@@ -612,9 +644,12 @@ def load_wxst_keyword(conn):
     """
     seen = set()
     total = 0
-    print(f"  万象台关键词报表：开始处理 {len(matches)} 个 CSV 文件")
+    print(f"  万象台关键词报表：{len(matches)} 个 CSV（增量）")
     for fi, fpath in enumerate(sorted(matches), 1):
         fname = os.path.basename(fpath)
+        if fname in loaded:
+            skipped_files += 1
+            continue
         try:
             _, rs = read_csv_gbk(fpath)
         except Exception as e:
@@ -657,7 +692,7 @@ def load_wxst_keyword(conn):
             conn.commit()
         total += len(batch)
         print(f"    [{fi}/{len(matches)}] {fname}: +{len(batch)}（累计 {total}）")
-    print(f"  fact_wxst_keyword: {total} rows ({len(matches)} files)")
+    print(f"  fact_wxst_keyword: {total} rows ({len(matches)} files, {skipped_files} 跳过)")
 
 # ─────────────────────────────────────────────
 # 万象台内容报表（短视频/直播花费数据源）
@@ -665,9 +700,17 @@ def load_wxst_keyword(conn):
 # 关键：主体ID = 视频ID，主体类型 = 短视频/直播
 # ─────────────────────────────────────────────
 def load_wxst_content(conn):
-    matches = glob.glob(os.path.join(DATA_DIR, '推广报表', '内容报表', '*.csv'))
-    if not matches:
+    all_matches = glob.glob(os.path.join(DATA_DIR, '推广报表', '内容报表', '*.csv'))
+    if not all_matches:
         print("  [SKIP] 万象台内容报表 not found")
+        return
+    # 增量过滤
+    loaded = _loaded_files(conn, 'fact_wxst_content')
+    matches = [m for m in all_matches if os.path.basename(m) not in loaded]
+    skipped_files = len(all_matches) - len(matches)
+    if not matches:
+        print(f"  [万象台内容报表] 无新文件（{len(all_matches)} 个全部已入库）")
+        return
         return
     cur = conn.cursor()
     total = 0
@@ -721,7 +764,7 @@ def load_wxst_content(conn):
             conn.commit()
         total += len(batch)
     conn.commit()
-    print(f"  fact_wxst_content: {total} rows ({len(matches)} files)")
+    print(f"  fact_wxst_content: {total} rows（处理 {len(matches)} 个新文件，跳过 {skipped_files}）")
 
 # ─────────────────────────────────────────────
 # 万象台全营销场景报表（场景级日数据）
@@ -729,11 +772,17 @@ def load_wxst_content(conn):
 # 用于「总投放 ROI 口径」对账：万象台后台显示的总花费/ROI 用的就是这个表
 # ─────────────────────────────────────────────
 def load_wxst_scene(conn):
-    matches = (glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表', '*.csv'))
+    all_matches = (glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表', '*.csv'))
             or glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表*.csv'))
             or glob.glob(os.path.join(DATA_DIR, '推广报表', '全场景*.csv')))
-    if not matches:
+    if not all_matches:
         print("  [SKIP] 万象台全营销场景报表 not found")
+        return
+    loaded = _loaded_files(conn, 'fact_wxst_scene')
+    matches = [m for m in all_matches if os.path.basename(m) not in loaded]
+    skipped_files = len(all_matches) - len(matches)
+    if not matches:
+        print(f"  [全营销场景报表] 无新文件（{len(all_matches)} 个全部已入库）")
         return
     cur = conn.cursor()
     sql = """
@@ -813,7 +862,15 @@ def load_traffic(conn):
     if not os.path.isdir(d):
         print("  [SKIP] 无限店铺流量 dir not found")
         return
-    files = sorted(glob.glob(os.path.join(d, '*.xls')))
+    all_files = sorted(glob.glob(os.path.join(d, '*.xls')))
+    loaded = _loaded_files(conn, 'fact_traffic')
+    files = [f for f in all_files if os.path.basename(f) not in loaded]
+    skipped_files = len(all_files) - len(files)
+    if skipped_files:
+        print(f"  [增量] 跳过 {skipped_files} 个已入库文件")
+    if not files:
+        print(f"  [无限店铺流量] 无新文件（{len(all_files)} 个全部已入库）")
+        return
     cur = conn.cursor()
     total = 0
 
@@ -905,9 +962,18 @@ def load_traffic(conn):
 def main():
     ap = argparse.ArgumentParser(description='HAY ETL loader -> Neon PostgreSQL')
     ap.add_argument('--reset', action='store_true', help='Drop and recreate all tables')
+    ap.add_argument('--reload', action='store_true', help='Force reload all files (ignore source_file dedup)')
     ap.add_argument('--start', default='2026-01-01')
     ap.add_argument('--end',   default='2026-12-31')
     args = ap.parse_args()
+
+    # 增量/全量模式
+    global FORCE_RELOAD
+    if args.reload or args.reset:
+        FORCE_RELOAD = True
+        print("[ETL] 模式：全量加载（--reload / --reset）")
+    else:
+        print("[ETL] 模式：增量加载（仅处理新文件，跑过 --reload 强制全量）")
 
     print("[ETL] 连接 Neon PostgreSQL...")
     conn = get_conn()

@@ -57,6 +57,42 @@ const SettingsPage = defineComponent({
     Vue.onMounted(loadDbUsers)
 
     const me = Vue.computed(() => (state.users||[]).find(u=>u.id===state.currentUserId)||state.users?.[0])
+    // 是否是管理员：拥有 '*' 通配权限（来自 role=admin 或被显式赋了 *）
+    const isAdmin = Vue.computed(() => {
+      const m = me.value
+      return !!(m && (m.permissions||[]).includes('*'))
+    })
+
+    // ── 修改密码（所有人都能改自己的）─────────────────────
+    const pwForm = Vue.reactive({ pw1: '', pw2: '', loading: false, msg: '' })
+    const changePassword = async () => {
+      pwForm.msg = ''
+      const p1 = (pwForm.pw1||'').trim()
+      const p2 = (pwForm.pw2||'').trim()
+      if (!p1 || p1.length < 4) { pwForm.msg = '✗ 新密码至少 4 位'; return }
+      if (p1 !== p2) { pwForm.msg = '✗ 两次密码不一致'; return }
+      const m = me.value
+      if (!m || !m.id) { pwForm.msg = '✗ 当前账号未识别'; return }
+      pwForm.loading = true
+      try {
+        const res = await fetch(`/api/users/${m.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: p1 })
+        })
+        if (res.ok) {
+          pwForm.msg = '✓ 已修改，下次登录用新密码'
+          pwForm.pw1 = ''; pwForm.pw2 = ''
+        } else {
+          const d = await res.json().catch(()=>({}))
+          pwForm.msg = `✗ 失败：${d.detail || res.statusText}`
+        }
+      } catch (e) {
+        pwForm.msg = `✗ 网络错误：${e.message}`
+      }
+      pwForm.loading = false
+    }
+
     const users = Vue.computed(() => state.users||[])
     const metrics = Vue.computed(() => state.metricRegistry||[])
     const permGroups = Vue.computed(() => (state.permissionGroups||[]).filter(g => g && Array.isArray(g.perms)))
@@ -557,7 +593,8 @@ const SettingsPage = defineComponent({
     Vue.onMounted(loadAiConfig)
 
     return {
-      me,users,metrics,permGroups,PERM_LABELS,expandedUserId,toggleExpand,meetings,can,setMe,
+      me,isAdmin,pwForm,changePassword,
+      users,metrics,permGroups,PERM_LABELS,expandedUserId,toggleExpand,meetings,can,setMe,
       userModal,openAddUser,openEditUser,saveUserModal,deleteUser,togglePerm,
       metricModal,openAddMetric,openEditMetric,saveMetricModal,deleteMetric,
       meetingModal,openAddMeeting,openEditMeeting,saveMeetingModal,deleteMeeting,
@@ -631,8 +668,40 @@ const SettingsPage = defineComponent({
   },
   template: `
 <div style="display:flex;flex-direction:column;gap:16px">
-  <!-- 当前用户切换 -->
+
+  <!-- 修改密码（所有人都能改自己的）-->
   <div class="card" style="padding:16px">
+    <div class="card-header" style="margin-bottom:10px">
+      <span class="card-title">修改密码</span>
+      <span class="card-sub">改完下次登录生效；忘了密码联系管理员重置</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end">
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+        <span style="color:var(--muted)">新密码</span>
+        <input type="password" v-model="pwForm.pw1" placeholder="至少 4 位" autocomplete="new-password"
+               style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;box-sizing:border-box">
+      </label>
+      <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+        <span style="color:var(--muted)">再输一次</span>
+        <input type="password" v-model="pwForm.pw2" placeholder="确认新密码" autocomplete="new-password"
+               style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;box-sizing:border-box">
+      </label>
+      <button @click="changePassword" :disabled="pwForm.loading"
+              :style="{border:'1px solid var(--accent)',background:pwForm.loading?'#d4d4d8':'var(--accent)',color:'#fff',borderRadius:'8px',padding:'8px 18px',fontSize:'12px',cursor:pwForm.loading?'default':'pointer',fontWeight:'600'}">
+        {{ pwForm.loading ? '保存中…' : '修改密码' }}
+      </button>
+    </div>
+    <div v-if="pwForm.msg" style="margin-top:8px;font-size:12px"
+         :style="{color: pwForm.msg.startsWith('✓') ? '#16a34a' : '#dc2626'}">{{ pwForm.msg }}</div>
+  </div>
+
+  <!-- 非管理员到此为止 -->
+  <div v-if="!isAdmin" style="padding:16px;background:#fafaf9;border:1px dashed var(--border);border-radius:10px;font-size:12px;color:var(--muted);text-align:center">
+    其他设置项需要管理员权限。如需新增任务、修改商品等操作请联系管理员。
+  </div>
+
+  <!-- 当前用户切换 -->
+  <div v-if="isAdmin" class="card" style="padding:16px">
     <div class="card-header" style="margin-bottom:10px"><span class="card-title">当前角色</span><span class="card-sub">前端测试用：切换后页面 can(...) 权限即时生效；服务器接口仍按真实登录账号校验</span></div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <select :value="me?.id" @change="setMe($event.target.value)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;background:#fff">
@@ -644,7 +713,7 @@ const SettingsPage = defineComponent({
   </div>
 
   <!-- 用户与权限 -->
-  <div>
+  <div v-if="isAdmin">
     <div class="card" style="padding:16px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div><span class="card-title">用户权限管理</span><span class="card-sub">{{ users.length }} 个用户</span></div>
@@ -708,7 +777,7 @@ const SettingsPage = defineComponent({
   </div>
 
   <!-- 运营动作管理 -->
-  <div class="card" style="padding:16px">
+  <div v-if="isAdmin" class="card" style="padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div><span class="card-title">运营动作记录</span><span class="card-sub">{{ actions.length }} 条，用于效果分析页的前后对比</span></div>
       <button @click="openAddAction" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">+ 新增动作</button>
@@ -736,7 +805,7 @@ const SettingsPage = defineComponent({
   </div>
 
   <!-- 商品管理 -->
-  <div class="card" style="padding:16px">
+  <div v-if="isAdmin" class="card" style="padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div><span class="card-title">商品管理</span><span class="card-sub">{{ allProductsForManage.length }} 个商品</span></div>
       <button @click="openAddProduct" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">+ 新增自定义商品</button>
@@ -765,7 +834,7 @@ const SettingsPage = defineComponent({
   </div>
 
   <!-- 数据异常 / 手工补录 -->
-  <div class="card" style="padding:16px">
+  <div v-if="isAdmin" class="card" style="padding:16px">
     <div class="card-header" style="margin-bottom:12px">
       <span class="card-title">数据异常</span>
       <span class="card-sub">下方提示有缺失的日期，可手动补录</span>
@@ -805,7 +874,7 @@ const SettingsPage = defineComponent({
   </div>
 
   <!-- 人群投放品类计划（admin 可改） -->
-  <div class="card" style="padding:16px">
+  <div v-if="isAdmin" class="card" style="padding:16px">
     <div class="card-header" style="margin-bottom:14px">
       <span class="card-title">人群投放品类计划</span>
       <span class="card-sub">晓东定的目标比例：家具/配饰/灯具/其他。改完保存后投放面板自动同步</span>
@@ -846,7 +915,7 @@ const SettingsPage = defineComponent({
   </div>
 
   <!-- AI 配置（从 AI 分析页搬过来）-->
-  <div class="card" style="padding:16px">
+  <div v-if="isAdmin" class="card" style="padding:16px">
     <div class="card-header" style="margin-bottom:14px">
       <span class="card-title">AI 配置</span>
       <span class="card-sub">配置存储在浏览器本地（localStorage），不上传服务器；填完保存后到「AI 分析」页用</span>
@@ -880,7 +949,7 @@ const SettingsPage = defineComponent({
   </div>
 
   <!-- 数据底表导入 -->
-  <div class="card" style="padding:16px">
+  <div v-if="isAdmin" class="card" style="padding:16px">
     <div class="card-header" style="margin-bottom:14px">
       <span class="card-title">数据底表导入</span>
       <span class="card-sub">上传生意参谋 XLS、推广报表 CSV，服务端自动刷新 RAW 数据</span>

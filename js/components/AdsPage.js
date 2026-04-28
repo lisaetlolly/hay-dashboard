@@ -270,10 +270,30 @@ const AdsPage = defineComponent({
     const apiTaskPeriods = ref([])
     const selectedPeriod = ref('')
 
+    // 周一-周日为一周；周一/周二默认看上周（数据未结算 / 上周完整窗口）
+    const pickDefaultPeriodLabel = (periods) => {
+      if (!periods || !periods.length) return ''
+      const now = new Date()
+      const dow = now.getDay()  // 0=Sun, 1=Mon, ..., 6=Sat
+      const target = new Date(now)
+      if (dow === 1 || dow === 2) target.setDate(now.getDate() - 7)
+      const ts = target.toISOString().slice(0,10)
+      const hit = periods.find(p => p.start_date <= ts && ts <= p.end_date)
+      if (hit) return hit.label
+      return (periods.find(p => p.is_current) || periods[0]).label
+    }
+
     const loadTaskPeriods = async () => {
       try {
         const res = await fetch('/api/task-periods')
-        if (res.ok) apiTaskPeriods.value = await res.json()
+        if (res.ok) {
+          const data = await res.json()
+          apiTaskPeriods.value = data
+          // 仅在用户尚未选择时才填默认（避免覆盖用户切换）
+          if (!selectedPeriod.value) {
+            selectedPeriod.value = pickDefaultPeriodLabel(data)
+          }
+        }
       } catch {}
     }
     const loadTasksWithMetrics = async () => {
@@ -379,8 +399,8 @@ const AdsPage = defineComponent({
     const cellDraft = ref('')
     const startCellEdit = (task, field) => {
       if (!canEditTask(task)) return alert('只能改自己负责的任务')
-      // admin 才能改 category / detail / owner；其他人只能改 status / note
-      const adminOnly = ['category', 'detail', 'owner']
+      // admin 才能改 category / detail / owner / eta_date；其他人只能改 status / note
+      const adminOnly = ['category', 'detail', 'owner', 'eta_date']
       if (adminOnly.includes(field) && !isAdmin.value) return
       editingCell.value = { id: task.id, field }
       cellDraft.value = field === 'note'
@@ -829,8 +849,10 @@ const AdsPage = defineComponent({
       { k:'vis',            l:'访客数',    fmt:'num' },
     ]
     const fmtMetric = (v, type) => {
-      if (v == null) return '—'
+      if (v == null) return '/'
       const n = Number(v)
+      // 0 值统一显示 "/"（包括 CTR=0、点击=0、花费=0 等都没意义）
+      if (!isFinite(n) || n === 0) return '/'
       if (type === 'money') return n >= 10000 ? '¥' + (n/10000).toFixed(1) + '万' : '¥' + n.toFixed(0)
       if (type === 'pct') return n.toFixed(2) + '%'
       if (type === 'sec') return n >= 60 ? (n/60).toFixed(1) + 'min' : Math.round(n) + 's'
@@ -838,6 +860,46 @@ const AdsPage = defineComponent({
     }
     const fmtDiffPct = v => v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(1) + '%'
     const diffCls = v => v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'dn' : 'flat'
+
+    // ── 状态归一 + 任务时间相关辅助 ───────────────────────────
+    const STATUS_DONE = ['done', '已完成', '完成']
+    const STATUS_PROGRESS = ['in_progress', '进行中', 'doing']
+    const isStatusDone = s => STATUS_DONE.includes(s)
+    const isStatusInProgress = s => STATUS_PROGRESS.includes(s)
+
+    // 当前 ISO 周（周一到周日）的起止 epoch ms
+    const currentWeekRange = () => {
+      const d = new Date(); d.setHours(0,0,0,0)
+      const dow = d.getDay()  // 0=Sun,1=Mon,...,6=Sat
+      const offsetToMon = (dow === 0) ? -6 : (1 - dow)  // 周一为 ISO 周首
+      const mon = new Date(d); mon.setDate(d.getDate() + offsetToMon)
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6); sun.setHours(23,59,59,999)
+      return [mon.getTime(), sun.getTime()]
+    }
+    // task.created_at 在本 ISO 周内 → 红点
+    const isNewThisWeek = (task) => {
+      if (!task || !task.created_at) return false
+      const [a, b] = currentWeekRange()
+      const t = new Date(task.created_at).getTime()
+      return t >= a && t <= b
+    }
+    // 完成时间格式化（保留分钟）
+    const fmtCompletedAt = (iso) => {
+      if (!iso) return '—'
+      const d = new Date(iso)
+      if (isNaN(d.getTime())) return '—'
+      const m = (d.getMonth()+1).toString().padStart(2,'0')
+      const day = d.getDate().toString().padStart(2,'0')
+      const hh = d.getHours().toString().padStart(2,'0')
+      const mm = d.getMinutes().toString().padStart(2,'0')
+      return `${m}-${day} ${hh}:${mm}`
+    }
+    // ETA 日期：YYYY-MM-DD → MM-DD
+    const fmtEtaDate = (s) => {
+      if (!s) return ''
+      const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/)
+      return m ? `${m[2]}-${m[3]}` : s
+    }
 
     const meetings = computed(() => {
       const byWeek = {}
@@ -950,6 +1012,8 @@ const AdsPage = defineComponent({
       shopDirectSpend, allSceneSpend, productPromoSpend,
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
       channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod, teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
+      // 任务时间/红点辅助
+      isNewThisWeek, isStatusDone, isStatusInProgress, fmtCompletedAt, fmtEtaDate,
       adsCtr, ctrRankRows,
       channelCatData,
       // ── 新增：API 数据状态 + 品类计划
@@ -1254,19 +1318,20 @@ const AdsPage = defineComponent({
                 </div>
               </div>
             </div>
-            <!-- 任务清单表头（5 列）-->
-            <div style="display:grid;grid-template-columns:110px minmax(0,1.6fr) 130px 100px minmax(0,1.4fr);gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
+            <!-- 任务清单表头（6 列：标签 / 任务名 / 负责人 / 状态 / 时间(ETA或完成) / 备注）-->
+            <div style="display:grid;grid-template-columns:100px minmax(0,1.6fr) 110px 100px 110px minmax(0,1.4fr);gap:0;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:10px;font-weight:700;color:var(--muted)">
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务标签</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">任务名称</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">负责人</div>
               <div style="padding:7px 12px;border-right:1px solid var(--border)">状态</div>
+              <div style="padding:7px 12px;border-right:1px solid var(--border)" title="进行中显示「预计完成」(管理员可改)；已完成显示「完成时间」(自动)">时间</div>
               <div style="padding:7px 12px">备注</div>
             </div>
             <!-- 任务行（Excel 式：点击单元格 → 直接编辑 → 失焦/回车自动保存）-->
             <div style="display:flex;flex-direction:column">
               <template v-for="(task, ti) in item.tasks" :key="task.id">
               <div
-                :style="{display:'grid',gridTemplateColumns:'110px minmax(0,1.6fr) 130px 100px minmax(0,1.4fr)',gap:'0',alignItems:'stretch',
+                :style="{display:'grid',gridTemplateColumns:'100px minmax(0,1.6fr) 110px 100px 110px minmax(0,1.4fr)',gap:'0',alignItems:'stretch',
                   borderBottom: ti < item.tasks.length-1 ? '1px solid var(--border)' : 'none',
                   background: expandedTaskId === task.id ? '#fff7ed' : (ti%2===0 ? '#fff' : '#fafaf9')}">
 
@@ -1281,13 +1346,15 @@ const AdsPage = defineComponent({
                   <span v-else style="font-size:11px;color:var(--muted);padding:2px 7px;border:1px solid var(--border);border-radius:99px;background:#fff;white-space:nowrap">{{ task.category || '—' }}</span>
                 </div>
 
-                <!-- 任务名称（admin 点击改）-->
-                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',overflow:'hidden',cursor:isAdmin?'pointer':'default'}"
+                <!-- 任务名称（admin 点击改）+ 红点：本周新增（created_at 落在本 ISO 周内）-->
+                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',gap:'6px',borderRight:'1px solid var(--border)',overflow:'hidden',cursor:isAdmin?'pointer':'default'}"
                      @click="!isEditing(task.id,'detail') && isAdmin && startCellEdit(task,'detail')">
+                  <span v-if="isNewThisWeek(task)" title="本周新增任务"
+                        style="width:8px;height:8px;border-radius:50%;background:#dc2626;flex-shrink:0;box-shadow:0 0 0 2px #fee2e2"></span>
                   <input v-if="isEditing(task.id,'detail')" v-model="cellDraft" :data-cell-edit="task.id+'-detail'"
                     @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
                     style="flex:1;font-size:12px;border:1px solid var(--accent);border-radius:5px;padding:3px 6px;outline:none;min-width:0">
-                  <div v-else style="font-size:12px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%" :title="task.detail">{{ task.detail || '—' }}</div>
+                  <div v-else style="font-size:12px;font-weight:500;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0" :title="task.detail">{{ task.detail || '—' }}</div>
                 </div>
 
                 <!-- 负责人（点击改）-->
@@ -1313,6 +1380,25 @@ const AdsPage = defineComponent({
                     <span :style="{width:'7px',height:'7px',borderRadius:'50%',background:statusColor(task.status),display:'inline-block',flexShrink:'0'}"></span>
                     {{ task.status||'—' }}
                   </span>
+                </div>
+
+                <!-- 时间列：已完成→展示 completed_at（自动）；进行中→展示/编辑 eta_date（admin 可改）-->
+                <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',borderRight:'1px solid var(--border)',cursor:(isStatusInProgress(task.status) && isAdmin)?'pointer':'default'}"
+                     @click="isStatusInProgress(task.status) && isAdmin && !isEditing(task.id,'eta_date') && startCellEdit(task,'eta_date')">
+                  <!-- 已完成 -->
+                  <span v-if="isStatusDone(task.status)" style="font-size:11px;color:#16a34a" :title="'完成时间：' + (task.completed_at || '—')">
+                    ✓ {{ fmtCompletedAt(task.completed_at) }}
+                  </span>
+                  <!-- 进行中：admin 可改 ETA -->
+                  <input v-else-if="isEditing(task.id,'eta_date')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-eta_date'"
+                    @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
+                    style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
+                  <span v-else-if="isStatusInProgress(task.status)" style="font-size:11px;color:task.eta_date?'#f59e0b':'#9ca3af'"
+                    :title="isAdmin ? '点击设置/修改预计完成日期' : '预计完成日期'">
+                    {{ task.eta_date ? ('🕒 ' + fmtEtaDate(task.eta_date)) : (isAdmin ? '+ 设置预计完成' : '—') }}
+                  </span>
+                  <!-- 其他状态：暂不展示 -->
+                  <span v-else style="font-size:11px;color:#d1d5db">—</span>
                 </div>
 
                 <!-- 备注（点击改）+ 评论 + 删除 -->

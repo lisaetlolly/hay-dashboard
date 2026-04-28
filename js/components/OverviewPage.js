@@ -60,6 +60,24 @@ const OverviewPage = defineComponent({
       return v >= 10000 ? (v/10000).toFixed(1) + '万' : v.toFixed(0)
     })
 
+    // 在 [s, e] 范围内计算指定 spu 的 metric value（不限 top10，用于环比兜底）
+    const localValueByPid = (metric, s, e, cat) => {
+      const out = {}
+      for (const p of Object.values(RAW.products)) {
+        if (cat !== '全部' && p.cat !== cat) continue
+        let gmv = 0, vis = 0
+        for (let i = 0; i < p.dates.length; i++) {
+          const d = p.dates[i]
+          if (d >= s && d <= e) {
+            gmv += p.pay[i] || 0
+            vis += p.vis[i] || 0
+          }
+        }
+        out[p.pid] = metric === 'gmv' ? gmv : vis
+      }
+      return out
+    }
+
     // 在 [s, e] 范围内计算每个商品的 metric value，按 value 降序返回 top10
     const localRankInRange = (metric, s, e, cat) => {
       return Object.values(RAW.products)
@@ -137,6 +155,33 @@ const OverviewPage = defineComponent({
           }
         } else {
           prevTopData.value = apiPrev || []
+        }
+      }
+      // 第四层兜底：如果 items[i].change_pct 全部为 null/undefined，
+      //            就用 prev_top（前面已经填好）按 spu_id 查表计算环比
+      const items = (rankData.value.items || [])
+      const allNullChange = items.length > 0 && items.every(r => r.change_pct == null)
+      if (allNullChange) {
+        // 用所有商品的本地前期值（不限 top10），按 spu_id 查表
+        const subD = (ds, n) => { const d = new Date(ds); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10) }
+        const days = Math.max(1, Math.round((new Date(e) - new Date(s)) / 86400000) + 1)
+        const ps = subD(s, days), pe = subD(s, 1)
+        const prevValByPid = (rankMetric.value === 'gmv' || rankMetric.value === 'visitors')
+          ? localValueByPid(rankMetric.value, ps, pe, rankCategory.value)
+          : {}
+        // CTR 兜底：从 RAW.products 里抓 ctr 平均（如果有）
+        // 优先合并 prev_top（如果有）再用本地 RAW
+        if (prevTopData.value && prevTopData.value.length) {
+          for (const p of prevTopData.value) {
+            if (prevValByPid[p.spu_id] == null) prevValByPid[p.spu_id] = p.value || 0
+          }
+        }
+        for (const r of items) {
+          const pv = prevValByPid[r.spu_id]
+          if (pv != null && pv > 0) {
+            r.change_pct = +(((r.value||0) - pv) / pv * 100).toFixed(1)
+            r.prev_value = pv
+          }
         }
       }
       rankLoading.value = false
