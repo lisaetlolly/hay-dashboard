@@ -307,6 +307,7 @@ def load_dim_product(conn):
         ('818210888511',  '818210888511',  'Paper Shade 灯罩',          '灯具', '灯罩', 0),
         ('824452791755',  '1016294283167', 'Facet Cabinet 边柜（多色）','家具', '边柜', 0),  # 副 SKU 合并到 1016
         ('1020815058332', '1020815058332', 'Barro Bowl & Plate 碗盘',   '配饰', '餐具', 0),
+        ('1021718193334', '1021718193334', 'Manolito Stool 矮凳',       '家具', '凳子', 0),
     ]
     for pid, sid, title, l1, l2, inv in EXTRA_PRODUCTS:
         cur.execute(
