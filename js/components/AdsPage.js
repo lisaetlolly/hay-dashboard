@@ -854,14 +854,24 @@ const AdsPage = defineComponent({
       const hasStatusFilter  = !!f.status
       const hasTaskLevelFilter = hasOwnerFilter || hasStatusFilter
 
-      // 把后端返回的 groups 按 pid 索引一份，再用 official_pids 兜底拼 25 组
+      // 把后端返回的 groups 按 pid 索引一份
       const apiByPid = {}
       for (const g of apiTasksData.value.groups || []) {
         if (g && g.product_id) apiByPid[g.product_id] = g
       }
-      // 严格 25 个：只渲染 OFFICIAL_25_PIDS 里的 PID，后端返的扩展 PID（Cotton Bag /
-      // PC Portable / Paper Shade / Manolito 等）一律不进团队 tab
-      const allPids = [...OFFICIAL_25_PIDS]
+
+      // ⚠ 关键模式分支：
+      // 1) 过滤模式（选了具体周期）→ 只显示真有任务的商品；不补占位
+      // 2) 默认模式（selectedPeriod 空）→ 25 OFFICIAL 商品兜底，PLUS 任何有真任务的扩展商品（Paper Shade / Cotton Bag 等）
+      const filterMode = !!selectedPeriod.value
+      const apiPids = Object.keys(apiByPid)
+      let allPids
+      if (filterMode) {
+        allPids = apiPids
+      } else {
+        // 25 OFFICIAL ∪ 后端实际返了任务的额外 PID → 保证 Paper Shade 这种扩展商品有任务时也出现
+        allPids = [...new Set([...OFFICIAL_25_PIDS, ...apiPids])]
+      }
       const mergedGroups = allPids.map(pid => apiByPid[pid] || {
         product_id: pid,
         product_name: RAW.short_names?.[pid] || pid,
@@ -876,29 +886,31 @@ const AdsPage = defineComponent({
         if (f.category && g.category_l1 !== f.category) continue
         if (f.productKeyword
             && !(g.product_name||'').toLowerCase().includes(f.productKeyword.toLowerCase())) continue
-        // 真实任务（DB 有的）—— 不 map，直接透传原始对象引用，避免丢字段（execution_note / priority 等）
-        // 同时 patch 一个 is_template:false 标记 + note 别名（兼容老模板里的 task.note）
+        // 真实任务（DB 有的）—— 不 map，直接透传原始对象引用，避免丢字段
         const realTasks = (g.tasks || []).map(t => {
           if (t.is_template === undefined) t.is_template = false
           if (t.note === undefined) t.note = t.execution_note || ''
           return t
         })
-        // 占位：DB 缺失的 9 个固定模板（按 template_id 比对）
-        const usedTplIds = new Set(realTasks.map(t => t.template_id).filter(Boolean))
-        const placeholderTasks = templates
-          .filter(tpl => !usedTplIds.has(tpl.id))
-          .map(tpl => ({
-            id: 'tmpl_' + tpl.id + '_' + g.product_id,
-            template_id: tpl.id,
-            detail: tpl.detail,
-            owner: tpl.default_owner || '',
-            category: tpl.category || '',
-            status: '待开始',
-            note: '',
-            execution_note: '',
-            created_at: null, eta_date: null, completed_at: null,
-            is_template: true,
-          }))
+        // 占位仅在默认模式下生成 — 过滤模式下严格只看真任务
+        let placeholderTasks = []
+        if (!filterMode) {
+          const usedTplIds = new Set(realTasks.map(t => t.template_id).filter(Boolean))
+          placeholderTasks = templates
+            .filter(tpl => !usedTplIds.has(tpl.id))
+            .map(tpl => ({
+              id: 'tmpl_' + tpl.id + '_' + g.product_id,
+              template_id: tpl.id,
+              detail: tpl.detail,
+              owner: tpl.default_owner || '',
+              category: tpl.category || '',
+              status: '待开始',
+              note: '',
+              execution_note: '',
+              created_at: null, start_date: null, eta_date: null, completed_at: null,
+              is_template: true,
+            }))
+        }
         // 真实任务排序：未完成在前 + eta 越近越靠前 + created 越近越靠前
         const STATUS_RANK = { '进行中':0, '待开始':1, '已完成':3 }  // 越小越靠前
         const sortKey = (t) => {
@@ -924,9 +936,11 @@ const AdsPage = defineComponent({
           if (hasStatusFilter && (t.status||'') !== f.status) return false
           return true
         })
-        // 仅当用户主动启用「任务级过滤」且筛后空，才把整个商品隐藏；
-        // 默认（无过滤）情况下空商品也要显示，确保 25 个商品全部出现。
-        if (hasTaskLevelFilter && !filteredTasks.length) continue
+        // 显示规则：
+        // · 过滤模式（filterMode）：商品的真任务为空 → 跳过该商品
+        // · 默认模式：任务级过滤启用且筛后空 → 跳过；否则保留（25 商品全显）
+        if (filterMode && !filteredTasks.length) continue
+        if (!filterMode && hasTaskLevelFilter && !filteredTasks.length) continue
         out.push({
           pid: g.product_id,
           // 名字兜底：API 没拿到 dim_product 的话用前端 short_names（覆盖如 Cotton Bag 564552361178 这种非主链但有任务的 PID）
@@ -2141,7 +2155,7 @@ const AdsPage = defineComponent({
                       :style="{color: '#6b7280', cursor: isAdmin?'pointer':'default'}"
                       :title="isAdmin ? '点击改开始日期' : '开始日期'"
                       @click="isAdmin && startCellEdit(task,'start_date')">
-                      {{ task.start_date ? fmtEtaDate(task.start_date) : (periodStartDateDisplay || '—') }}
+                      {{ task.start_date ? fmtEtaDate(task.start_date) : '—' }}
                     </span>
                     <span style="color:#9ca3af">~</span>
                     <!-- 截止日期：在当前展示周期内 → 橙色高亮；否则中性色 -->
@@ -2152,7 +2166,7 @@ const AdsPage = defineComponent({
                       :style="{color: etaInCurrentWeek(task) ? '#f59e0b' : '#6b7280', fontWeight: etaInCurrentWeek(task) ? 700 : 400, cursor: isAdmin?'pointer':'default'}"
                       :title="isAdmin ? '点击改截止日期' : '截止日期'"
                       @click="isAdmin && startCellEdit(task,'eta_date')">
-                      {{ task.eta_date ? fmtEtaDate(task.eta_date) : (periodEndDateDisplay || '—') }}
+                      {{ task.eta_date ? fmtEtaDate(task.eta_date) : '—' }}
                     </span>
                   </template>
                 </div>
