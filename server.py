@@ -1318,6 +1318,11 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             '1022489092196',  # Conical Vase 花瓶
             '887041510904',   # Coco Door Mat 地垫
             '689952405763',   # Revolver Stool & Bar Stool 吧椅
+            # 4 扩展商品（也显示进团队 tab）
+            '564552361178',   # Cotton Bag 帆布包
+            '1021718193334',  # Manolito Stool 矮凳
+            '818210888511',   # Paper Shade 灯罩
+            '886901025905',   # PC Portable Lamp 便携灯
         ]
         official_pids = sorted(set(OFFICIAL_25_PIDS))
 
