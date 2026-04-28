@@ -304,6 +304,31 @@ const AdsPage = defineComponent({
         }
       } catch {}
     }
+    // "查看本周任务" 按钮：切换到包含今天的那个周期；再点切回上周（toggle）
+    const isViewingCurrentWeek = computed(() => {
+      const p = apiTasksData.value.period
+      if (!p || !p.start_date || !p.end_date) return false
+      const ts = new Date().toISOString().slice(0,10)
+      return p.start_date <= ts && ts <= p.end_date
+    })
+    const toggleCurrentWeek = () => {
+      const ts = new Date().toISOString().slice(0,10)
+      if (isViewingCurrentWeek.value) {
+        // 切回上周
+        const target = new Date()
+        target.setDate(target.getDate() - 7)
+        const tts = target.toISOString().slice(0,10)
+        const hit = (apiTaskPeriods.value || []).find(p => p.start_date <= tts && tts <= p.end_date)
+        if (hit) selectedPeriod.value = hit.label
+        else alert('找不到上周的周期数据')
+      } else {
+        // 切到本周
+        const hit = (apiTaskPeriods.value || []).find(p => p.start_date <= ts && ts <= p.end_date)
+        if (hit) selectedPeriod.value = hit.label
+        else alert('当前周期还没建，请先 + 新周期')
+      }
+    }
+
     const loadTasksWithMetrics = async () => {
       const params = selectedPeriod.value ? `?period_label=${encodeURIComponent(selectedPeriod.value)}` : ''
       try {
@@ -1303,6 +1328,7 @@ const AdsPage = defineComponent({
       // 任务面板新指标
       taskMetricDefs, fmtMetric, fmtDiffPct, diffCls,
       activePeriodRange, prevPeriodLabel, prevPeriodRange,
+      isViewingCurrentWeek, toggleCurrentWeek,
       // 任务评论
       expandedTaskId, taskComments, commentDraft, previewImage,
       toggleTaskExpand, onCommentImagePick, sendComment, deleteComment, fmtCommentTime,
@@ -1539,9 +1565,13 @@ const AdsPage = defineComponent({
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;flex-wrap:wrap">
           <div>
             <span class="card-title">任务清单</span>
-            <span class="card-sub">{{ activePeriod }} · {{ taskGroups.length }} 个商品 · 点击单元格直接编辑</span>
+            <span class="card-sub">数据统计时间 {{ activePeriod || '—' }}　环比 {{ prevPeriodLabel || '—' }}　·　{{ taskGroups.length }} 个商品 · 点击单元格直接编辑</span>
           </div>
           <div style="display:flex;gap:8px">
+            <button @click="toggleCurrentWeek"
+              :style="{padding:'6px 14px',fontSize:'13px',border:'1px solid var(--border)',background: isViewingCurrentWeek ? 'var(--accent)' : '#fff', color: isViewingCurrentWeek ? '#fff' : 'var(--text)', borderRadius:'6px',cursor:'pointer',fontWeight:'500'}">
+              {{ isViewingCurrentWeek ? '✓ 查看本周任务' : '查看本周任务' }}
+            </button>
             <button v-if="isAdmin" @click="openNewTask('')"
               style="padding:6px 14px;font-size:13px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)">+ 新增任务</button>
           </div>
@@ -1563,9 +1593,6 @@ const AdsPage = defineComponent({
                   <div style="font-size:11px;color:var(--muted)">{{ item.pid }}</div>
                 </div>
                 <div>
-                  <div style="font-size:10px;color:var(--muted);margin-bottom:6px">
-                    当期：{{ activePeriodRange || '—' }}　·　环比 {{ prevPeriodLabel }}
-                  </div>
                   <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px 12px">
                     <div v-for="m in taskMetricDefs" :key="m.k" style="display:flex;flex-direction:column;gap:2px;min-width:0">
                       <span style="font-size:10px;color:var(--muted)">{{ m.l }}</span>
