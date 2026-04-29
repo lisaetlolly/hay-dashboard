@@ -1101,10 +1101,74 @@ def _ensure_task_comment_table():
                 )
             """)
             cur.execute("CREATE INDEX IF NOT EXISTS idx_task_comment_task ON task_comment(task_id)")
+            cur.execute("ALTER TABLE task_comment ADD COLUMN IF NOT EXISTS images JSONB")
             conn.commit()
     except Exception as e:
         import logging; logging.warning(f"task_comment table init skipped: {e}")
 _ensure_task_comment_table()
+
+
+# ── 一次性 schema 兜底：把所有 "ALTER TABLE IF NOT EXISTS" 集中到启动时跑一遍。
+# 之前每个 handler 都重跑一遍，每条 ALTER 跨 Neon 一次往返（~150-300ms），
+# 单个 PATCH 累 5 条 = 1-2 秒延迟。挪到启动期跑，请求路径上不再有这些 round trip。
+_TASKS_SCHEMA_READY = False
+def _ensure_tasks_schema():
+    global _TASKS_SCHEMA_READY
+    if _TASKS_SCHEMA_READY:
+        return
+    try:
+        with db() as conn:
+            cur = conn.cursor()
+            # tasks 列兜底
+            cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
+            cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
+            cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS note_images JSONB DEFAULT '[]'::jsonb")
+            cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS note_attachments JSONB DEFAULT '[]'::jsonb")
+            # task_template 多负责人列
+            cur.execute("ALTER TABLE task_template ADD COLUMN IF NOT EXISTS default_owners TEXT[]")
+            # task_hidden 表
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS task_hidden (
+                  product_id TEXT NOT NULL,
+                  category   TEXT NOT NULL DEFAULT '',
+                  detail     TEXT NOT NULL DEFAULT '',
+                  hidden_at  TIMESTAMPTZ DEFAULT now(),
+                  PRIMARY KEY (product_id, category, detail)
+                )
+            """)
+            # task_group + task_group_member
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS task_group (
+                  id          SERIAL PRIMARY KEY,
+                  name        TEXT NOT NULL UNIQUE,
+                  is_default  BOOLEAN DEFAULT FALSE,
+                  created_at  TIMESTAMPTZ DEFAULT now(),
+                  updated_at  TIMESTAMPTZ DEFAULT now()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS task_group_member (
+                  group_id    INT NOT NULL REFERENCES task_group(id) ON DELETE CASCADE,
+                  template_id INT NOT NULL REFERENCES task_template(id) ON DELETE CASCADE,
+                  sort_order  INT DEFAULT 0,
+                  PRIMARY KEY (group_id, template_id)
+                )
+            """)
+            # tasks 唯一索引（用于 ON CONFLICT 跳过重复实例化）
+            try:
+                cur.execute("""
+                    ALTER TABLE tasks
+                    ADD CONSTRAINT tasks_unique_pid_period_cat_det
+                    UNIQUE (product_id, time_range_label, category, detail)
+                """)
+            except Exception:
+                conn.rollback()  # 已存在
+            conn.commit()
+            _TASKS_SCHEMA_READY = True
+    except Exception as e:
+        import logging; logging.warning(f"_ensure_tasks_schema skipped: {e}")
+_ensure_tasks_schema()
 
 
 @app.get("/api/tasks/{task_id}/comments")
@@ -1246,21 +1310,7 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                      xhs_count（小红书笔记数）
     """
     with db() as conn:
-        # 兜底：老库可能还没有 start_date / eta_date / completed_at 列；task_hidden 表
-        cur = conn.cursor()
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS task_hidden (
-              product_id TEXT NOT NULL,
-              category   TEXT NOT NULL DEFAULT '',
-              detail     TEXT NOT NULL DEFAULT '',
-              hidden_at  TIMESTAMPTZ DEFAULT now(),
-              PRIMARY KEY (product_id, category, detail)
-            )
-        """)
-        conn.commit()
+        # 列/表兜底已在启动期跑过（_ensure_tasks_schema），请求路径不再 ALTER/CREATE
 
         # ⚠ 团队 tab 不再有 task_period 概念。
         # · period_label 参数保留是为了兼容老调用，但都按"全部任务 + Mon-Sun 上周作 metrics 参考"处理。
@@ -1283,6 +1333,7 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
         # 3. 任务列表 — 全部任务，但同 (product_id, category, detail) 只保留最新一条
         # （避免同一个任务在不同 period 多次发布产生的重复行）
         # DISTINCT ON 取每组的"最新"：先按 updated_at DESC，再按 id DESC 兜底
+        # 用 LEFT JOIN task_hidden 过滤掉用户主动删过的 (pid, cat, det)
         tasks = rows(conn, """
             SELECT DISTINCT ON (t.product_id, t.category, t.detail)
                    t.id, t.product_id, t.detail, t.owner, t.status, t.priority,
@@ -1296,7 +1347,12 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                    t.completed_at::text       AS completed_at,
                    t.updated_at::text         AS updated_at
             FROM tasks t
+            LEFT JOIN task_hidden h
+              ON h.product_id = t.product_id
+             AND h.category   = COALESCE(t.category,'')
+             AND h.detail     = COALESCE(t.detail,'')
             WHERE t.product_id IS NOT NULL
+              AND h.product_id IS NULL
             ORDER BY t.product_id, t.category, t.detail,
                      t.updated_at DESC NULLS LAST, t.id DESC
         """)
@@ -1678,14 +1734,8 @@ def publish_tasks(body: TaskPublishBody,
                 existing = cur.fetchone()
                 if existing:
                     if body.overwrite:
-                        # 覆盖：先把旧任务备注/图片/附件归档成评论，再 UPDATE 清空
-                        try:
-                            _archive_same_named_tasks(
-                                conn, existing["id"], pid,
-                                tpl["category"] or '', tpl["detail"] or '', user
-                            )
-                        except Exception as _e:
-                            import logging; logging.warning(f"archive on publish overwrite: {_e}")
+                        # 覆盖：仅更新当前 (pid+period+cat+det) 这条；
+                        # 不再联动 archive 其他周期的同名行 — 那会把用户手改的状态/日期吹掉。
                         cur.execute("""
                             UPDATE tasks
                             SET status = '待开始',
@@ -1710,13 +1760,8 @@ def publish_tasks(body: TaskPublishBody,
                     """, (pid, tpl["detail"], tpl["default_owner"] or '',
                           tpl["category"], body.period_label, tpl["id"],
                           body.start_date or None, body.end_date or None))
-                    new_id = cur.fetchone()["id"]
-                    # 跨周期同名归档：把别的周期的同 (pid, cat, det) 旧任务备注挪过来
-                    try:
-                        _archive_same_named_tasks(conn, new_id, pid,
-                                                  tpl["category"] or '', tpl["detail"] or '', user)
-                    except Exception as _e:
-                        import logging; logging.warning(f"archive on publish insert: {_e}")
+                    cur.fetchone()  # 消费 RETURNING
+                    # 不再联动 archive 其他周期的同名旧任务（避免误删用户手改的进行中/已完成行）
                     created += 1
         conn.commit()
         return {
@@ -2070,15 +2115,8 @@ def bulk_instantiate_tasks(body: TasksBulkInstantiate,
         """, (body.product_ids, body.period_label, *([body.template_ids] if body.template_ids else [])))
         new_rows = cur.fetchall()
         created = len(new_rows)
-        # 对每条新插入的任务跑一次归档：跨周期把同 (pid, cat, det) 的老任务备注转评论 + 删旧
-        for nr in new_rows:
-            try:
-                _archive_same_named_tasks(
-                    conn, nr["id"], nr["product_id"],
-                    nr.get("category") or '', nr.get("detail") or '', user
-                )
-            except Exception as _e:
-                import logging; logging.warning(f"archive on bulk-instantiate: {_e}")
+        # 不再对新插入的任务跑跨周期归档 — 避免误删用户手改的状态/日期。
+        # 用户的 "+ 新增任务" 单条创建仍走 _archive_same_named_tasks（那条路径用户是有意识的覆盖）。
         conn.commit()
         return {"created": created, "period_label": body.period_label,
                 "product_count": len(body.product_ids)}
@@ -2088,9 +2126,7 @@ def bulk_instantiate_tasks(body: TasksBulkInstantiate,
 def create_task(task: TaskCreate, user: Optional[dict] = Depends(require_permission('task.create'))):
     with db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
-        conn.commit()
+        # 列兜底已在启动期跑过（_ensure_tasks_schema）
         cur.execute("""
             INSERT INTO tasks (product_id, detail, owner, status, priority, category,
                                time_range_label, execution_note, start_date, eta_date, template_id)
@@ -2152,15 +2188,7 @@ def update_task(task_id: int, task: TaskUpdate, user: Optional[dict] = Depends(g
         else:
             extra_clauses.append("completed_at = NULL")
 
-    # 确保 start_date / eta_date / completed_at / note_images 列存在（首次运行自动建表）
-    with db() as conn:
-        cur = conn.cursor()
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS eta_date DATE")
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ")
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS note_images JSONB DEFAULT '[]'::jsonb")
-        cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS note_attachments JSONB DEFAULT '[]'::jsonb")
-        conn.commit()
+    # 列兜底已在启动期跑过（_ensure_tasks_schema），请求路径不再 ALTER
     import json as _json
     # note_images 数组传入 → 序列化 JSON
     if 'note_images' in fields:
@@ -2283,35 +2311,34 @@ def hide_template_for_product(body: HideTemplateBody, _user=Depends(require_perm
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: int, _user=Depends(require_permission('task.delete'))):
     """
-    DELETE 任务时，同时记录"用户主动删除了 (product_id, category, detail) 这条任务"，
-    这样占位行生成时不再补回这一项（避免"删了又诈尸"）。
+    DELETE 任务时：
+    1. 把同 (product_id, category, detail) 的所有兄弟行（不同 time_range_label 的历史）一起删 —
+       不然 with-metrics 的 DISTINCT ON 会从兄弟里选个新的，用户感觉"删了又诈尸"。
+    2. 同步写 task_hidden，with-metrics 会用它进一步过滤（兜底）。
     """
     with db() as conn:
         cur = conn.cursor()
-        # 兜底建表
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS task_hidden (
-              product_id TEXT NOT NULL,
-              category   TEXT NOT NULL DEFAULT '',
-              detail     TEXT NOT NULL DEFAULT '',
-              hidden_at  TIMESTAMPTZ DEFAULT now(),
-              PRIMARY KEY (product_id, category, detail)
-            )
-        """)
-        conn.commit()
-        # 拿到这条任务的 (pid, cat, detail) 然后删任务 + 写入 hidden
         cur.execute("SELECT product_id, COALESCE(category,''), COALESCE(detail,'') FROM tasks WHERE id = %s", (task_id,))
         row_ = cur.fetchone()
         if row_:
             pid, cat, det = row_
-            cur.execute("DELETE FROM tasks WHERE id = %s", (task_id,))
+            # 删本条 + 同 (pid, cat, det) 的其他历史行
+            cur.execute("""
+                DELETE FROM tasks
+                WHERE product_id = %s
+                  AND COALESCE(category,'') = %s
+                  AND COALESCE(detail,'')   = %s
+            """, (pid, cat, det))
+            deleted_n = cur.rowcount
             if pid:
                 cur.execute("""
                     INSERT INTO task_hidden (product_id, category, detail)
                     VALUES (%s, %s, %s) ON CONFLICT DO NOTHING
                 """, (pid, cat, det))
+            conn.commit()
+            return {"ok": True, "deleted": deleted_n}
         conn.commit()
-        return {"ok": True}
+        return {"ok": True, "deleted": 0}
 
 
 # ══════════════════════════════════════════════════
