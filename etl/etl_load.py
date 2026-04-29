@@ -491,15 +491,23 @@ def read_csv_gbk(path):
     return headers, rows
 
 def load_wxst_product(conn):
-    # 兼容两种目录结构：推广报表/商品报表/*.csv  或  推广报表/商品报表*.csv
-    matches = (glob.glob(os.path.join(DATA_DIR, '推广报表', '商品报表', '*.csv'))
-            or glob.glob(os.path.join(DATA_DIR, '推广报表', '商品报表*.csv')))
-    if not matches:
+    """
+    万象台商品报表 (fact_wxst_product)：(date, product_id) 唯一。
+    数据源：
+      · 父级 推广报表/商品报表/*.csv —— "全场景合并"版本（人群+关键词+店铺直达+短视频 等都已合并）
+      · 子文件夹（人群推广商品报表 / 关键词商品报表）—— 单 channel；后台一般在合并版还没出来前先发这个。
+    策略：
+      1) 父级文件直接走原来的"INSERT...ON CONFLICT...DO UPDATE 整行覆盖"
+      2) 子文件夹的同 (date, pid) 跨 channel 在内存里 SUM，**只对 fact_wxst_product 还没数据的 (date, pid) INSERT**，
+         不覆盖父级合并版的值（因为合并版本来就 ≥ 单 channel SUM）。
+    """
+    parent_files = sorted(glob.glob(os.path.join(DATA_DIR, '推广报表', '商品报表', '*.csv')))
+    sub_files    = sorted(glob.glob(os.path.join(DATA_DIR, '推广报表', '商品报表', '*', '*.csv')))
+    if not (parent_files or sub_files):
         print("  [SKIP] 万象台商品报表 not found")
         return
     cur = conn.cursor()
     loaded = _loaded_files(conn, 'fact_wxst_product')
-    skipped_files = 0
     sql = """
         INSERT INTO fact_wxst_product (
             stat_date, product_id, product_name,
@@ -524,10 +532,13 @@ def load_wxst_product(conn):
             natural_gmv=EXCLUDED.natural_gmv, natural_impressions=EXCLUDED.natural_impressions,
             source_file=EXCLUDED.source_file
     """
-    seen = set()
+    skipped_files = 0
     total = 0
-    print(f"  万象台商品报表：{len(matches)} 个 CSV（增量）")
-    for fi, fpath in enumerate(sorted(matches), 1):
+
+    # === 1) 父级：原来逻辑，直写 ===
+    seen_parent = set()
+    print(f"  万象台商品报表：父级 {len(parent_files)} 个 + 子文件夹 {len(sub_files)} 个")
+    for fi, fpath in enumerate(parent_files, 1):
         fname = os.path.basename(fpath)
         if fname in loaded:
             skipped_files += 1
@@ -540,19 +551,14 @@ def load_wxst_product(conn):
         batch = []
         for row in rs:
             pid = str(row.get('主体ID', '')).strip()
-            if not pid:
+            if not pid or len(pid) > 30:
                 continue
-            if len(pid) > 30:  # 同 syzt 防御：脏数据跳过
-                continue
-            # Option A：灌全店所有 PID（不再过滤 25 主链）。
-            # 前端「优化页 25 SKU 视图」靠 OFFICIAL Set 过滤，不依赖 ETL 过滤；
-            # 总览页 / 对账需要全店真实数据。
             stat_date = str(row.get('日期', '')).strip()[:10]
             if not stat_date:
                 continue
             key = (stat_date, pid)
-            if key in seen: continue
-            seen.add(key)
+            if key in seen_parent: continue
+            seen_parent.add(key)
             def g(k):  return safe_float(row.get(k))
             def gp(k): return safe_pct(row.get(k))
             batch.append((
@@ -567,14 +573,86 @@ def load_wxst_product(conn):
                 g('引导访问量'), g('平均访问页面数'),
                 g('成交人数'), g('成交新客数'),
                 g('自然流量转化金额'), g('自然流量曝光量'),
-                fname
+                fname,
             ))
         if batch:
             psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
             conn.commit()
         total += len(batch)
-        print(f"    [{fi}/{len(matches)}] {fname}: +{len(batch)}（累计 {total}）")
-    print(f"  fact_wxst_product: {total} rows ({len(matches)} files, {skipped_files} 跳过)")
+        print(f"    [父级 {fi}/{len(parent_files)}] {fname}: +{len(batch)}（累计 {total}）")
+
+    # === 2) 子文件夹：跨 channel SUM 同 (date, pid)，只对 DB 没有的 (date, pid) INSERT ===
+    sub_new_files = [f for f in sub_files if os.path.basename(f) not in loaded]
+    if sub_new_files:
+        # 拿到 DB 已有的 (date, pid) 集合
+        cur.execute("SELECT stat_date::text, product_id FROM fact_wxst_product")
+        existing = set((r[0], r[1]) for r in cur.fetchall())
+
+        # 内存里 SUM
+        agg = {}  # (date, pid) -> dict of summed metrics + name + fname
+        NUMERIC_KEYS = (
+            '展现量', '点击量', '花费', '平均点击花费', '千次展现花费',
+            '总成交金额', '直接成交金额', '间接成交金额',
+            '总购物车数', '收藏宝贝数', '收藏店铺数',
+            '总收藏加购数', '宝贝收藏加购数',
+            '引导访问量', '平均访问页面数',
+            '成交人数', '成交新客数',
+            '自然流量转化金额', '自然流量曝光量',
+        )
+        PCT_KEYS = ('点击率', '点击转化率', '加购率', '投入产出比')
+        for fpath in sub_new_files:
+            fname = os.path.basename(fpath)
+            try:
+                _, rs = read_csv_gbk(fpath)
+            except Exception as e:
+                print(f"  [WARN] {fname}: {e}")
+                continue
+            for row in rs:
+                pid = str(row.get('主体ID', '')).strip()
+                if not pid or len(pid) > 30:
+                    continue
+                stat_date = str(row.get('日期', '')).strip()[:10]
+                if not stat_date:
+                    continue
+                key = (stat_date, pid)
+                if key in existing:
+                    continue  # 父级合并版已有 → 不动
+                # 防御 None：safe_float / safe_pct 个别字段可能返 None，统一兜成 0
+                def _f(v): return float(v) if v is not None else 0.0
+                e = agg.get(key)
+                if e is None:
+                    e = {'name': str(row.get('主体名称', '')), 'fname': fname}
+                    for k in NUMERIC_KEYS: e[k] = _f(safe_float(row.get(k)))
+                    for k in PCT_KEYS:     e[k] = _f(safe_pct(row.get(k)))
+                    agg[key] = e
+                else:
+                    for k in NUMERIC_KEYS: e[k] = _f(e.get(k)) + _f(safe_float(row.get(k)))
+                    for k in PCT_KEYS:     e[k] = _f(safe_pct(row.get(k))) or _f(e.get(k))
+                    e['fname'] = fname
+        if agg:
+            batch = []
+            for (stat_date, pid), m in agg.items():
+                batch.append((
+                    stat_date, pid, m['name'],
+                    m.get('展现量', 0), m.get('点击量', 0), m.get('花费', 0),
+                    m.get('点击率', 0), m.get('平均点击花费', 0), m.get('千次展现花费', 0),
+                    m.get('总成交金额', 0), m.get('直接成交金额', 0), m.get('间接成交金额', 0),
+                    m.get('点击转化率', 0), m.get('投入产出比', 0),
+                    m.get('加购率', 0), m.get('总购物车数', 0),
+                    m.get('收藏宝贝数', 0), m.get('收藏店铺数', 0),
+                    m.get('总收藏加购数', 0), m.get('宝贝收藏加购数', 0),
+                    m.get('引导访问量', 0), m.get('平均访问页面数', 0),
+                    m.get('成交人数', 0), m.get('成交新客数', 0),
+                    m.get('自然流量转化金额', 0), m.get('自然流量曝光量', 0),
+                    m['fname'],
+                ))
+            psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
+            conn.commit()
+            total += len(batch)
+            print(f"    [子文件夹 SUM] +{len(batch)} (date, pid) 行（累计 {total}）")
+        else:
+            print(f"    [子文件夹 SUM] +0（父级已覆盖所有 (date, pid)）")
+    print(f"  fact_wxst_product: {total} rows（父级 {len(parent_files)} + 子 {len(sub_files)}，{skipped_files} 跳过）")
 
 def load_wxst_audience(conn):
     """
@@ -853,9 +931,12 @@ def load_wxst_content(conn):
 # 用于「总投放 ROI 口径」对账：万象台后台显示的总花费/ROI 用的就是这个表
 # ─────────────────────────────────────────────
 def load_wxst_scene(conn):
-    all_matches = (glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表', '*.csv'))
-            or glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表*.csv'))
-            or glob.glob(os.path.join(DATA_DIR, '推广报表', '全场景*.csv')))
+    # 同时扫描根目录 + 子目录（人群营销场景报表 / 关键词营销场景报表 等子分类）
+    all_matches = sorted(set(
+        glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表', '**', '*.csv'), recursive=True)
+        + glob.glob(os.path.join(DATA_DIR, '推广报表', '全营销场景报表*.csv'))
+        + glob.glob(os.path.join(DATA_DIR, '推广报表', '全场景*.csv'))
+    ))
     if not all_matches:
         print("  [SKIP] 万象台全营销场景报表 not found")
         return
