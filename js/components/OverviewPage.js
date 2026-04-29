@@ -35,7 +35,8 @@ const OverviewPage = defineComponent({
       if (v >= 1000)  return v.toFixed(0)
       return v.toFixed(0)
     }
-    const imgSrc = pid => RAW.img_map?.[pid] || ''
+    // 优先用设置页改过的图片链接覆盖；没覆盖再用 RAW.img_map
+    const imgSrc = pid => (APP_STATE.value.imageOverrides || {})[pid] || RAW.img_map?.[pid] || ''
     const kpiVal = key => {
       const k = kpi.value[key]
       if (!k) return '—'

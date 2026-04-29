@@ -59,7 +59,8 @@ const AdsPage = defineComponent({
     const fmtMoney = v => v>=10000 ? '¥'+(v/10000).toFixed(1)+'万' : '¥'+Number(v).toFixed(0)
     const fmtDelta = v => v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + '%'
     const statusColor = s=>s==='已完成'?'#16a34a':s==='进行中'?'#d97706':s==='未确认'?'#dc2626':'#a1a1aa'
-    const imgSrc = pid => RAW.img_map?.[pid] || ''
+    // 优先用设置页改过的图片链接覆盖；没覆盖再用 RAW.img_map（默认 25 个商品图片/）
+    const imgSrc = pid => (APP_STATE.value.imageOverrides || {})[pid] || RAW.img_map?.[pid] || ''
 
     const productStats = computed(() => {
       return Object.values(RAW.products).map(p => {
@@ -266,13 +267,10 @@ const AdsPage = defineComponent({
     })
 
     // ── 任务面板：从 Neon 拉真实任务（含周期 + 当期/上期 metrics）──
+    // ⚠ task_period 概念已从团队 tab 完全去除（apiTaskPeriods / selectedPeriod / taskPeriods
+    // / loadTaskPeriods / 周期编辑 modal 全部已删）。后端 with-metrics 永远按"上周 Mon-Sun"
+    // 返当期数据、按"上上周 Mon-Sun"返环比，跟 task_period 表完全解耦。
     const apiTasksData = ref({ groups: [], period: null, prev_period: null, task_templates: [] })
-    const apiTaskPeriods = ref([])
-    // ⚠ task_period 概念已从团队 tab 完全去除：selectedPeriod / apiTaskPeriods / pickDefaultPeriodLabel 等
-    // 都是死代码，不再需要。loadTaskPeriods 也不再调用。
-    // 后端默认 view_all 模式自动按"上周 vs 上上周"算 metrics（合成 Mon-Sun，跟 task_period 表完全解耦）
-    const selectedPeriod = ref('')   // 永远空，仅为兼容老 watch
-    const loadTaskPeriods = async () => {}  // no-op
     // ── 单品批量改时间 modal ──
     // 打开时把该商品下所有真任务列出来，admin 勾选 / 反选 + 设统一起止日期 + 保存
     const productBatchTimeModal = ref({
@@ -297,9 +295,8 @@ const AdsPage = defineComponent({
         show: true, pid: item.pid, name: item.name,
         tasks: allTasks.map(t => ({
           id: t.id, detail: t.detail, category: t.category, status: t.status,
-          template_id: t.template_id || null,
-          is_template: !!t.is_template,
-          picked: !isStatusDone(t.status),  // 已完成默认不勾，其他都勾
+          // 默认只勾"待开始 / 进行中"；已完成 + 未确认 默认不勾（避免无意中把状态吹掉）
+          picked: t.status === '待开始' || t.status === '进行中' || isStatusInProgress(t.status),
         })),
         start_date: fmtIso(startMs),
         end_date:   fmtIso(endMs),
@@ -330,38 +327,7 @@ const AdsPage = defineComponent({
         if (m.end_date)   body.eta_date   = m.end_date
         if (m.newStatus)  body.status     = m.newStatus
 
-        // 把占位 task 拎出来一次性 bulk-instantiate（同 product，多 template_id）
-        const placeholderItems = picked.filter(t => t.is_template && t.template_id)
-        if (placeholderItems.length) {
-          const inst = await fetch('/api/tasks/bulk-instantiate', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              period_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
-              product_ids: [m.pid],
-              template_ids: placeholderItems.map(t => t.template_id),
-            }),
-          })
-          if (!inst.ok) {
-            const err = await inst.json().catch(()=>({detail:'落库失败'}))
-            throw new Error('占位 materialize 失败：' + (err.detail || ('HTTP ' + inst.status)))
-          }
-          await loadTasksWithMetrics()
-          // 重新查 picked 列表里占位行的 real_id
-          for (const item of placeholderItems) {
-            for (const g of apiTasksData.value.groups || []) {
-              if (g.product_id !== m.pid) continue
-              for (const t of (g.tasks || [])) {
-                if (t.template_id === item.template_id && !t.is_template) {
-                  item.id = t.id  // 替换成真实 id
-                  item.is_template = false
-                  break
-                }
-              }
-            }
-          }
-        }
-
-        // 所有 picked 现在都是真任务（id 是数字），并发 PATCH（Promise.all）
+        // 占位行（is_template）逻辑已废弃 — 全部都是真任务
         const realPicked = picked.filter(t => typeof t.id === 'number')
         const results = await Promise.all(realPicked.map(t =>
           fetch(`/api/tasks/${t.id}`, {
@@ -464,25 +430,37 @@ const AdsPage = defineComponent({
         }
       }
     })
+    // 切 category 时，如果当前 detail 不在新 category 下面 → 清空 detail（避免脏 state）
+    Vue.watch(() => cardAddTaskModal.value.pickedCategory, (newCat) => {
+      const m = cardAddTaskModal.value
+      if (!newCat || !m.pickedDetail) return
+      const all = (taskTemplates.value && taskTemplates.value.length) ? taskTemplates.value : FALLBACK_TEMPLATES
+      const exists = all.some(t => t.category === newCat && t.detail === m.pickedDetail)
+      if (!exists) { m.pickedDetail = ''; m.pickedOwner = '' }
+    })
     const saveCardAddTask = async () => {
       const m = cardAddTaskModal.value
-      if (!m.pickedCategory || !m.pickedDetail || !m.pickedOwner) {
-        return alert('请选齐 标签 + 任务名称 + 负责人')
+      const cat = (m.pickedCategory || '').trim()
+      const det = (m.pickedDetail   || '').trim()
+      const own = (m.pickedOwner    || '').trim()
+      if (!cat || !det || !own) {
+        return alert('请填齐 标签 + 任务名称 + 负责人（标签/任务名 可以填全新的）')
       }
       m.saving = true
       try {
-        // 匹配模板 → 带 template_id（避免变成"自定义任务"导致打红点）
+        // 匹配模板 → 带 template_id（命中 = 标准任务，不打红点）
         const all = (taskTemplates.value && taskTemplates.value.length) ? taskTemplates.value : FALLBACK_TEMPLATES
-        const matched = all.find(t => t.category === m.pickedCategory && t.detail === m.pickedDetail)
+        const matched = all.find(t => t.category === cat && t.detail === det)
         const r = await fetch('/api/tasks', {
           method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
             product_id: m.pid,
-            detail: m.pickedDetail,
-            owner: m.pickedOwner,
-            category: m.pickedCategory,
+            detail: det,
+            owner: own,
+            category: cat,
             status: '待开始', priority: '中',
-            time_range_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
+            // 周期不再自动写；状态走后端默认 '待开始'
+            time_range_label: '',
             start_date: m.start_date || null,
             eta_date: m.end_date || null,
             template_id: matched && typeof matched.id === 'number' ? matched.id : null,
@@ -617,13 +595,15 @@ const AdsPage = defineComponent({
       if (!pids.length) return alert('请填至少 1 个商品 PID')
       if (m.mode === 'group' && !m.selectedGroupId) return alert('请选任务组')
       if (m.mode === 'tpls' && !m.selectedTplIds.size) return alert('请勾选至少 1 个任务')
-      if (!m.start_date || !m.end_date) return alert('起止时间都要填')
+      // 起止时间都可空 — 不填 = 不写，事后单元格里再补
       m.saving = true
       try {
         const body = {
           product_ids: pids,
-          period_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
-          start_date: m.start_date, end_date: m.end_date,
+          // 周期不再自动写；不填 = 留空，状态走后端默认 '待开始'
+          period_label: '',
+          start_date: m.start_date || null,
+          end_date:   m.end_date   || null,
           overwrite: true,
         }
         if (m.mode === 'group') body.group_id = parseInt(m.selectedGroupId)
@@ -646,9 +626,6 @@ const AdsPage = defineComponent({
     // ── 备注行内编辑（替代 popup）──
     const noteCellDraft = ref({
       taskId: null,
-      isPlaceholder: false,
-      templateId: null,
-      productId: null,
       text: '',
       images: [],          // [base64, ...]
       attachments: [],     // [{name, dataURI}, ...]
@@ -659,17 +636,6 @@ const AdsPage = defineComponent({
       if (!canEditTask(task)) return alert('只能改自己负责的任务')
       noteCellDraft.value = {
         taskId: task.id,
-        isPlaceholder: !!(task.is_template || (typeof task.id === 'string' && String(task.id).startsWith('tmpl_'))),
-        templateId: task.template_id || null,
-        productId: (() => {
-          if (typeof task.id === 'string' && String(task.id).startsWith('tmpl_')) {
-            const parts = String(task.id).split('_')
-            return parts[parts.length-1]
-          }
-          for (const g of apiTasksData.value.groups || [])
-            if ((g.tasks || []).some(t => t.id === task.id)) return g.product_id
-          return null
-        })(),
         text: task.execution_note || task.note || '',
         images: Array.isArray(task.note_images) ? [...task.note_images] : [],
         attachments: Array.isArray(task.note_attachments) ? [...task.note_attachments] : [],
@@ -701,13 +667,34 @@ const AdsPage = defineComponent({
         r.readAsDataURL(f)
       })
     }
+    // 附件限制：单文件 2MB，备注里所有附件总量 8MB（base64 后会再涨 ~33%，留有余量给后端 jsonb 列）
     const _addCellAttachmentsFromFiles = (fileList) => {
       const files = Array.from(fileList || [])
       const oversized = []
+      const skipped = []  // 超总量被跳过的
       let processed = 0
-      const finish = () => { if (oversized.length) alert('以下文件过大（>2MB）已跳过：\n' + oversized.join('\n')) }
+      const finish = () => {
+        const msg = []
+        if (oversized.length) msg.push('以下文件过大（>2MB）已跳过：\n' + oversized.join('\n'))
+        if (skipped.length)   msg.push('附件总量超 8MB，以下被跳过：\n' + skipped.join('\n'))
+        if (msg.length) alert(msg.join('\n\n'))
+      }
+      const sumExisting = (noteCellDraft.value.attachments || [])
+        .reduce((a, b) => a + (b && b.size ? b.size : 0), 0)
+      let runningTotal = sumExisting
+      const TOTAL_LIMIT = 8 * 1024 * 1024
       files.forEach(f => {
-        if (f.size > 2000000) { oversized.push(f.name); processed++; if (processed === files.length) finish(); return }
+        if (f.size > 2000000) {
+          oversized.push(f.name); processed++
+          if (processed === files.length) finish()
+          return
+        }
+        if (runningTotal + f.size > TOTAL_LIMIT) {
+          skipped.push(f.name); processed++
+          if (processed === files.length) finish()
+          return
+        }
+        runningTotal += f.size
         const r = new FileReader()
         r.onload = e => {
           noteCellDraft.value.attachments.push({ name: f.name, dataURI: e.target.result, size: f.size })
@@ -745,27 +732,7 @@ const AdsPage = defineComponent({
       const m = noteCellDraft.value
       m.saving = true
       try {
-        let realTaskId = m.taskId
-        if (m.isPlaceholder) {
-          if (!m.productId || !m.templateId) throw new Error('占位任务定位失败')
-          const inst = await fetch('/api/tasks/bulk-instantiate', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              period_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
-              product_ids: [m.productId], template_ids: [m.templateId],
-            }),
-          })
-          if (!inst.ok) throw new Error('落库失败')
-          await loadTasksWithMetrics()
-          let real = null
-          for (const g of apiTasksData.value.groups || []) {
-            if (g.product_id !== m.productId) continue
-            for (const t of (g.tasks || [])) if (t.template_id === m.templateId) { real = t; break }
-            if (real) break
-          }
-          if (!real) throw new Error('找不到新建的任务')
-          realTaskId = real.id
-        }
+        const realTaskId = m.taskId
         const r = await fetch(`/api/tasks/${realTaskId}`, {
           method:'PATCH', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
@@ -794,144 +761,7 @@ const AdsPage = defineComponent({
       }
     }
 
-    // ── 备注 popup（textarea + 多图 + 自动 link）— 已废弃，下面的代码保留兼容性 ──
-    const noteModal = ref({ show:false, taskId:null, text:'', images:[], saving:false })
-    const openNoteModal = (task) => {
-      if (!canEditTask(task)) return alert('只能改自己负责的任务')
-      // 占位行：标记为待 materialize，保存时先建任务再 PATCH note
-      noteModal.value = {
-        show: true,
-        taskId: task.id,
-        // 占位上下文（materialize 用）
-        isPlaceholder: !!(task.is_template || (typeof task.id === 'string' && String(task.id).startsWith('tmpl_'))),
-        templateId: task.template_id || null,
-        productId: (() => {
-          if (typeof task.id === 'string' && String(task.id).startsWith('tmpl_')) {
-            // 'tmpl_<tplId>_<pid>' 解析
-            const parts = String(task.id).split('_')
-            return parts[parts.length-1]
-          }
-          // 真任务从 g.tasks 反查
-          for (const g of apiTasksData.value.groups || [])
-            if ((g.tasks || []).some(t => t.id === task.id)) return g.product_id
-          return null
-        })(),
-        text: task.execution_note || task.note || '',
-        images: Array.isArray(task.note_images) ? [...task.note_images] : [],
-        saving: false,
-      }
-    }
-    const closeNoteModal = () => { noteModal.value.show = false }
-    const _addNoteImagesFromFiles = (fileList) => {
-      const files = Array.from(fileList || []).filter(f => f && f.type && f.type.startsWith('image/'))
-      if (!files.length) return
-      const oversized = []
-      let processed = 0
-      const finish = () => {
-        if (oversized.length) alert('以下图片过大（>1MB）已跳过：\n' + oversized.join('\n'))
-      }
-      files.forEach(f => {
-        if (f.size > 1000000) {
-          oversized.push(f.name || '截图'); processed++
-          if (processed === files.length) finish()
-          return
-        }
-        const r = new FileReader()
-        r.onload = e => {
-          noteModal.value.images.push(e.target.result)
-          processed++
-          if (processed === files.length) finish()
-        }
-        r.readAsDataURL(f)
-      })
-    }
-    const onNoteFilePick = (event) => {
-      _addNoteImagesFromFiles(event.target.files)
-      if (event.target) event.target.value = ''
-    }
-    const onNoteDrop = (event) => {
-      _addNoteImagesFromFiles(event.dataTransfer && event.dataTransfer.files)
-    }
-    const onNotePaste = (event) => {
-      const items = event.clipboardData && event.clipboardData.items
-      if (!items) return
-      const files = []
-      for (const it of items) {
-        if (it.kind === 'file') {
-          const f = it.getAsFile()
-          if (f) files.push(f)
-        }
-      }
-      if (files.length) {
-        event.preventDefault()
-        _addNoteImagesFromFiles(files)
-      }
-    }
-    const removeNoteImage = (idx) => {
-      noteModal.value.images.splice(idx, 1)
-    }
-    const saveNoteModal = async () => {
-      const m = noteModal.value
-      m.saving = true
-      try {
-        let realTaskId = m.taskId
-        // 占位行：先 bulk-instantiate 落库
-        if (m.isPlaceholder) {
-          if (!m.productId || !m.templateId) {
-            throw new Error('占位任务定位失败')
-          }
-          const inst = await fetch('/api/tasks/bulk-instantiate', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({
-              period_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
-              product_ids: [m.productId],
-              template_ids: [m.templateId],
-            }),
-          })
-          if (!inst.ok) {
-            const err = await inst.json().catch(()=>({detail:'落库失败'}))
-            throw new Error(err.detail || ('HTTP ' + inst.status))
-          }
-          await loadTasksWithMetrics()
-          // 找新建出来的任务
-          let real = null
-          for (const g of apiTasksData.value.groups || []) {
-            if (g.product_id !== m.productId) continue
-            for (const t of (g.tasks || [])) {
-              if (t.template_id === m.templateId) { real = t; break }
-            }
-            if (real) break
-          }
-          if (!real) throw new Error('找不到新建的任务')
-          realTaskId = real.id
-        }
-        const r = await fetch(`/api/tasks/${realTaskId}`, {
-          method:'PATCH', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({
-            execution_note: m.text || '',
-            note_images: m.images || [],
-          }),
-        })
-        if (!r.ok) {
-          const err = await r.json().catch(()=>({detail:'保存失败'}))
-          throw new Error(err.detail || ('HTTP ' + r.status))
-        }
-        // 本地写值
-        for (const g of apiTasksData.value.groups || []) {
-          for (const t of g.tasks || []) {
-            if (t.id === realTaskId) {
-              t.execution_note = m.text
-              t.note = m.text
-              t.note_images = [...m.images]
-            }
-          }
-        }
-        closeNoteModal()
-      } catch (err) {
-        alert('保存失败：' + err.message)
-        m.saving = false
-      }
-    }
+    // 备注 popup 整套已废弃（被表格内联编辑器取代），代码已全部删除。
     // 备注里的 URL 自动转 <a> + 转义 HTML（避免 XSS）
     const renderNoteHtml = (text) => {
       if (!text) return ''
@@ -943,86 +773,19 @@ const AdsPage = defineComponent({
         '<a href="$1" target="_blank" rel="noopener" style="color:#0369a1;text-decoration:underline">$1</a>')
     }
 
-    // 批量改时间 state
-    const batchSelected = ref(new Set())  // 勾选的真实 task.id（数字）
-    const batchModal = ref({ show:false, start_date:'', end_date:'', saving:false })
-    const toggleBatchSelect = (taskId) => {
-      const s = new Set(batchSelected.value)
-      if (s.has(taskId)) s.delete(taskId); else s.add(taskId)
-      batchSelected.value = s
-    }
-    const clearBatchSelect = () => { batchSelected.value = new Set() }
-    const openBatchModal = () => {
-      if (!isAdmin.value) return alert('仅管理员可批量改时间')
-      if (!batchSelected.value.size) return alert('请先勾选至少一个任务')
-      batchModal.value = { show:true, start_date:'', end_date:'', saving:false }
-    }
-    const closeBatchModal = () => { batchModal.value.show = false }
-    const saveBatchTime = async () => {
-      const m = batchModal.value
-      if (!m.start_date && !m.end_date) return alert('开始/截止 至少填一个')
-      m.saving = true
-      try {
-        const ids = [...batchSelected.value]
-        const body = {}
-        if (m.start_date) body.start_date = m.start_date
-        if (m.end_date) body.eta_date = m.end_date
-        // 并发 PATCH（不再串行）
-        const results = await Promise.all(ids.map(id =>
-          fetch(`/api/tasks/${id}`, {
-            method:'PATCH', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify(body),
-          }).then(r => ({ ok: r.ok, id }))
-        ))
-        const fails = results.filter(r => !r.ok)
-        if (fails.length) alert('部分失败 (' + fails.length + '/' + ids.length + ')')
-        const okIds = new Set(results.filter(r => r.ok).map(r => r.id))
-        for (const g of apiTasksData.value.groups || []) {
-          for (const t of g.tasks || []) {
-            if (!okIds.has(t.id)) continue
-            if (m.start_date) t.start_date = m.start_date
-            if (m.end_date) t.eta_date = m.end_date
-          }
-        }
-        clearBatchSelect()
-        closeBatchModal()
-      } catch (err) {
-        alert('批量改失败：' + err.message)
-        m.saving = false
-      }
-    }
-
-    // "查看本周任务" 按钮：切换到包含今天的那个周期；再点切回上周（toggle）
-    const isViewingCurrentWeek = computed(() => {
-      const p = apiTasksData.value.period
-      if (!p || !p.start_date || !p.end_date) return false
-      const ts = new Date().toISOString().slice(0,10)
-      return p.start_date <= ts && ts <= p.end_date
-    })
-    const toggleCurrentWeek = () => {
-      const ts = new Date().toISOString().slice(0,10)
-      if (selectedPeriod.value) {
-        // 已经在某个周期过滤中 → 切回全景
-        selectedPeriod.value = ''
-      } else {
-        // 全景 → 切到本周
-        const hit = (apiTaskPeriods.value || []).find(p => p.start_date <= ts && ts <= p.end_date)
-        if (hit) selectedPeriod.value = hit.label
-        else alert('当前周期还没建，请先在设置里 + 新周期')
-      }
-    }
+    // 旧"全表批量改时间" + "查看本周任务"按钮整套已删除：
+    // · 批量改时间改走「单卡 → 📅 批量改时间」（productBatchTimeModal），更精确
+    // · 团队 tab 已经没有周期切换概念（永远显示上周数据，参见后端 with-metrics）
 
     const loadTasksWithMetrics = async () => {
-      const params = selectedPeriod.value ? `?period_label=${encodeURIComponent(selectedPeriod.value)}` : ''
       try {
-        const res = await fetch('/api/tasks/with-metrics' + params)
+        const res = await fetch('/api/tasks/with-metrics')
         if (res.ok) apiTasksData.value = await res.json()
       } catch {
         apiTasksData.value = { groups: [], period: null, prev_period: null, task_templates: [] }
       }
     }
-    onMounted(() => { loadTaskPeriods(); loadTasksWithMetrics() })
-    watch(selectedPeriod, loadTasksWithMetrics)
+    onMounted(loadTasksWithMetrics)
 
     // 给定 ISO 日期字符串，返回它所在那一周的周一 / 周日 (Date 对象)
     const mondayOf = (isoDate) => {
@@ -1058,21 +821,15 @@ const AdsPage = defineComponent({
       if (!p) return null
       return Object.assign({}, p, { displayLabel: fmtWeekRange(p.start_date) || p.label })
     }
-    // 下拉选项：用 period.label 作 value（API 兼容），用 Mon-Sun 周标签作 label（UI 看到的）
-    const taskPeriods = computed(() => apiTaskPeriods.value.map(p => ({
-      value: p.label,
-      label: fmtWeekRange(p.start_date) || p.label,
-      start_date: p.start_date, end_date: p.end_date,
-      is_current: !!p.is_current,
-    })))
+    // 当前展示周期 = 后端返的 period（永远是上周 Mon-Sun）。
     const activePeriod = computed(() => {
       const p = enrichPeriod(apiTasksData.value.period)
-      return (p && p.displayLabel) || selectedPeriod.value || ''
+      return (p && p.displayLabel) || ''
     })
-    // ⚠ 给 API 调用用：DB 里 period_label 的原值（如 "4.27-30"），不是 UI 的显示版（"4.27-5.3"）
+    // 给 API 调用用：DB 里 period_label 的原值
     const activePeriodRaw = computed(() => {
       const p = apiTasksData.value.period
-      return (p && p.label) || selectedPeriod.value || ''
+      return (p && p.label) || ''
     })
     const activePeriodRange = computed(() => {
       const p = apiTasksData.value.period
@@ -1289,64 +1046,7 @@ const AdsPage = defineComponent({
       const cur = field === 'note' ? (task.execution_note || task.note || '') : (task[field] || '')
       if (val === cur) { editingCell.value = null; return }
       try {
-        // 占位行（is_template=true / id 形如 'tmpl_…'）：先 bulk-instantiate 落库，再重新拉数据
-        if (task.is_template || (typeof task.id === 'string' && task.id.startsWith('tmpl_'))) {
-          let pid = null
-          for (const g of apiTasksData.value.groups || []) {
-            if (typeof task.id === 'string' && task.id.endsWith('_' + g.product_id)) {
-              pid = g.product_id; break
-            }
-          }
-          if (!pid) {
-            for (const grp of taskGroups.value) {
-              if (grp.tasks.some(t => t.id === task.id)) { pid = grp.pid; break }
-            }
-          }
-          if (!pid) { alert('占位任务定位失败，请刷新重试'); editingCell.value = null; return }
-          const inst = await fetch('/api/tasks/bulk-instantiate', {
-            method: 'POST', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({
-              period_label: selectedPeriod.value || apiTasksData.value.period?.label,
-              product_ids: [pid],
-              template_ids: task.template_id ? [task.template_id] : null,
-            }),
-          })
-          if (!inst.ok) {
-            const err = await inst.json().catch(()=>({detail:'落库失败'}))
-            throw new Error(err.detail || ('HTTP ' + inst.status))
-          }
-          // 只 reload 一次，找到新生成的真实任务后用 PATCH 写字段（不再 reload 第二次）
-          await loadTasksWithMetrics()
-          let realTask = null
-          for (const g of apiTasksData.value.groups || []) {
-            if (g.product_id !== pid) continue
-            for (const t of (g.tasks || [])) {
-              if (t.template_id === task.template_id) { realTask = t; break }
-            }
-            if (realTask) break
-          }
-          if (!realTask) { editingCell.value = null; return }
-          const apiField = field === 'note' ? 'execution_note' : field
-          const r2 = await fetch(`/api/tasks/${realTask.id}`, {
-            method: 'PATCH', headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({ [apiField]: val }),
-          })
-          if (!r2.ok) {
-            const err = await r2.json().catch(()=>({detail:'保存失败'}))
-            throw new Error(err.detail || ('HTTP ' + r2.status))
-          }
-          // 本地写入新值（不再二次 reload，避免慢）
-          if (field === 'note') {
-            realTask.execution_note = val; realTask.note = val
-          } else {
-            realTask[field] = val
-          }
-          if (field === 'status' && ['done','已完成','完成'].includes(val)) {
-            realTask.completed_at = realTask.completed_at || new Date().toISOString()
-          }
-          editingCell.value = null
-          return
-        }
+        // 占位行（is_template）逻辑已废弃 — 后端永远只返真任务，前端不再生成占位。
         const apiField = field === 'note' ? 'execution_note' : field
         const res = await fetch(`/api/tasks/${task.id}`, {
           method: 'PATCH', headers: {'Content-Type':'application/json'},
@@ -1387,37 +1087,7 @@ const AdsPage = defineComponent({
       if (!canDelete.value) return alert('无删除权限')
       if (!confirm(`确认删除「${task.detail}」？`)) return
       try {
-        // 占位行：没真实 id，直接写 task_hidden（不再补占位）
-        if (task.is_template || (typeof task.id === 'string' && String(task.id).startsWith('tmpl_'))) {
-          // 反查 pid
-          let pid = null
-          if (typeof task.id === 'string') {
-            const parts = String(task.id).split('_')
-            pid = parts[parts.length-1]
-          }
-          if (!pid) {
-            for (const grp of taskGroups.value) {
-              if (grp.tasks.some(t => t.id === task.id)) { pid = grp.pid; break }
-            }
-          }
-          if (!pid) throw new Error('占位定位失败')
-          const r = await fetch('/api/tasks/hide-template', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({ product_id: pid, category: task.category || '', detail: task.detail || '' }),
-          })
-          if (!r.ok) {
-            const err = await r.json().catch(()=>({detail:'隐藏失败'}))
-            throw new Error(err.detail || ('HTTP ' + r.status))
-          }
-          // 本地的 hidden 列表也加上 + 从 groups 里剔除该占位
-          apiTasksData.value.hidden = apiTasksData.value.hidden || []
-          apiTasksData.value.hidden.push({ product_id: pid, category: task.category || '', detail: task.detail || '' })
-          for (const g of apiTasksData.value.groups || []) {
-            if (g.product_id === pid) g.tasks = (g.tasks || []).filter(t => t.id !== task.id)
-          }
-          return
-        }
-        // 真任务：DELETE
+        // 占位行逻辑已废弃 — 任何任务都是真任务，直接 DELETE
         const res = await fetch(`/api/tasks/${task.id}`, { method:'DELETE' })
         if (!res.ok) {
           const err = await res.json().catch(()=>({detail:'删除失败'}))
@@ -1431,94 +1101,47 @@ const AdsPage = defineComponent({
       }
     }
 
-    // ── 管理员全字段编辑 Modal ────────────────────────────
-    const fullEditModal = ref({ show:false, id:'', detail:'', owner:'', category:'', status:'', priority:'', execution_note:'', saving:false })
-    const TASK_CATEGORIES_ALL = ['标题优化','评价与问大家','淘内内容宣发','详情页优化','竞品分析','妈妈计划迭代','售卖复盘','其他']
-    const TASK_OWNERS_ALL = ['Jas team（内容）','豆豆（设计）','刘婷（商品）','晓东（运营）','婉婷（主管）','声超']
-    const openFullEdit = (task) => {
-      if (!isAdmin.value) return alert('需要管理员权限才能改全字段')
-      Object.assign(fullEditModal.value, {
-        show:true, id:task.id, detail:task.detail||'', owner:task.owner||'',
-        category:task.category||'标题优化', status:task.status||'待开始',
-        priority:task.priority||'中', execution_note:task.note||'', saving:false,
-      })
-    }
-    const closeFullEdit = () => { fullEditModal.value.show = false }
-    const saveFullEdit = async () => {
-      const m = fullEditModal.value
-      if (!m.detail.trim()) return alert('任务名不能空')
-      m.saving = true
-      try {
-        const body = {
-          detail: m.detail.trim(), owner: m.owner, category: m.category,
-          status: m.status, priority: m.priority,
-          execution_note: m.execution_note,
-        }
-        const res = await fetch(`/api/tasks/${m.id}`, {
-          method:'PATCH', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(body),
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(()=>({detail:'保存失败'}))
-          throw new Error(err.detail || ('HTTP ' + res.status))
-        }
-        // 刷新本地
-        for (const g of apiTasksData.value.groups || []) {
-          for (const t of g.tasks || []) {
-            if (t.id === m.id) {
-              Object.assign(t, body)
-            }
-          }
-        }
-        closeFullEdit()
-      } catch (err) {
-        alert('保存失败：' + err.message)
-        m.saving = false
-      }
-    }
+    // 旧"管理员全字段编辑 Modal" / "批量分配 owner" 整套已删除：
+    // · 全字段编辑被表格内联编辑（Excel 式）+ 单卡 + 按钮 完全替代
+    // · 批量分配 owner 没有 UI 入口；如要恢复，请用 /api/tasks/bulk-update
 
-    // ── 批量分配 owner ──────────────────────────────────
-    const selectedTaskIds = ref(new Set())
-    const toggleSelectTask = (id) => {
-      const s = new Set(selectedTaskIds.value)
-      if (s.has(id)) s.delete(id); else s.add(id)
-      selectedTaskIds.value = s
-    }
-    const isTaskSelected = (id) => selectedTaskIds.value.has(id)
-    const clearSelectedTasks = () => { selectedTaskIds.value = new Set() }
-    const bulkAssignModal = ref({ show:false, owner:'', saving:false })
-    const openBulkAssign = () => {
-      if (!isAdmin.value) return alert('批量分配需要管理员权限')
-      if (!selectedTaskIds.value.size) return alert('先勾选任务')
-      Object.assign(bulkAssignModal.value, { show:true, owner:'Jas team（内容）', saving:false })
-    }
-    const closeBulkAssign = () => { bulkAssignModal.value.show = false }
-    const doBulkAssign = async () => {
-      const ids = Array.from(selectedTaskIds.value)
-      if (!ids.length) return closeBulkAssign()
-      bulkAssignModal.value.saving = true
+    // ── 单元格下拉的全集（标签 / 负责人）── 不再硬编码：
+    //   · 标签 = 后端 task_template 的所有 category + 当前任务里出现过的 category
+    //   · 负责人 = /api/users 拉真实账号 display_name（管理员后台改了就实时变）
+    const dbUsers = ref([])
+    const loadDbUsers = async () => {
       try {
-        const res = await fetch('/api/tasks/bulk-update', {
-          method:'PATCH', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ task_ids: ids, owner: bulkAssignModal.value.owner }),
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(()=>({detail:'批量改失败'}))
-          throw new Error(err.detail || ('HTTP ' + res.status))
-        }
-        // 本地刷新
-        for (const g of apiTasksData.value.groups || []) {
-          for (const t of g.tasks || []) {
-            if (selectedTaskIds.value.has(t.id)) t.owner = bulkAssignModal.value.owner
-          }
-        }
-        clearSelectedTasks()
-        closeBulkAssign()
-      } catch (err) {
-        alert('批量分配失败：' + err.message)
-        bulkAssignModal.value.saving = false
-      }
+        const r = await fetch('/api/users')
+        if (r.ok) dbUsers.value = await r.json()
+      } catch {}
     }
+    onMounted(loadDbUsers)
+    const TASK_OWNERS_ALL = computed(() => {
+      const set = new Set()
+      // 1) 真账号 display_name
+      for (const u of dbUsers.value || []) {
+        if (u && u.display_name) set.add(u.display_name)
+      }
+      // 2) 模板里固定指派过的负责人（多负责人都展开）
+      for (const t of taskTemplates.value || []) {
+        const arr = (t.default_owners && t.default_owners.length)
+          ? t.default_owners : [t.default_owner].filter(Boolean)
+        for (const o of arr) if (o) set.add(o)
+      }
+      // 3) 当前任务里出现过的 owner（兼容老数据）
+      for (const g of apiTasksData.value.groups || [])
+        for (const t of g.tasks || []) if (t.owner) set.add(t.owner)
+      return [...set]
+    })
+    // 标签全集（含模板 + 当前任务里实际用到的）
+    const TASK_CATEGORIES_ALL = computed(() => {
+      const set = new Set()
+      for (const t of taskTemplates.value || []) if (t.category) set.add(t.category)
+      for (const t of FALLBACK_TEMPLATES) if (t.category) set.add(t.category)
+      for (const g of apiTasksData.value.groups || [])
+        for (const t of g.tasks || []) if (t.category) set.add(t.category)
+      return [...set].sort()
+    })
 
     // ── 任务模板（task_template 表 9 条固定模板）──
     // 用户改的「负责人名」改的是当前任务行的 owner，不影响模板的 default_owner（部门绑定）
@@ -1584,6 +1207,10 @@ const AdsPage = defineComponent({
     const saveNewTask = async () => {
       const m = newTaskModal.value
       if (!m.pid) return alert('请填商品 PID')
+      // PID 必须在团队 tab 显示的 29 个商品（25 主链 + 4 扩展）里 — typo / 错号会落库到看不见的卡片
+      if (!OFFICIAL_25_PIDS.includes(String(m.pid).trim())) {
+        return alert('该 PID 不在团队 tab 的 29 个商品里（25 主链 + 4 扩展），请核对。')
+      }
       if (!m.category || !m.category.trim()) return alert('请填任务标签')
       if (!m.detail || !m.detail.trim()) return alert('请填任务名称')
       if (!m.owner) return alert('请选负责人')
@@ -1600,7 +1227,8 @@ const AdsPage = defineComponent({
           owner: m.owner,
           category: m.category.trim(),
           status: '待开始', priority: '中',
-          time_range_label: activePeriodRaw.value || apiTasksData.value.period?.label || '',
+          // 周期不再自动写；不填 = 留空
+          time_range_label: '',
         }
         if (matched && matched.id) body.template_id = matched.id
         const res = await fetch('/api/tasks', {
@@ -1619,61 +1247,8 @@ const AdsPage = defineComponent({
       }
     }
 
-    // ── 批量给多商品建任务 Modal（任务组合 a/b → 调 bulk-instantiate）──
-    // mode='all'：组合 a，全 9 模板；mode='custom'：组合 b，勾选模板子集
-    const bulkModal = ref({
-      show:false, mode:'all', pidsText:'', selectedTplIds:new Set(),
-      period:'', saving:false, lastResult:null,
-    })
-    const openBulkCreate = () => {
-      if (!isAdmin.value && !myPerms.value.includes('task.create')) return alert('需要 task.create 权限')
-      const all = new Set(taskTemplates.value.map(t => t.id))
-      Object.assign(bulkModal.value, {
-        show:true, mode:'all', pidsText:'',
-        selectedTplIds: all,  // 默认全选
-        period: activePeriod.value || '',
-        saving:false, lastResult:null,
-      })
-    }
-    const closeBulkCreate = () => { bulkModal.value.show = false }
-    const toggleBulkTpl = (id) => {
-      const s = new Set(bulkModal.value.selectedTplIds)
-      if (s.has(id)) s.delete(id); else s.add(id)
-      bulkModal.value.selectedTplIds = s
-    }
-    const isBulkTplSelected = (id) => bulkModal.value.selectedTplIds.has(id)
-    const saveBulkCreate = async () => {
-      const m = bulkModal.value
-      // 解析 PID 列表（支持空格/逗号/换行分隔）
-      const pids = (m.pidsText || '').split(/[\s,，;；\n]+/).map(s => s.trim()).filter(Boolean)
-      if (!pids.length) return alert('请填至少 1 个商品 PID')
-      if (!m.period) return alert('请选周期')
-      const tplIds = m.mode === 'all'
-        ? null  // 后端 template_ids 为空 = 全部
-        : Array.from(m.selectedTplIds)
-      if (m.mode === 'custom' && !tplIds.length) return alert('自选模式至少选 1 个模板')
-      m.saving = true
-      try {
-        const res = await fetch('/api/tasks/bulk-instantiate', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({
-            product_ids: pids,
-            period_label: m.period,
-            template_ids: tplIds,  // null = 全 9 个
-          }),
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(()=>({detail:'批量创建失败'}))
-          throw new Error(err.detail || ('HTTP ' + res.status))
-        }
-        const data = await res.json()
-        m.lastResult = `✓ 已为 ${data.product_count} 个商品创建 ${data.created} 条任务（重复的自动跳过）`
-        await loadTasksWithMetrics()
-      } catch (err) {
-        m.lastResult = '✗ ' + err.message
-      }
-      m.saving = false
-    }
+    // 旧"任务组合 a/b 批量建任务" Modal 已删除：UI 入口从未挂出，
+    // 实际批量发布走 settingsModal 的「批量发布」tab（publishModal）。
 
     // ── 任务评论 / 反馈 ─────────────────────────────────────
     const expandedTaskId = ref(null)
@@ -1991,97 +1566,30 @@ const AdsPage = defineComponent({
         .slice(0,8)
     })
 
-    // 新建周期 modal
-    // 周期编辑：modal 既能新建也能改老周期
-    const periodModal = ref({ show:false, mode:'add', id:null, start_date:'', end_date:'', set_current:true, saving:false })
-    const openPeriodEdit = () => {
-      if (!isAdmin.value) return alert('需要管理员权限')
-      const cur = apiTaskPeriods.value.find(p => p.label === selectedPeriod.value)
-        || apiTaskPeriods.value.find(p => p.is_current)
-        || apiTaskPeriods.value[0]
-      if (!cur) return alert('当前无周期可编辑，先新建一个')
-      Object.assign(periodModal.value, {
-        show: true, mode: 'edit', id: cur.id,
-        start_date: cur.start_date, end_date: cur.end_date,
-        set_current: !!cur.is_current, saving: false,
-      })
-    }
-    const deleteCurrentPeriod = async () => {
-      if (!isAdmin.value) return alert('需要管理员权限')
-      const cur = apiTaskPeriods.value.find(p => p.label === selectedPeriod.value)
-      if (!cur) return alert('请在下拉里选一个周期再删')
-      if (!confirm(`确认删除周期「${cur.label}」？该周期下所有任务也会被删除！`)) return
-      try {
-        const res = await fetch(`/api/task-periods/${cur.id}`, { method:'DELETE' })
-        if (!res.ok) {
-          const err = await res.json().catch(()=>({detail:'删除失败'}))
-          throw new Error(err.detail || ('HTTP ' + res.status))
-        }
-        const data = await res.json()
-        alert(`已删除周期 ${data.deleted_label}（连带 ${data.deleted_tasks} 条任务）`)
-        await loadTaskPeriods()
-        selectedPeriod.value = ''
-        await loadTasksWithMetrics()
-      } catch (e) { alert('删除失败：' + e.message) }
-    }
-    const openPeriodModal = () => {
-      if (!isAdmin.value && !myPerms.value.includes('task.create')) return alert('需要管理员权限新建周期')
-      const today = new Date().toISOString().slice(0,10)
-      Object.assign(periodModal.value, { show:true, mode:'add', id:null, start_date: today, end_date: today, set_current:true, saving:false })
-    }
-    const closePeriodModal = () => { periodModal.value.show = false }
-    const savePeriod = async () => {
-      const m = periodModal.value
-      if (!m.start_date || !m.end_date) return alert('请选起止日期')
-      if (m.end_date < m.start_date) return alert('结束日期不能早于开始日期')
-      m.saving = true
-      try {
-        const isEdit = m.mode === 'edit' && m.id
-        const url = isEdit ? `/api/task-periods/${m.id}` : '/api/task-periods'
-        const method = isEdit ? 'PATCH' : 'POST'
-        const res = await fetch(url, {
-          method, headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({ start_date: m.start_date, end_date: m.end_date, set_current: m.set_current }),
-        })
-        if (!res.ok) {
-          const err = await res.json().catch(()=>({detail:'保存失败'}))
-          throw new Error(err.detail || ('HTTP ' + res.status))
-        }
-        const data = await res.json()
-        await loadTaskPeriods()
-        selectedPeriod.value = data.label || ''
-        await loadTasksWithMetrics()
-        closePeriodModal()
-      } catch (err) {
-        alert('保存失败：' + err.message)
-        m.saving = false
-      }
-    }
+    // 周期 modal / 周期编辑 / 删除周期 / "查看本周任务" toggle 整套已删除：
+    // 团队 tab 不再有"周期"概念，永远展示后端合成的"上周 vs 上上周"，无需用户切换。
 
     return {
       activeTab, openChannel, periodLabel, audienceSpend, keywordSpend, videoSpend, videoGmv,
       shopDirectSpend, allSceneSpend, productPromoSpend,
       totalPaidSpend, totalPaidSpendWan, catRows, totalProductSpendWan,
-      channelRows, trendRows, meetings, latestMeeting, taskGroups, taskPeriods, selectedPeriod, activePeriod, teamFilters, ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
+      channelRows, trendRows, meetings, latestMeeting, taskGroups, activePeriod, teamFilters,
+      ownerOptions, categoryOptions, statusOptions, fmtMoney, fmtDelta, statusColor, imgSrc, toggleChannel,
       // 任务时间/红点辅助
       isNewThisWeek, isStatusDone, isStatusInProgress, fmtCompletedAt, fmtCompletedSmart, fmtEtaDate,
       periodStartDateDisplay, periodEndDateDisplay, etaInCurrentWeek,
-      batchSelected, batchModal, toggleBatchSelect, clearBatchSelect,
-      openBatchModal, closeBatchModal, saveBatchTime,
       // 单卡 + 按钮
       cardAddTaskModal, openCardAddTask, closeCardAddTask, saveCardAddTask,
       cardCategoriesAll, cardDetailsAll, cardOwnersAll,
       // 单品批量改时间
       productBatchTimeModal, openProductBatchTime, closeProductBatchTime,
       toggleProductBatchTask, productBatchPickAll, saveProductBatchTime,
-      // 备注 popup（已废弃，保留兼容）
-      noteModal, openNoteModal, closeNoteModal, saveNoteModal,
-      onNoteFilePick, onNoteDrop, onNotePaste, removeNoteImage, renderNoteHtml,
-      // 备注行内编辑
+      // 备注（行内编辑）
+      renderNoteHtml,
       noteCellDraft, isEditingNote, startNoteCellEdit, cancelNoteCell, saveNoteCell,
       insertNoteLink, onNoteCellImagePick, onNoteCellAttachmentPick, onNoteCellPaste,
       removeNoteCellImage, removeNoteCellAttachment,
-      // 设置 modal + 子模块
+      // 设置 modal + 子模块（任务组 tab 已隐藏，但 list 仍由后端返）
       settingsModal, openSettingsModal, closeSettingsModal,
       taskGroupsList,
       tplCreateModal, openTplCreate, closeTplCreate, toggleTplOwner, saveTplCreate,
@@ -2094,7 +1602,6 @@ const AdsPage = defineComponent({
       // 任务面板新指标
       taskMetricDefs, fmtMetric, fmtDiffPct, diffCls,
       activePeriodRange, prevPeriodLabel, prevPeriodRange,
-      isViewingCurrentWeek, toggleCurrentWeek,
       activePeriodRaw,
       // 任务评论
       expandedTaskId, taskComments, commentDraft, previewImage,
@@ -2104,12 +1611,10 @@ const AdsPage = defineComponent({
       me, isAdmin, canDelete, canEditTask, deleteTaskRow,
       // Excel 式单元格编辑
       editingCell, cellDraft, isEditing, startCellEdit, cancelCellEdit, saveCellEdit,
-      TASK_CATEGORIES_ALL, TASK_OWNERS_ALL,
-      // 新增任务 + 周期 modal
+      TASK_CATEGORIES_ALL, TASK_OWNERS_ALL, dbUsers,
+      // 新增任务
       newTaskModal, openNewTask, closeNewTask, saveNewTask,
       newTaskCategory, newTaskCategories, newTaskTemplatesInCat, taskTemplates,
-      periodModal, openPeriodModal, closePeriodModal, savePeriod,
-      openPeriodEdit, deleteCurrentPeriod, apiTaskPeriods,
     }
   },
   template: `
@@ -2602,24 +2107,26 @@ const AdsPage = defineComponent({
       <div style="font-size:14px;font-weight:700;margin-bottom:14px">给商品 {{ cardAddTaskModal.pid }} 加任务</div>
       <div style="display:flex;flex-direction:column;gap:10px">
         <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务标签（一级分类）</div>
-          <select v-model="cardAddTaskModal.pickedCategory" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-            <option value="">— 全部 —</option>
-            <option v-for="c in cardCategoriesAll" :key="c" :value="c">{{ c }}</option>
-          </select>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务标签（一级分类，可选已有/可手填新的）</div>
+          <input v-model="cardAddTaskModal.pickedCategory" list="card-add-cats" placeholder="如：标题优化"
+            style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          <datalist id="card-add-cats">
+            <option v-for="c in cardCategoriesAll" :key="c" :value="c"></option>
+          </datalist>
         </div>
         <div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称（二级分类）</div>
-          <select v-model="cardAddTaskModal.pickedDetail" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-            <option value="">— 全部 —</option>
-            <option v-for="d in cardDetailsAll" :key="d" :value="d">{{ d }}</option>
-          </select>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:3px">任务名称（二级分类，可选已有/可手填新的）</div>
+          <input v-model="cardAddTaskModal.pickedDetail" list="card-add-details" placeholder="如：结合小红书/淘宝热搜词，优化链接标题"
+            style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
+          <datalist id="card-add-details">
+            <option v-for="d in cardDetailsAll" :key="d" :value="d"></option>
+          </datalist>
         </div>
         <div>
           <div style="font-size:11px;color:var(--muted);margin-bottom:3px">负责人</div>
           <select v-model="cardAddTaskModal.pickedOwner" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;background:#fff">
-            <option value="">— 全部 —</option>
-            <option v-for="o in cardOwnersAll" :key="o" :value="o">{{ o }}</option>
+            <option value="">— 选负责人 —</option>
+            <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
           </select>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -2632,7 +2139,7 @@ const AdsPage = defineComponent({
             <input type="date" v-model="cardAddTaskModal.end_date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
           </div>
         </div>
-        <div style="font-size:10px;color:var(--muted)">三个下拉互相联动：选标签后名称只显示该标签下的；先选名称会过滤标签和负责人。</div>
+        <div style="font-size:10px;color:var(--muted)">标签 / 任务名称 都可以手填全新值（保存后会出现在标签库里供下次复用）；如果填的是 9 个固定模板里没有的全新组合，本周会标红点。</div>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeCardAddTask" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
@@ -2719,16 +2226,16 @@ const AdsPage = defineComponent({
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
               <div>
-                <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期 *</div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期（可不填）</div>
                 <input type="date" v-model="publishModal.start_date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
               </div>
               <div>
-                <div style="font-size:11px;color:var(--muted);margin-bottom:3px">截止日期 *</div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:3px">截止日期（可不填）</div>
                 <input type="date" v-model="publishModal.end_date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
               </div>
             </div>
-            <div style="font-size:10px;color:var(--muted)">⚠ 同 product+周期+标签+任务名 重复时会**覆盖**：时间/状态更新，备注清空</div>
-            <div style="font-size:10px;color:var(--muted)">周期自动写：{{ activePeriod || '—' }}</div>
+            <div style="font-size:10px;color:var(--muted)">⚠ 同 product+标签+任务名 重复时会**覆盖**：时间/状态更新，旧备注/图片/附件会自动归档为评论</div>
+            <div style="font-size:10px;color:var(--muted)">新建任务默认状态：待开始</div>
             <div v-if="publishModal.lastResult" style="font-size:11px;color:#16a34a;font-weight:600">{{ publishModal.lastResult }}</div>
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
               <button @click="savePublish" :disabled="publishModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ publishModal.saving ? '...' : '发布任务' }}</button>
@@ -2899,7 +2406,7 @@ const AdsPage = defineComponent({
             <option v-for="o in TASK_OWNERS_ALL" :key="o" :value="o">{{ o }}</option>
           </select>
         </div>
-        <div style="font-size:10px;color:var(--muted)">周期自动写：{{ activePeriod || '—' }}（周一-周日）</div>
+        <div style="font-size:10px;color:var(--muted)">新任务默认状态：待开始</div>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeNewTask" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
@@ -2908,32 +2415,7 @@ const AdsPage = defineComponent({
     </div>
   </div>
 
-  <!-- 新建周期 Modal -->
-  <div v-if="periodModal.show" @click.self="closePeriodModal"
-    style="position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1000">
-    <div style="width:380px;max-width:92vw;background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 24px 60px rgba(15,23,42,.25)">
-      <div style="font-size:14px;font-weight:700;margin-bottom:14px">{{ periodModal.mode === 'edit' ? '修改任务周期' : '新建任务周期' }}</div>
-      <div style="display:flex;flex-direction:column;gap:10px">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">开始日期 *</div>
-            <input v-model="periodModal.start_date" type="date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
-          </div>
-          <div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:3px">结束日期 *</div>
-            <input v-model="periodModal.end_date" type="date" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box">
-          </div>
-        </div>
-        <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
-          <input type="checkbox" v-model="periodModal.set_current"> 设为当前周期
-        </label>
-      </div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
-        <button @click="closePeriodModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="savePeriod" :disabled="periodModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ periodModal.saving ? '...' : '保存' }}</button>
-      </div>
-    </div>
-  </div>
+  <!-- 周期 Modal 已移除：团队 tab 不再有周期概念 -->
 </div>`
 })
 

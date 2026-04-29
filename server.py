@@ -1493,9 +1493,10 @@ class TaskTemplateCreate(BaseModel):
 
 
 @app.post("/api/task-templates", status_code=201)
-def create_task_template(body: TaskTemplateCreate):
+def create_task_template(body: TaskTemplateCreate,
+                         _user=Depends(require_permission('task.create'))):
     """新增任务配置（一级标签 + 二级名称 + 一个或多个固定负责人）。
-    标签若已存在 → 自动归到该标签下。"""
+    标签若已存在 → 自动归到该标签下。仅有 task.create 权限的账号可调用。"""
     with db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         # 兜底列
@@ -1563,7 +1564,8 @@ class TaskGroupCreate(BaseModel):
 
 
 @app.post("/api/task-groups", status_code=201)
-def create_task_group(body: TaskGroupCreate):
+def create_task_group(body: TaskGroupCreate,
+                      _user=Depends(require_permission('task.create'))):
     if not body.name.strip():
         raise HTTPException(400, "任务组名称不能空")
     if not body.template_ids:
@@ -1588,7 +1590,8 @@ def create_task_group(body: TaskGroupCreate):
 
 
 @app.delete("/api/task-groups/{group_id}")
-def delete_task_group(group_id: int):
+def delete_task_group(group_id: int,
+                      _user=Depends(require_permission('task.delete'))):
     with db() as conn:
         cur = conn.cursor()
         cur.execute("SELECT is_default FROM task_group WHERE id = %s", (group_id,))
@@ -1611,7 +1614,16 @@ class TaskPublishBody(BaseModel):
 
 
 @app.post("/api/tasks/publish", status_code=201)
-def publish_tasks(body: TaskPublishBody):
+def publish_tasks(body: TaskPublishBody,
+                  user: Optional[dict] = Depends(get_current_user)):
+    # 写权限：admin / task.edit_all / task.create 任一即可（批量发布属创建+覆盖）
+    if not user:
+        raise HTTPException(401, "未登录")
+    perms = user.get("permissions") or []
+    if isinstance(perms, dict): perms = []
+    if not (user.get("role") == "admin" or "*" in perms
+            or "task.edit_all" in perms or "task.create" in perms):
+        raise HTTPException(403, "批量发布需要 task.create 或 task.edit_all 权限")
     """
     批量发布任务到一组商品。
     - 重复（同 product_id + period_label + category + detail）→ 覆盖：更新时间、状态、清空备注
@@ -1666,7 +1678,14 @@ def publish_tasks(body: TaskPublishBody):
                 existing = cur.fetchone()
                 if existing:
                     if body.overwrite:
-                        # 覆盖：时间/状态更新，备注清空
+                        # 覆盖：先把旧任务备注/图片/附件归档成评论，再 UPDATE 清空
+                        try:
+                            _archive_same_named_tasks(
+                                conn, existing["id"], pid,
+                                tpl["category"] or '', tpl["detail"] or '', user
+                            )
+                        except Exception as _e:
+                            import logging; logging.warning(f"archive on publish overwrite: {_e}")
                         cur.execute("""
                             UPDATE tasks
                             SET status = '待开始',
@@ -1674,6 +1693,8 @@ def publish_tasks(body: TaskPublishBody):
                                 eta_date   = %s::date,
                                 completed_at = NULL,
                                 execution_note = NULL,
+                                note_images = '[]'::jsonb,
+                                note_attachments = '[]'::jsonb,
                                 updated_at = now()
                             WHERE id = %s
                         """, (body.start_date or None, body.end_date or None, existing["id"]))
@@ -1685,9 +1706,17 @@ def publish_tasks(body: TaskPublishBody):
                           (product_id, detail, owner, category, time_range_label,
                            status, priority, template_id, start_date, eta_date)
                         VALUES (%s, %s, %s, %s, %s, '待开始', '中', %s, %s::date, %s::date)
+                        RETURNING id
                     """, (pid, tpl["detail"], tpl["default_owner"] or '',
                           tpl["category"], body.period_label, tpl["id"],
                           body.start_date or None, body.end_date or None))
+                    new_id = cur.fetchone()["id"]
+                    # 跨周期同名归档：把别的周期的同 (pid, cat, det) 旧任务备注挪过来
+                    try:
+                        _archive_same_named_tasks(conn, new_id, pid,
+                                                  tpl["category"] or '', tpl["detail"] or '', user)
+                    except Exception as _e:
+                        import logging; logging.warning(f"archive on publish insert: {_e}")
                     created += 1
         conn.commit()
         return {
@@ -1727,12 +1756,26 @@ def get_my_tasks(owner: str, only_current: bool = True):
 @app.get("/api/task-templates")
 def list_task_templates():
     with db() as conn:
+        # 兜底：default_owners 列可能没建过（老库）
         try:
-            return rows(conn, """
-                SELECT id, category, detail, default_owner, sort_order, is_active
+            with conn.cursor() as _cur:
+                _cur.execute("ALTER TABLE task_template ADD COLUMN IF NOT EXISTS default_owners TEXT[]")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+        try:
+            data = rows(conn, """
+                SELECT id, category, detail, default_owner,
+                       COALESCE(default_owners, ARRAY[default_owner]::text[]) AS default_owners,
+                       sort_order, is_active
                 FROM task_template WHERE is_active = TRUE
                 ORDER BY sort_order, id
             """)
+            # 把 default_owners 里的 NULL/空字符串过滤掉，让前端拿到干净数组
+            for r in data:
+                arr = r.get("default_owners") or []
+                r["default_owners"] = [x for x in arr if x]
+            return data
         except Exception:
             return []
 
@@ -1763,16 +1806,17 @@ def update_task_template(tpl_id: int, body: TaskTemplateUpdate):
             (*fields.values(), tpl_id)
         )
         tpl = dict(cur.fetchone())
-        # 把当前/未来周期的任务 owner 同步过去
+        # 把当前/未来的任务 owner 同步过去（团队 tab 已无 task_period 概念，
+        # 改用 tasks.created_at >= 本周一 判定"当期/未来"，历史任务保持不变）
         if body.propagate_to_future and body.default_owner:
+            from datetime import date, timedelta
+            today = date.today()
+            this_mon = today - timedelta(days=today.weekday())
             cur.execute("""
                 UPDATE tasks SET owner = %s, updated_at = now()
                 WHERE template_id = %s
-                  AND time_range_label IN (
-                    SELECT label FROM task_period
-                    WHERE end_date >= CURRENT_DATE
-                  )
-            """, (body.default_owner, tpl_id))
+                  AND COALESCE(created_at, now()) >= %s::date
+            """, (body.default_owner, tpl_id, this_mon.isoformat()))
         conn.commit()
         return tpl
 
@@ -1889,6 +1933,89 @@ def delete_task_period(period_id: int):
         return {"ok": True, "deleted_tasks": deleted_tasks, "deleted_label": existing["label"]}
 
 
+# ── 同名任务归档辅助 ─────────────────────────────────────
+# 用户场景：在同一商品下又起了一条名字（category+detail）和老任务相同的任务，
+# 老任务上挂着备注/图片/附件不能丢。
+# 行为：把老任务的 execution_note / note_images / note_attachments 全部
+#       以"系统归档评论"的形式写到新任务（keep_id）下，再删除老任务行。
+def _archive_same_named_tasks(conn, keep_id: int, product_id: str,
+                               category: str, detail: str,
+                               actor: Optional[dict]) -> int:
+    """返回归档并删除的旧任务条数。安全：只命中同 (pid, cat, det) 的任务。"""
+    if not product_id or keep_id is None:
+        return 0
+    import json as _json
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    # 兜底建评论表 + images 列
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS task_comment (
+                id              SERIAL PRIMARY KEY,
+                task_id         INT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                author_username TEXT NOT NULL DEFAULT '',
+                author_name     TEXT NOT NULL DEFAULT '',
+                content         TEXT,
+                image_data      TEXT,
+                created_at      TIMESTAMPTZ DEFAULT now(),
+                updated_at      TIMESTAMPTZ DEFAULT now()
+            )
+        """)
+        cur.execute("ALTER TABLE task_comment ADD COLUMN IF NOT EXISTS images JSONB")
+    except Exception:
+        pass
+    cur.execute("""
+        SELECT id, time_range_label, execution_note,
+               COALESCE(note_images, '[]'::jsonb) AS note_images,
+               COALESCE(note_attachments, '[]'::jsonb) AS note_attachments
+        FROM tasks
+        WHERE product_id = %s
+          AND COALESCE(category,'') = COALESCE(%s,'')
+          AND COALESCE(detail,'')   = COALESCE(%s,'')
+          AND id <> %s
+    """, (product_id, category or '', detail or '', keep_id))
+    olds = cur.fetchall()
+    archived = 0
+    actor_uname = (actor.get('username') if actor else '') or 'system'
+    actor_name  = (actor.get('display_name') if actor else '') or '系统归档'
+    for old in olds:
+        note = (old.get('execution_note') or '').strip()
+        imgs = old.get('note_images') or []
+        atts = old.get('note_attachments') or []
+        if isinstance(imgs, str):
+            try: imgs = _json.loads(imgs)
+            except Exception: imgs = []
+        if isinstance(atts, str):
+            try: atts = _json.loads(atts)
+            except Exception: atts = []
+        # 没任何要保留的内容直接删
+        has_content = bool(note) or bool(imgs) or bool(atts)
+        if has_content:
+            old_label = old.get('time_range_label') or ''
+            head = f"[归档自旧任务 {old_label}]" if old_label else "[归档自旧任务]"
+            content = (head + "\n" + note).strip()
+            if atts:
+                names = []
+                for a in atts:
+                    if isinstance(a, dict) and a.get('name'):
+                        names.append(a['name'])
+                    elif isinstance(a, str):
+                        names.append(a)
+                if names:
+                    content += "\n附件：" + "; ".join(names)
+            cur.execute("""
+                INSERT INTO task_comment (task_id, author_username, author_name,
+                                           content, image_data, images)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb)
+            """, (
+                keep_id, actor_uname, actor_name, content,
+                imgs[0] if imgs else None,
+                _json.dumps(imgs) if imgs else None,
+            ))
+        cur.execute("DELETE FROM tasks WHERE id = %s", (old['id'],))
+        archived += 1
+    return archived
+
+
 # ── 任务批量操作（一键生成本周 / 一键克隆上周） ──
 class TasksBulkInstantiate(BaseModel):
     period_label: str
@@ -1897,7 +2024,15 @@ class TasksBulkInstantiate(BaseModel):
 
 
 @app.post("/api/tasks/bulk-instantiate", status_code=201)
-def bulk_instantiate_tasks(body: TasksBulkInstantiate):
+def bulk_instantiate_tasks(body: TasksBulkInstantiate,
+                            user: Optional[dict] = Depends(get_current_user)):
+    if not user:
+        raise HTTPException(401, "未登录")
+    perms = user.get("permissions") or []
+    if isinstance(perms, dict): perms = []
+    if not (user.get("role") == "admin" or "*" in perms
+            or "task.edit_all" in perms or "task.create" in perms):
+        raise HTTPException(403, "批量实例化需要 task.create 或 task.edit_all 权限")
     """
     一键给指定周期 × 商品列表 生成全部模板任务。
     重复任务（同 product+period+detail+owner）会被 ON CONFLICT 跳过。
@@ -1931,16 +2066,26 @@ def bulk_instantiate_tasks(body: TasksBulkInstantiate):
             FROM product_list p CROSS JOIN task_template t
             WHERE t.is_active = TRUE {tpl_filter}
             ON CONFLICT (product_id, time_range_label, category, detail) DO NOTHING
-            RETURNING id
+            RETURNING id, product_id, category, detail
         """, (body.product_ids, body.period_label, *([body.template_ids] if body.template_ids else [])))
-        created = cur.rowcount
+        new_rows = cur.fetchall()
+        created = len(new_rows)
+        # 对每条新插入的任务跑一次归档：跨周期把同 (pid, cat, det) 的老任务备注转评论 + 删旧
+        for nr in new_rows:
+            try:
+                _archive_same_named_tasks(
+                    conn, nr["id"], nr["product_id"],
+                    nr.get("category") or '', nr.get("detail") or '', user
+                )
+            except Exception as _e:
+                import logging; logging.warning(f"archive on bulk-instantiate: {_e}")
         conn.commit()
         return {"created": created, "period_label": body.period_label,
                 "product_count": len(body.product_ids)}
 
 
 @app.post("/api/tasks", status_code=201)
-def create_task(task: TaskCreate, _user=Depends(require_permission('task.create'))):
+def create_task(task: TaskCreate, user: Optional[dict] = Depends(require_permission('task.create'))):
     with db() as conn:
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS start_date DATE")
@@ -1954,6 +2099,12 @@ def create_task(task: TaskCreate, _user=Depends(require_permission('task.create'
               task.priority, task.category, task.time_range_label, task.execution_note,
               task.start_date or None, task.eta_date or None, task.template_id))
         new_id = cur.fetchone()["id"]
+        # 同商品同名旧任务归档（备注/图片/附件转评论 → 删旧任务）
+        try:
+            _archive_same_named_tasks(conn, new_id, task.product_id or '',
+                                      task.category or '', task.detail or '', user)
+        except Exception as _e:
+            import logging; logging.warning(f"_archive_same_named_tasks: {_e}")
         conn.commit()
         return row(conn, "SELECT * FROM tasks WHERE id = %s", (new_id,))
 
@@ -1972,19 +2123,22 @@ def update_task(task_id: int, task: TaskUpdate, user: Optional[dict] = Depends(g
     if isinstance(perms, dict): perms = []
     is_admin = user.get("role") == "admin" or "*" in perms or "task.edit_all" in perms
     if not is_admin:
-        # 必须有 edit_own 权限 + 任务归属当前用户
+        # 必须有 edit_own 权限 + 任务归属当前用户（精确匹配，避免子串误判）
         if "task.edit_own" not in perms:
             raise HTTPException(403, "无 task.edit_own 权限")
         with db() as conn:
             t = row(conn, "SELECT owner FROM tasks WHERE id = %s", (task_id,))
             if not t:
                 raise HTTPException(404, "任务不存在")
-            owner = t.get("owner") or ""
-            display = user.get("display_name") or ""
-            # 用 isTaskOwner 同样的逻辑：精确或前缀包含
-            name_prefix = display.split("（")[0].split("(")[0].strip()
-            if owner != display and not (len(name_prefix) >= 2 and name_prefix in owner):
-                raise HTTPException(403, "只能编辑自己的任务")
+            owner = (t.get("owner") or "").strip()
+            display = (user.get("display_name") or "").strip()
+            uname   = (user.get("username") or "").strip()
+            # 精确匹配 display_name 或 username（不再做"豆豆 in 豆豆儿"这种子串判断）
+            if owner != display and (not uname or owner != uname):
+                raise HTTPException(403, "只能编辑自己负责的任务")
+        # 非 admin 不允许直接改 completed_at（仅管理员补录）
+        if "completed_at" in fields:
+            raise HTTPException(403, "完成时间只有管理员可改")
     # 状态切到 / 离开「已完成」时，同步 completed_at
     # （已完成的别名：'done' / '已完成' / '完成'）
     # 但是：如果用户在同一次 PATCH 里直接传了 completed_at（管理员补录），就尊重用户的值，

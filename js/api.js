@@ -21,7 +21,8 @@
 })()
 
 const api = (path, params) => {
-  const s = params?.start || '2026-04-15'
+  // 起止默认值改成跟 RAW 对齐，不再写死 '2026-04-15'
+  const s = params?.start || RAW.launch_date || RAW.data_end
   const e = params?.end   || RAW.data_end
   return fetch(path +
     (params ? '?' + new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([,v])=>v!=null))) : ''))

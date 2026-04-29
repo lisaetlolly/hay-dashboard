@@ -405,6 +405,8 @@ const SettingsPage = defineComponent({
     }
 
     // ── 商品 CRUD ──────────────────────────────────────────────
+    // 商品管理列表搜索（按名称 / pid）
+    const productSearch = Vue.ref('')
     const allProductsForManage = Vue.computed(() => {
       const hidden = new Set(state.hiddenPids || [])
       const overrides = state.productOverrides || {}
@@ -418,6 +420,16 @@ const SettingsPage = defineComponent({
         isCustom: true, hidden: hidden.has(p.pid)
       }))
       return [...base, ...cust].sort((a,b) => a.name.localeCompare(b.name))
+    })
+    // 经搜索过滤后的视图（搜索框输入会同时匹配 name + pid，大小写不敏感）
+    const filteredProductsForManage = Vue.computed(() => {
+      const q = (productSearch.value || '').trim().toLowerCase()
+      const all = allProductsForManage.value || []
+      if (!q) return all
+      return all.filter(p =>
+        (p.name || '').toLowerCase().includes(q) ||
+        String(p.pid || '').toLowerCase().includes(q)
+      )
     })
     const productModal = Vue.reactive({ show:false, mode:'', pid:'', newPid:'', name:'', cat:'配饰', isCustom:false, imageUrl:'' })
     const openAddProduct = () => {
@@ -605,7 +617,7 @@ const SettingsPage = defineComponent({
       saveAudiencePlan, resetAudiencePlanDefault, loadAudiencePlan,
       // AI 配置
       aiConfig, aiSavedAt, aiShowKey, saveAiConfig, resetAiConfig,
-      allProductsForManage,productModal,openAddProduct,openEditProduct,saveProductModal,toggleHideProduct,deleteCustomProduct,
+      allProductsForManage,filteredProductsForManage,productSearch,productModal,openAddProduct,openEditProduct,saveProductModal,toggleHideProduct,deleteCustomProduct,
       manualInputPid,manualInputDate,manualInputFields,manualProductOptions,saveManualData,
       dataGaps,
       productNameByPid: pid => RAW.products?.[pid]?.name || pid,
@@ -806,16 +818,25 @@ const SettingsPage = defineComponent({
 
   <!-- 商品管理 -->
   <div v-if="isAdmin" class="card" style="padding:16px">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-      <div><span class="card-title">商品管理</span><span class="card-sub">{{ allProductsForManage.length }} 个商品</span></div>
-      <button @click="openAddProduct" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">+ 新增自定义商品</button>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px;flex-wrap:wrap">
+      <div><span class="card-title">商品管理</span><span class="card-sub">{{ filteredProductsForManage.length }}/{{ allProductsForManage.length }} 个商品</span></div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <input v-model="productSearch" placeholder="搜索 名称 / 商品ID"
+          style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 30px 6px 10px;font-size:12px;width:200px;outline:none">
+        <button v-if="productSearch" @click="productSearch=''" title="清空搜索"
+          style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;color:var(--muted)">×</button>
+        <button @click="openAddProduct" style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer">+ 新增自定义商品</button>
+      </div>
     </div>
     <div style="display:flex;flex-direction:column;gap:0;border:1px solid var(--border);border-radius:10px;overflow:hidden;max-height:280px;overflow-y:auto">
-      <div style="display:grid;grid-template-columns:minmax(0,2fr) 64px 60px 120px;padding:7px 14px;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--muted)">
+      <div style="display:grid;grid-template-columns:minmax(0,2fr) 64px 60px 120px;padding:7px 14px;background:#f8f8f7;border-bottom:1px solid var(--border);font-size:11px;font-weight:700;color:var(--muted);position:sticky;top:0;z-index:1">
         <div>商品名称</div><div>类目</div><div>状态</div><div style="text-align:right">操作</div>
       </div>
-      <div v-for="(p, pi) in (allProductsForManage || [])" :key="p.pid" @click="openEditProduct(p)"
-        :style="{display:'grid',gridTemplateColumns:'minmax(0,2fr) 64px 60px 90px',padding:'8px 14px',borderBottom:pi<allProductsForManage.length-1?'1px solid var(--border)':'none',alignItems:'center',background:p.hidden?'#fafaf9':'#fff',cursor:'pointer'}">
+      <div v-if="!filteredProductsForManage.length" style="padding:24px 14px;text-align:center;color:var(--muted);font-size:12px">
+        无匹配商品（搜索：{{ productSearch }}）
+      </div>
+      <div v-for="(p, pi) in filteredProductsForManage" :key="p.pid" @click="openEditProduct(p)"
+        :style="{display:'grid',gridTemplateColumns:'minmax(0,2fr) 64px 60px 90px',padding:'8px 14px',borderBottom:pi<filteredProductsForManage.length-1?'1px solid var(--border)':'none',alignItems:'center',background:p.hidden?'#fafaf9':'#fff',cursor:'pointer'}">
         <div style="min-width:0">
           <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :style="{opacity:p.hidden?0.4:1}">{{ p.name }}</div>
           <div style="font-size:10px;color:var(--muted)">{{ p.pid }}</div>
