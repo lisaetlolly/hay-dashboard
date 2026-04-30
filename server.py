@@ -226,8 +226,8 @@ def get_raw_data():
                        SUM(s.pay_new_buyers)    AS new_buyers,
                        SUM(s.page_views)        AS pv,
                        SUM(s.search_visitors)   AS search_vis,
-                       SUM(s.avg_stay_duration * s.visitors)::numeric/NULLIF(SUM(s.visitors),0) AS dwell_time,
-                       SUM(s.bounce_rate * s.visitors)::numeric/NULLIF(SUM(s.visitors),0)        AS bounce_rate,
+                       AVG(NULLIF(s.avg_stay_duration, 0))                                       AS dwell_time,
+                       AVG(NULLIF(s.bounce_rate, 0))                                             AS bounce_rate,
                        SUM(s.pay_old_buyers)    AS old_buyers,
                        SUM(s.pay_new_buyers + s.pay_old_buyers) AS pay_buyers
                 FROM fact_syzt_product s
@@ -686,10 +686,10 @@ def get_syzt_summary(
                 ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0), 2)          AS visitor_value,
                 ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0), 2) AS avg_order_value,
                 ROUND(SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100, 2) AS new_buyer_pct,
-                -- 平均停留时长按 UV 加权（高 UV 天数权重更大）
-                ROUND(SUM(s.avg_stay_duration * s.visitors)::numeric / NULLIF(SUM(s.visitors),0), 1) AS avg_stay_duration,
-                -- 跳出率按 UV 加权
-                ROUND(SUM(s.bounce_rate * s.visitors)::numeric / NULLIF(SUM(s.visitors),0) * 100, 2) AS avg_bounce_rate
+                -- 平均停留时长 / 跳出率：跟生意参谋页面对齐用简单算术平均（每天平等权重）
+                -- 之前用 UV 加权会被高 UV 天数（爆款日 stay 也高）放大 → 系统性偏高
+                ROUND(AVG(NULLIF(s.avg_stay_duration, 0))::numeric, 1)         AS avg_stay_duration,
+                ROUND(AVG(NULLIF(s.bounce_rate, 0))::numeric * 100, 2)         AS avg_bounce_rate
             FROM fact_syzt_product s
             LEFT JOIN dim_product p ON s.product_id = p.product_id
             WHERE s.stat_date BETWEEN %s AND %s
@@ -1426,7 +1426,8 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                 SELECT s.product_id AS pid,
                        COALESCE(SUM(s.pay_amount), 0)        AS gmv,
                        COALESCE(SUM(s.visitors), 0)          AS vis,
-                       COALESCE(SUM(s.cart_users), 0)        AS cart,
+                       COALESCE(SUM(s.cart_qty), 0)          AS cart,        -- 加购件数（生意参谋页面"商品加购件数"）
+                       COALESCE(SUM(s.cart_users), 0)        AS cart_users,  -- 加购人数（用于算加购率）
                        COALESCE(SUM(s.cart_users)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS cart_rate,
                        COALESCE(SUM(s.pay_new_buyers + s.pay_old_buyers)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS pay_cvr,
                        COALESCE(AVG(NULLIF(s.avg_stay_duration, 0)), 0) AS dwell_time
@@ -2745,9 +2746,9 @@ def get_product_metrics(
                 SUM(s.pay_new_buyers)     AS total_new_buyers,
                 SUM(s.pay_old_buyers)     AS total_old_buyers,
                 SUM(s.search_visitors)    AS total_search_visitors,
-                -- 按 UV 加权（避免低 UV 天 skew）
-                SUM(s.avg_stay_duration * s.visitors)::numeric / NULLIF(SUM(s.visitors),0)  AS avg_stay_duration,
-                SUM(s.bounce_rate * s.visitors)::numeric        / NULLIF(SUM(s.visitors),0) AS avg_bounce_rate,
+                -- 简单算术平均（跟生意参谋页面对齐；UV 加权会被爆款日放大造成系统性偏高）
+                AVG(NULLIF(s.avg_stay_duration, 0))::numeric  AS avg_stay_duration,
+                AVG(NULLIF(s.bounce_rate, 0))::numeric        AS avg_bounce_rate,
                 -- 累计指标：MAX 仅在单 SKU 时正确；多 SKU 合并 SPU 时可能略偏，
                 -- 准确做法是各 SKU 取最新日累积值再 SUM，这里先保留 MAX，等下个迭代修
                 MAX(s.year_cum_pay)       AS year_cum_pay,
@@ -2922,9 +2923,9 @@ def compare_products(
                 ROUND(SUM(s.order_buyers)/NULLIF(SUM(s.visitors),0)*100,4)    AS order_cvr,
                 ROUND(SUM(s.pay_amount)/NULLIF(SUM(s.visitors),0),2)          AS visitor_value,
                 ROUND(SUM(s.pay_new_buyers)/NULLIF(SUM(s.pay_new_buyers)+SUM(s.pay_old_buyers),0)*100,2) AS new_buyer_pct,
-                -- 按 UV 加权
-                SUM(s.avg_stay_duration * s.visitors)::numeric / NULLIF(SUM(s.visitors),0) AS avg_stay,
-                SUM(s.bounce_rate * s.visitors)::numeric        / NULLIF(SUM(s.visitors),0) * 100 AS bounce_rate,
+                -- 简单算术平均（跟生意参谋页面对齐；UV 加权会被爆款日放大造成系统性偏高）
+                AVG(NULLIF(s.avg_stay_duration, 0))::numeric  AS avg_stay,
+                AVG(NULLIF(s.bounce_rate, 0))::numeric * 100  AS bounce_rate,
                 SUM(s.search_visitors)    AS search_visitors,
                 ROUND(SUM(s.search_visitors)/NULLIF(SUM(s.visitors),0)*100,2) AS search_pct,
                 SUM(w.spend)              AS total_spend,
