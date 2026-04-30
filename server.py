@@ -1420,9 +1420,8 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             result = {}
             # syzt：gmv / vis / cart / cart_rate / pay_cvr / dwell_time
             # 主 PID 严格匹配，不再用 spu_id 聚合关联子 PID（跟生意参谋页对齐）
-            # dwell_time 不再做加权平均 — 取周内最后一天（max stat_date）的原值。
-            # 原因：跨天加权遇到某天 visitors 异常高 / 某行 xls 列错位，整体被拉爆；
-            # 用户需要的是生意参谋后台展示的"准确数值"。
+            # dwell_time 用简单算术平均（AVG(每天 stay) 忽略 0 值）—— 实测跟生意参谋
+            # 后台周维度页面 28/29 商品完全对齐。访客加权 / 末日值都对不上。
             syzt = rows(conn, """
                 SELECT s.product_id AS pid,
                        COALESCE(SUM(s.pay_amount), 0)        AS gmv,
@@ -1430,19 +1429,12 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                        COALESCE(SUM(s.cart_users), 0)        AS cart,
                        COALESCE(SUM(s.cart_users)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS cart_rate,
                        COALESCE(SUM(s.pay_new_buyers + s.pay_old_buyers)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS pay_cvr,
-                       COALESCE((
-                         SELECT s2.avg_stay_duration
-                         FROM fact_syzt_product s2
-                         WHERE s2.product_id = s.product_id
-                           AND s2.stat_date BETWEEN %s AND %s
-                         ORDER BY s2.stat_date DESC
-                         LIMIT 1
-                       ), 0) AS dwell_time
+                       COALESCE(AVG(NULLIF(s.avg_stay_duration, 0)), 0) AS dwell_time
                 FROM fact_syzt_product s
                 WHERE s.stat_date BETWEEN %s AND %s
                   AND s.product_id = ANY(%s)
                 GROUP BY s.product_id
-            """, (start, end, start, end, pids))
+            """, (start, end, pids))
             for r in syzt:
                 result[r["pid"]] = {
                     "gmv": float(r["gmv"] or 0),
