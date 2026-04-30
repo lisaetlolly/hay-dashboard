@@ -433,12 +433,16 @@ def load_syzt_product(conn):
             print(f"    [{fi}/{len(files)}] {fname}: 0 行（无表头）")
             continue
         batch = []
+        dirty_skip = 0
+        # 淘宝 PID 一律是 8-13 位纯数字。任何 (字母/汉字/% / , /. / 短数字) 一律是错位脏数据
+        import re as _re
+        _PID_RE = _re.compile(r'^[0-9]{8,13}$')
         for row in rows:
-            pid = str(row.get('商品ID', '')).strip()
+            pid = str(row.get('商品ID', '')).strip().replace(',', '')
             if not pid:
                 continue
-            # 防御：淘宝 PID 最多 13 位，超过 30 字符的肯定是脏数据（Excel 单元格残留 / 合并单元 / 富文本）
-            if len(pid) > 30:
+            if not _PID_RE.match(pid):
+                dirty_skip += 1
                 continue
             # Option A：灌全店所有 PID（不再过滤 25 主链）
             stat_date = str(row.get('统计日期', ''))
@@ -448,8 +452,26 @@ def load_syzt_product(conn):
             if not stat_date:
                 continue
             stat_date = str(stat_date)[:10]
+            # ── 列错位 sanity check ──
+            # 生意参谋导出 xls 偶尔会跨列串行（e.g. 4-24 的 10 行：'平均停留时长'='92.96%'，
+            # '访客平均价值'='HAY 商品名…'）。命中任一就跳过整行，免污染加权。
+            stay_raw = str(row.get('平均停留时长') or '').strip()
+            avp_raw  = str(row.get('访客平均价值') or '').strip()
+            ocvr_raw = str(row.get('下单转化率') or '').strip()
+            if ('%' in stay_raw):
+                dirty_skip += 1; continue
+            if avp_raw and not avp_raw.replace(',','').replace('.','').replace('-','').isascii():
+                # 访客平均价值列出现非 ASCII（如汉字）→ 商品名串过来了
+                dirty_skip += 1; continue
+            if ocvr_raw and ocvr_raw.replace(',','').replace('.','').isdigit() and len(ocvr_raw.replace(',','').split('.')[0]) >= 8:
+                # 下单转化率应是 % 数；出现 8 位以上整数（PID 串过来）→ 跳
+                dirty_skip += 1; continue
             def g(k):  return safe_float(row.get(k))
             def gp(k): return safe_pct(row.get(k))
+            # 数值兜底：停留时长 > 600 秒（10 分钟）显然异常，强制 0
+            stay_v = g('平均停留时长')
+            if stay_v is not None and stay_v > 600:
+                dirty_skip += 1; continue
             batch.append(_clean_row((
                 stat_date, pid,
                 g('商品访客数'), g('商品浏览量'), g('平均停留时长'),
@@ -468,6 +490,8 @@ def load_syzt_product(conn):
             psycopg2.extras.execute_values(cur, sql, batch)
             conn.commit()  # 每个文件 commit 一次，不丢进度
         total += len(batch)
+        if dirty_skip:
+            print(f"    [{fi}/{len(files)}] {fname}: 跳过 {dirty_skip} 行错位脏数据")
         if fi % 10 == 0 or fi == len(files):
             print(f"    [{fi}/{len(files)}] 累计 {total} 行")
     print(f"  fact_syzt_product: {total} rows ({len(files)} files, {skipped_files} 跳过, {len(files)-skipped_files} 处理)")
@@ -536,6 +560,8 @@ def load_wxst_product(conn):
     total = 0
 
     # === 1) 父级：原来逻辑，直写 ===
+    import re as _re
+    _PID_RE = _re.compile(r'^[0-9]{8,13}$')
     seen_parent = set()
     print(f"  万象台商品报表：父级 {len(parent_files)} 个 + 子文件夹 {len(sub_files)} 个")
     for fi, fpath in enumerate(parent_files, 1):
@@ -550,8 +576,8 @@ def load_wxst_product(conn):
             continue
         batch = []
         for row in rs:
-            pid = str(row.get('主体ID', '')).strip()
-            if not pid or len(pid) > 30:
+            pid = str(row.get('主体ID', '')).strip().replace(',', '')
+            if not _PID_RE.match(pid):
                 continue
             stat_date = str(row.get('日期', '')).strip()[:10]
             if not stat_date:
@@ -608,8 +634,8 @@ def load_wxst_product(conn):
                 print(f"  [WARN] {fname}: {e}")
                 continue
             for row in rs:
-                pid = str(row.get('主体ID', '')).strip()
-                if not pid or len(pid) > 30:
+                pid = str(row.get('主体ID', '')).strip().replace(',', '')
+                if not _PID_RE.match(pid):
                     continue
                 stat_date = str(row.get('日期', '')).strip()[:10]
                 if not stat_date:
