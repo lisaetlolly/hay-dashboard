@@ -36,8 +36,9 @@ SPU_MAP = {
 
 # ── 历史错误的 SPU 映射（用于在 dim_product 里把 spu_id 改回自身）──
 # 这些 PID 之前被错误合并到主链，全部经 SYCM 实地搜索确认是独立商品
+# 14 条历史 SPU_MAP 中，13 条已确认错；1 条 (Barro 766018103334) 用户确认正确
 BAD_SPU_MAP_REVERT = {
-    # SYCM 实地确认的 10 个错误映射（2026-05-05）
+    # SYCM 实地确认的 13 个错误映射（2026-05-05）
     '823129032370',   # 实为 Shim Coffee Table 圆形茶几（误标 Facet Cabinet 副）
     '655712136728',   # 实为 Pouf 豆袋（误标 Cotton Bag 副）
     '702658485207',   # 实为 Mousqueton Portable 便携灯（误标 Cotton Bag 副）
@@ -48,11 +49,11 @@ BAD_SPU_MAP_REVERT = {
     '1020827662635',  # 实为 Multi Pouch（误标 Weekend Bag 副）
     '880590249812',   # 实为 X-Line Chair 单椅（误标 Apex Floor Lamp 副，本周 7,487）
     '742825018684',   # 实为 Elementaire Chair 单椅（误标 Tray Table 副）
-    # 暂未截图验证（稳妥起见也按独立商品处理）：
-    '824452791755',   # 之前标 Facet Cabinet 副
-    '718962869038',   # 之前标 Slit Table 副
-    '719833026924',   # 之前标 Slit Table 副
-    '965582828141',   # 之前标 La Pittura 副
+    '965582828141',   # 实为 Multi Wash Bag 洗漱包（误标 La Pittura 副，本周 1,986）
+    '719833026924',   # 实为 J-Series 单椅（误标 Slit Table 副）
+    '718962869038',   # 实为 Tray Table 茶几（误标 Slit Table 副，本周 10,394）
+    # 仅剩 1 个未截图验证：
+    '824452791755',   # 之前标 Facet Cabinet 副（待 SYCM 验证）
 }
 
 # ── PID typo 自动修正（运行时把错误 ID 替换成正确 ID）──

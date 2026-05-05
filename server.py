@@ -3827,7 +3827,7 @@ def admin_syzt_import_week_2026_04_27():
     }
     # 历史错误：把这些 PID 的 spu_id 改回自身（独立商品，不该被合并）
     BAD_SPU_MAP_REVERT = (
-        # 已 SYCM 实地搜索验证为独立商品（2026-05-05 共 10 个）
+        # 已 SYCM 实地搜索验证为独立商品（2026-05-05 共 13 个）
         '823129032370',   # Shim Coffee Table（误标 Facet Cabinet 副）
         '655712136728',   # Pouf 豆袋（误标 Cotton Bag 副）
         '702658485207',   # Mousqueton 便携灯（误标 Cotton Bag 副）
@@ -3838,8 +3838,11 @@ def admin_syzt_import_week_2026_04_27():
         '1020827662635',  # Multi Pouch（误标 Weekend Bag 副）
         '880590249812',   # X-Line Chair 单椅（误标 Apex Floor Lamp 副，本周 7,487）
         '742825018684',   # Elementaire Chair 单椅（误标 Tray Table 副）
-        # 暂未截图但稳妥起见也 revert
-        '824452791755', '718962869038', '719833026924', '965582828141',
+        '965582828141',   # Multi Wash Bag 洗漱包（误标 La Pittura 副，本周 1,986）
+        '719833026924',   # J-Series 单椅（误标 Slit Table 副）
+        '718962869038',   # Tray Table 茶几（误标 Slit Table 副，本周 10,394）
+        # 仅剩 1 个未截图验证：
+        '824452791755',
     )
     SOURCE = 'manual_sycm_screenshot_2026-05-05'
     inserted = 0
