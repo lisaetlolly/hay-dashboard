@@ -3812,10 +3812,42 @@ def admin_syzt_import_week_2026_04_27():
         ('824452791755',     0.00,     0.00,    40,    0,    0,   7,  7.92,   0,   0, 29.45,   120),  # Facet Cabinet 副 SKU
         ('1020815058332',    0.00,     0.00,   160,    8,    8,   2, 11.57,   0,   0, 80.23,   195),  # Barro Bowl & Plate
     ]
+    # SPU 合并表（手动镜像 etl_load.py:30-58 的 SPU_MAP）
+    # import 端点不走 ETL，所以 SPU_MAP 同步逻辑在这里手动跑一遍
+    # 让 SPU_MAP 里的副 SKU 在 dim_product 表里 spu_id 都指向主链
+    SPU_MAP = {
+        '824452791755':  '1016294283167',  # Facet Cabinet
+        '823129032370':  '1016294283167',
+        '655712136728':  '564552361178',   # Cotton Bag
+        '702658485207':  '564552361178',
+        '718962869038':  '718703980562',   # Slit Table
+        '719833026924':  '718703980562',
+        '742825018684':  '742288645501',   # Tray Table
+        '690750181823':  '690221882602',   # Bowler Table
+        '1021714677571': '1022489092196',  # Conical Vase
+        '975220170387':  '580467335137',   # Basket
+        '1017849944486': '679198301351',   # Colour Crate
+        '1020827662635': '888002957800',   # Weekend Bag
+        '965582828141':  '965048597796',   # La Pittura
+        '880590249812':  '880816460277',   # Apex Floor Lamp
+        '766018103334':  '1020815058332',  # Barro Bowl & Plate 第二条链接
+    }
     SOURCE = 'manual_sycm_screenshot_2026-05-05'
     inserted = 0
+    spu_synced = 0
     with db() as conn:
         cur = conn.cursor()
+        # ── 同步 SPU_MAP 到 dim_product（让副 SKU 通过 spu_id JOIN 到主链）──
+        for sub_pid, main_pid in SPU_MAP.items():
+            cur.execute("""
+                INSERT INTO dim_product(product_id, spu_id, title, category_l1, category_l2, inventory)
+                SELECT %s, %s, COALESCE(p.title, ''), COALESCE(p.category_l1, ''),
+                       COALESCE(p.category_l2, ''), COALESCE(p.inventory, 0)
+                FROM (SELECT 1) x
+                LEFT JOIN dim_product p ON p.product_id = %s
+                ON CONFLICT(product_id) DO UPDATE SET spu_id = EXCLUDED.spu_id
+            """, (sub_pid, main_pid, main_pid))
+            spu_synced += 1
         for pid, pay, refund, vis, cart_qty, cart_users, collect, stay, pay_buyers, new_buyers, bounce_pct, pv in DATA:
             old_buyers = max(0, pay_buyers - new_buyers)
             pay_cvr  = (pay_buyers / vis) if vis > 0 else 0.0
@@ -3856,7 +3888,7 @@ def admin_syzt_import_week_2026_04_27():
     html = (
         "<html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
         "<title>导入完成</title></head><body style='font-family:sans-serif;padding:12px'>"
-        f"<h2>✅ 已导入 {inserted} 条 SYCM 周聚合</h2>"
+        f"<h2>✅ 已导入 {inserted} 条 SYCM 周聚合 + 同步 {spu_synced} 条 SPU 副 SKU 映射</h2>"
         f"<p>合计支付金额 ¥{total_pay:,.2f} · 合计访客 {total_vis:,}</p>"
         f"<p>stat_date='2026-04-27'，source_file='{SOURCE}'</p>"
         "<p style='margin-top:16px'>"
