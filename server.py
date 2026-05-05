@@ -3827,17 +3827,19 @@ def admin_syzt_import_week_2026_04_27():
     }
     # 历史错误：把这些 PID 的 spu_id 改回自身（独立商品，不该被合并）
     BAD_SPU_MAP_REVERT = (
-        # 已 SYCM 搜索验证为独立商品
-        '823129032370',   # Shim Coffee Table（之前误标 Facet Cabinet 副）
-        '655712136728',   # Pouf 豆袋（之前误标 Cotton Bag 副）
-        '702658485207',   # Mousqueton 便携灯（之前误标 Cotton Bag 副）
-        '1021714677571',  # Everyday 包（之前误标 Conical Vase 副）
-        '690750181823',   # Rey Chair & Stool 单椅（之前误标 Bowler Table 副，本周销售 21,196）
-        '1017849944486',  # Aplat 台灯（之前误标 Colour Crate 副）
-        '975220170387',   # Tin Container 收纳盒（之前误标 Basket 副）
-        # 暂未截图但稳妥起见也 revert（怕同事再骂）
-        '824452791755', '718962869038', '719833026924', '742825018684',
-        '1020827662635', '965582828141', '880590249812',
+        # 已 SYCM 实地搜索验证为独立商品（2026-05-05 共 10 个）
+        '823129032370',   # Shim Coffee Table（误标 Facet Cabinet 副）
+        '655712136728',   # Pouf 豆袋（误标 Cotton Bag 副）
+        '702658485207',   # Mousqueton 便携灯（误标 Cotton Bag 副）
+        '1021714677571',  # Everyday 包（误标 Conical Vase 副）
+        '690750181823',   # Rey Chair & Stool 单椅（误标 Bowler Table 副，本周 21,196）
+        '1017849944486',  # Aplat 台灯（误标 Colour Crate 副）
+        '975220170387',   # Tin Container 收纳盒（误标 Basket 副）
+        '1020827662635',  # Multi Pouch（误标 Weekend Bag 副）
+        '880590249812',   # X-Line Chair 单椅（误标 Apex Floor Lamp 副，本周 7,487）
+        '742825018684',   # Elementaire Chair 单椅（误标 Tray Table 副）
+        # 暂未截图但稳妥起见也 revert
+        '824452791755', '718962869038', '719833026924', '965582828141',
     )
     SOURCE = 'manual_sycm_screenshot_2026-05-05'
     inserted = 0
