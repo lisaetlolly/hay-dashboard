@@ -26,7 +26,13 @@ if not NEON_DSN:
 # ── SPU 合并表 ────────────────────────────────────────────────
 # 同款不同 SKU 合并到同一 SPU（key=副 SKU，value=主 SKU/SPU）
 # 主 SKU 的 spu_id = 自身；副 SKU 的 spu_id 指向主 SKU
-# 来源：人工核对 short_names 一致 + 销售数据重叠
+#
+# ⚠️⚠️⚠️ 加新映射前必须遵守的规则 ⚠️⚠️⚠️
+# 在 SYCM 商品报表搜索框里粘 PID，确认商品名**完全是同款**（不是名字相似的不同款）。
+# 历史教训（2026-05-05）：上一版 SPU_MAP 凭"商品名相似 + 销售数据重叠"自动猜，
+# 14 条映射猜错 13 条，把 Rey Chair 21K 算到 Bowler Table、Tray Table 10K 算到
+# Slit Table、X-Line Chair 7K 算到 Apex Floor Lamp，运营被同事骂上头才发现。
+# 不要再凭名字猜。每条映射必须有 SYCM 截图证据。
 SPU_MAP = {
     # ⚠️ 2026-05-05 用户在 SYCM 逐个验证 PID 商品名后，发现项目原 SPU_MAP 几乎
     # 全是错的（"人工核对"从未真正核对）。已全部清空，只保留唯一确认正确的：
