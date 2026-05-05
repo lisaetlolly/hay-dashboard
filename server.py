@@ -3768,50 +3768,97 @@ def admin_syzt_check(
     return HTMLResponse(html)
 
 
-@app.get("/admin/syzt-rerun", response_class=HTMLResponse)
-def admin_syzt_rerun(
-    start: str = Query(default="2026-04-27"),
-    end: str = Query(default="2026-05-03"),
-):
-    """清空指定区间的 syzt 行，再跑一次 ETL（subprocess 调 etl_load.py）"""
-    import subprocess
-    log_lines = []
-    # 1. 删除区间内的 syzt 行（所有 PID，让 ETL 重新填）
+@app.get("/admin/syzt-import-week-2026-04-27", response_class=HTMLResponse)
+def admin_syzt_import_week_2026_04_27():
+    """
+    把 SYCM 截图人工录入的 4-27~5-03 周聚合 INSERT 到 fact_syzt_product。
+    stat_date 统一存 '2026-04-27'，使 BETWEEN '2026-04-27' AND '2026-05-03' 查询命中。
+    ON CONFLICT DO UPDATE：再次点击会覆盖，幂等。
+    后续运营在电脑上传 xls 跑 ETL 后，会用真实日级数据自动覆盖此手填行。
+    """
+    # 数据来源：用户 2026-05-05 在手机端 SYCM 截图人工录入
+    # 字段：(pid, pay_amount, refund_amount, visitors, cart_qty, cart_users,
+    #        collect_users, avg_stay_duration_sec, pay_buyers, pay_new_buyers)
+    DATA = [
+        ('965048597796', 27422.34,  6435.32, 17339,  694,  435, 615, 17.66,  44,  28),  # La Pittura
+        ('564552361178', 27415.71, 11654.16,  9339, 2212, 2000, 259,  5.57, 407, 375),  # Cotton Bag
+        ('580467335137', 25907.09,  7239.18,  3504,  648,  504, 147,  9.72, 119,  86),  # Basket
+        ('679198301351', 20916.42,  2660.17,  2934, 1236,  502,  97, 12.10, 119,  71),  # New Colour Crate
+        ('1022489092196', 14186.40, 5978.00,  4594,  373,  312,  85, 15.94,  38,  21),  # Conical Vase
+        ('781547798998', 12321.41,  1448.27,  7538,  375,  288,  86, 34.31,  46,  31),  # Slice Chopping
+        ('1020175879777', 11069.83, 7351.44, 17674,  279,  205,  76, 14.96,  35,  23),  # Grid Bag
+        ('824607518747',  8984.00,     0.00,  7662,  187,  161,  91, 28.68,   5,   4),  # Colour Rack
+        ('717349639294',  7886.00,  1894.00,  9133,  128,  113,  76, 35.40,   4,   2),  # Weekday 长凳
+        ('690221882602',  7191.00,  3598.00,  9345,   79,   72,  60, 34.03,   4,   4),  # Bowler Table
+        ('742092260504',  7151.00,  3645.00,  1774,  116,  100,  71, 14.23,   9,   6),  # Apex Lamp
+        ('886839411718',  6951.21,  1288.00,  7820,  204,  178, 132, 29.86,  13,  12),  # Empire Vase
+        ('888002957800',  5760.00,  2138.00,  3020,  208,  168,  86,  6.72,  12,  10),  # Weekend Bag
+        ('1016294283167', 3798.00,  5197.00,  5862,   70,   57,  25,  7.42,   2,   0),  # Facet Cabinet
+        ('689952405763',  3593.00,     0.00,  1401,   37,   33,  39, 11.35,   2,   2),  # Revolver Stool
+        ('824882661931',  3395.64,  1882.56,   556,   49,   40,  18, 12.46,   8,   5),  # Common Pendant
+        ('652664516885',  3195.71,  1596.71,  1600,   33,   32,  44,  8.35,   2,   0),  # Knit 衣架
+        ('682036237751',  3173.16,  4619.16,   705,   65,   52,  23, 10.15,   2,   2),  # Korpus
+        ('818210888511',  3015.36,   697.00,   643,   70,   60,  20,  7.60,   8,   3),  # Paper Shade
+        ('583134215392',  2995.00,   594.00,   819,   68,   62,  20,  6.83,   5,   4),  # Jessica Hans Vase
+        ('880816460277',  2199.00,     0.00,   270,   15,   13,   8,  9.35,   1,   1),  # Apex Floor Lamp
+        ('880120382310',  2157.00,   719.00,   428,   25,   23,   6,  7.74,   3,   2),  # Apex Wall Lamp
+        ('1021718193334', 1798.00,   799.00,   920,   51,   45,  19,  9.63,   2,   0),  # Manolito Stool
+        ('975799789205',  1369.00,   458.00,  5588,  272,  265, 346,  6.34,   6,   3),  # Canopy Umbrella
+        ('824946188993',  1049.00,     0.00,  2599,   71,   58,  92,  9.30,   1,   0),  # Taburete Bar Stool
+        ('887041510904',   873.00,   439.00,   970,   78,   70,  38,  6.88,   2,   0),  # Coco Door Mat
+        ('737675603229',     0.00,     0.00,  1560,   48,   42,  47,  9.03,   0,   0),  # Arcs Trolley
+        ('824452791755',     0.00,     0.00,    40,    0,    0,   7,  7.92,   0,   0),  # Facet Cabinet 副 SKU
+        ('1020815058332',    0.00,     0.00,   160,    8,    8,   2, 11.57,   0,   0),  # Barro Bowl & Plate
+    ]
+    SOURCE = 'manual_sycm_screenshot_2026-05-05'
+    inserted = 0
     with db() as conn:
         cur = conn.cursor()
-        cur.execute(
-            "DELETE FROM fact_syzt_product WHERE stat_date BETWEEN %s AND %s",
-            (start, end),
-        )
-        deleted = cur.rowcount
+        for pid, pay, refund, vis, cart_qty, cart_users, collect, stay, pay_buyers, new_buyers in DATA:
+            old_buyers = max(0, pay_buyers - new_buyers)
+            pay_cvr = (pay_buyers / vis) if vis > 0 else 0.0
+            avp     = (pay / vis)        if vis > 0 else 0.0
+            cur.execute("""
+                INSERT INTO fact_syzt_product (
+                    stat_date, product_id,
+                    visitors, avg_stay_duration,
+                    collect_users, cart_qty, cart_users,
+                    pay_amount, pay_cvr,
+                    pay_new_buyers, pay_old_buyers, visitor_avg_value,
+                    refund_amount, source_file
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (stat_date, product_id) DO UPDATE SET
+                    visitors           = EXCLUDED.visitors,
+                    avg_stay_duration  = EXCLUDED.avg_stay_duration,
+                    collect_users      = EXCLUDED.collect_users,
+                    cart_qty           = EXCLUDED.cart_qty,
+                    cart_users         = EXCLUDED.cart_users,
+                    pay_amount         = EXCLUDED.pay_amount,
+                    pay_cvr            = EXCLUDED.pay_cvr,
+                    pay_new_buyers     = EXCLUDED.pay_new_buyers,
+                    pay_old_buyers     = EXCLUDED.pay_old_buyers,
+                    visitor_avg_value  = EXCLUDED.visitor_avg_value,
+                    refund_amount      = EXCLUDED.refund_amount,
+                    source_file        = EXCLUDED.source_file
+            """, (
+                '2026-04-27', pid, vis, stay, collect, cart_qty, cart_users,
+                pay, pay_cvr, new_buyers, old_buyers, avp, refund, SOURCE,
+            ))
+            inserted += 1
         conn.commit()
-        log_lines.append(f"DELETE fact_syzt_product {start}~{end}: {deleted} 行")
-    # 2. 跑 ETL
-    base_dir = DASHBOARD_DIR
-    neon_script = os.path.join(base_dir, "etl", "etl_load.py")
-    if not os.path.exists(neon_script):
-        return HTMLResponse(f"<pre>etl/etl_load.py 不存在</pre>", status_code=500)
-    try:
-        r = subprocess.run(
-            ["python3", neon_script],
-            cwd=base_dir, env=os.environ.copy(),
-            capture_output=True, text=True, timeout=300,
-        )
-        log_lines.append(f"ETL rc={r.returncode}")
-        log_lines.append(r.stdout[-2000:] if r.stdout else "(no stdout)")
-        if r.stderr:
-            log_lines.append("--- stderr ---")
-            log_lines.append(r.stderr[-1000:])
-    except subprocess.TimeoutExpired:
-        log_lines.append("ETL 超时（>300s）")
+    total_pay = sum(r[1] for r in DATA)
+    total_vis = sum(r[3] for r in DATA)
     html = (
         "<html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
-        "<title>ETL 重跑</title></head><body style='font-family:sans-serif;padding:12px'>"
-        f"<h2>ETL 重跑结果（{start} ~ {end}）</h2>"
-        f"<p><a href='/admin/syzt-check?start={start}&end={end}'>← 查看重跑后的数据</a></p>"
-        "<pre style='background:#f3f4f6;padding:12px;font-size:11px;overflow:auto'>"
-        + "\n".join(str(x) for x in log_lines) +
-        "</pre></body></html>"
+        "<title>导入完成</title></head><body style='font-family:sans-serif;padding:12px'>"
+        f"<h2>✅ 已导入 {inserted} 条 SYCM 周聚合</h2>"
+        f"<p>合计支付金额 ¥{total_pay:,.2f} · 合计访客 {total_vis:,}</p>"
+        f"<p>stat_date='2026-04-27'，source_file='{SOURCE}'</p>"
+        "<p style='margin-top:16px'>"
+        "<a href='/admin/syzt-check'>→ 查看 Basket（580467335137）当周数据</a></p>"
+        "<p><a href='/admin/syzt-check?pid=965048597796'>→ 查看 La Pittura</a></p>"
+        "<p><a href='/admin/syzt-check?pid=564552361178'>→ 查看 Cotton Bag</a></p>"
+        "</body></html>"
     )
     return HTMLResponse(html)
 
