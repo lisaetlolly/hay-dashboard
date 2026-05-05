@@ -3820,26 +3820,25 @@ def admin_syzt_import_week_2026_04_27():
         #   collect_users 0、stay 9.5 秒（按主链平均估）
         ('766018103334',  2609.14,   319.00,   800,   67,   48,   0,  9.50,  22,  18, 22.02,  1613),  # Barro Bowl 副链
     ]
-    # SPU 合并表（手动镜像 etl_load.py:30-58 的 SPU_MAP）
-    # import 端点不走 ETL，所以 SPU_MAP 同步逻辑在这里手动跑一遍
-    # 让 SPU_MAP 里的副 SKU 在 dim_product 表里 spu_id 都指向主链
+    # SPU 合并表（镜像 etl_load.py 的 SPU_MAP）
+    # 2026-05-05 用户在 SYCM 实地验证后，原项目 SPU_MAP 几乎全错，已清空
     SPU_MAP = {
-        '824452791755':  '1016294283167',  # Facet Cabinet
-        '823129032370':  '1016294283167',
-        '655712136728':  '564552361178',   # Cotton Bag
-        '702658485207':  '564552361178',
-        '718962869038':  '718703980562',   # Slit Table
-        '719833026924':  '718703980562',
-        '742825018684':  '742288645501',   # Tray Table
-        '690750181823':  '690221882602',   # Bowler Table
-        '1021714677571': '1022489092196',  # Conical Vase
-        '975220170387':  '580467335137',   # Basket
-        '1017849944486': '679198301351',   # Colour Crate
-        '1020827662635': '888002957800',   # Weekend Bag
-        '965582828141':  '965048597796',   # La Pittura
-        '880590249812':  '880816460277',   # Apex Floor Lamp
-        '766018103334':  '1020815058332',  # Barro Bowl & Plate 第二条链接
+        '766018103334':  '1020815058332',  # Barro Bowl & Plate（用户实地确认对）
     }
+    # 历史错误：把这些 PID 的 spu_id 改回自身（独立商品，不该被合并）
+    BAD_SPU_MAP_REVERT = (
+        # 已 SYCM 搜索验证为独立商品
+        '823129032370',   # Shim Coffee Table（之前误标 Facet Cabinet 副）
+        '655712136728',   # Pouf 豆袋（之前误标 Cotton Bag 副）
+        '702658485207',   # Mousqueton 便携灯（之前误标 Cotton Bag 副）
+        '1021714677571',  # Everyday 包（之前误标 Conical Vase 副）
+        '690750181823',   # Rey Chair & Stool 单椅（之前误标 Bowler Table 副，本周销售 21,196）
+        '1017849944486',  # Aplat 台灯（之前误标 Colour Crate 副）
+        '975220170387',   # Tin Container 收纳盒（之前误标 Basket 副）
+        # 暂未截图但稳妥起见也 revert（怕同事再骂）
+        '824452791755', '718962869038', '719833026924', '742825018684',
+        '1020827662635', '965582828141', '880590249812',
+    )
     SOURCE = 'manual_sycm_screenshot_2026-05-05'
     inserted = 0
     spu_synced = 0
@@ -3856,6 +3855,15 @@ def admin_syzt_import_week_2026_04_27():
                 ON CONFLICT(product_id) DO UPDATE SET spu_id = EXCLUDED.spu_id
             """, (sub_pid, main_pid, main_pid))
             spu_synced += 1
+        # ── 修历史错误：把误合并的独立商品 spu_id 改回自身 ──
+        bad_reverted = 0
+        for pid in BAD_SPU_MAP_REVERT:
+            cur.execute("""
+                UPDATE dim_product SET spu_id = product_id
+                WHERE product_id = %s AND spu_id <> product_id
+            """, (pid,))
+            if cur.rowcount > 0:
+                bad_reverted += cur.rowcount
         for pid, pay, refund, vis, cart_qty, cart_users, collect, stay, pay_buyers, new_buyers, bounce_pct, pv in DATA:
             old_buyers = max(0, pay_buyers - new_buyers)
             pay_cvr  = (pay_buyers / vis) if vis > 0 else 0.0
