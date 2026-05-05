@@ -3778,44 +3778,45 @@ def admin_syzt_import_week_2026_04_27():
     """
     # 数据来源：用户 2026-05-05 在手机端 SYCM 截图人工录入
     # 字段：(pid, pay_amount, refund_amount, visitors, cart_qty, cart_users,
-    #        collect_users, avg_stay_duration_sec, pay_buyers, pay_new_buyers, bounce_pct)
+    #        collect_users, avg_stay_duration_sec, pay_buyers, pay_new_buyers,
+    #        bounce_pct, page_views)
     # bounce_pct 是百分比形式（43.35 表示 43.35%），写库时转 0.4335。
     DATA = [
-        ('965048597796', 27422.34,  6435.32, 17339,  694,  435, 615, 17.66,  44,  28, 76.01),  # La Pittura
-        ('564552361178', 27415.71, 11654.16,  9339, 2212, 2000, 259,  5.57, 407, 375, 43.35),  # Cotton Bag
-        ('580467335137', 25907.09,  7239.18,  3504,  648,  504, 147,  9.72, 119,  86, 50.40),  # Basket
-        ('679198301351', 20916.42,  2660.17,  2934, 1236,  502,  97, 12.10, 119,  71, 28.44),  # New Colour Crate
-        ('1022489092196', 14186.40, 5978.00,  4594,  373,  312,  85, 15.94,  38,  21, 70.46),  # Conical Vase
-        ('781547798998', 12321.41,  1448.27,  7538,  375,  288,  86, 34.31,  46,  31, 82.18),  # Slice Chopping
-        ('1020175879777', 11069.83, 7351.44, 17674,  279,  205,  76, 14.96,  35,  23, 84.41),  # Grid Bag
-        ('824607518747',  8984.00,     0.00,  7662,  187,  161,  91, 28.68,   5,   4, 74.06),  # Colour Rack
-        ('717349639294',  7886.00,  1894.00,  9133,  128,  113,  76, 35.40,   4,   2, 87.30),  # Weekday 长凳
-        ('690221882602',  7191.00,  3598.00,  9345,   79,   72,  60, 34.03,   4,   4, 91.21),  # Bowler Table
-        ('742092260504',  7151.00,  3645.00,  1774,  116,  100,  71, 14.23,   9,   6, 52.85),  # Apex Lamp
-        ('886839411718',  6951.21,  1288.00,  7820,  204,  178, 132, 29.86,  13,  12, 83.75),  # Empire Vase
-        ('888002957800',  5760.00,  2138.00,  3020,  208,  168,  86,  6.72,  12,  10, 54.42),  # Weekend Bag
-        ('1016294283167', 3798.00,  5197.00,  5862,   70,   57,  25,  7.42,   2,   0, 67.55),  # Facet Cabinet
-        ('689952405763',  3593.00,     0.00,  1401,   37,   33,  39, 11.35,   2,   2, 65.24),  # Revolver Stool
-        ('824882661931',  3395.64,  1882.56,   556,   49,   40,  18, 12.46,   8,   5, 29.65),  # Common Pendant
-        ('652664516885',  3195.71,  1596.71,  1600,   33,   32,  44,  8.35,   2,   0, 62.60),  # Knit 衣架
-        ('682036237751',  3173.16,  4619.16,   705,   65,   52,  23, 10.15,   2,   2, 38.53),  # Korpus
-        ('818210888511',  3015.36,   697.00,   643,   70,   60,  20,  7.60,   8,   3, 32.38),  # Paper Shade
-        ('583134215392',  2995.00,   594.00,   819,   68,   62,  20,  6.83,   5,   4, 23.07),  # Jessica Hans Vase
-        ('880816460277',  2199.00,     0.00,   270,   15,   13,   8,  9.35,   1,   1, 33.06),  # Apex Floor Lamp
-        ('880120382310',  2157.00,   719.00,   428,   25,   23,   6,  7.74,   3,   2, 15.80),  # Apex Wall Lamp
-        ('1021718193334', 1798.00,   799.00,   920,   51,   45,  19,  9.63,   2,   0, 35.64),  # Manolito Stool
-        ('975799789205',  1369.00,   458.00,  5588,  272,  265, 346,  6.34,   6,   3, 55.56),  # Canopy Umbrella
-        ('824946188993',  1049.00,     0.00,  2599,   71,   58,  92,  9.30,   1,   0, 70.74),  # Taburete Bar Stool
-        ('887041510904',   873.00,   439.00,   970,   78,   70,  38,  6.88,   2,   0, 29.70),  # Coco Door Mat
-        ('737675603229',     0.00,     0.00,  1560,   48,   42,  47,  9.03,   0,   0, 60.11),  # Arcs Trolley
-        ('824452791755',     0.00,     0.00,    40,    0,    0,   7,  7.92,   0,   0, 29.45),  # Facet Cabinet 副 SKU
-        ('1020815058332',    0.00,     0.00,   160,    8,    8,   2, 11.57,   0,   0, 80.23),  # Barro Bowl & Plate
+        ('965048597796', 27422.34,  6435.32, 17339,  694,  435, 615, 17.66,  44,  28, 76.01, 31371),  # La Pittura
+        ('564552361178', 27415.71, 11654.16,  9339, 2212, 2000, 259,  5.57, 407, 375, 43.35, 40034),  # Cotton Bag
+        ('580467335137', 25907.09,  7239.18,  3504,  648,  504, 147,  9.72, 119,  86, 50.40, 12512),  # Basket
+        ('679198301351', 20916.42,  2660.17,  2934, 1236,  502,  97, 12.10, 119,  71, 28.44, 11940),  # New Colour Crate
+        ('1022489092196', 14186.40, 5978.00,  4594,  373,  312,  85, 15.94,  38,  21, 70.46, 10293),  # Conical Vase
+        ('781547798998', 12321.41,  1448.27,  7538,  375,  288,  86, 34.31,  46,  31, 82.18, 12914),  # Slice Chopping
+        ('1020175879777', 11069.83, 7351.44, 17674,  279,  205,  76, 14.96,  35,  23, 84.41, 26973),  # Grid Bag
+        ('824607518747',  8984.00,     0.00,  7662,  187,  161,  91, 28.68,   5,   4, 74.06, 12183),  # Colour Rack
+        ('717349639294',  7886.00,  1894.00,  9133,  128,  113,  76, 35.40,   4,   2, 87.30, 13720),  # Weekday 长凳
+        ('690221882602',  7191.00,  3598.00,  9345,   79,   72,  60, 34.03,   4,   4, 91.21, 12219),  # Bowler Table
+        ('742092260504',  7151.00,  3645.00,  1774,  116,  100,  71, 14.23,   9,   6, 52.85,  3984),  # Apex Lamp
+        ('886839411718',  6951.21,  1288.00,  7820,  204,  178, 132, 29.86,  13,  12, 83.75, 12407),  # Empire Vase
+        ('888002957800',  5760.00,  2138.00,  3020,  208,  168,  86,  6.72,  12,  10, 54.42,  7640),  # Weekend Bag
+        ('1016294283167', 3798.00,  5197.00,  5862,   70,   57,  25,  7.42,   2,   0, 67.55,  7845),  # Facet Cabinet
+        ('689952405763',  3593.00,     0.00,  1401,   37,   33,  39, 11.35,   2,   2, 65.24,  2679),  # Revolver Stool
+        ('824882661931',  3395.64,  1882.56,   556,   49,   40,  18, 12.46,   8,   5, 29.65,  1523),  # Common Pendant
+        ('652664516885',  3195.71,  1596.71,  1600,   33,   32,  44,  8.35,   2,   0, 62.60,  3043),  # Knit 衣架
+        ('682036237751',  3173.16,  4619.16,   705,   65,   52,  23, 10.15,   2,   2, 38.53,  1635),  # Korpus
+        ('818210888511',  3015.36,   697.00,   643,   70,   60,  20,  7.60,   8,   3, 32.38,  2236),  # Paper Shade
+        ('583134215392',  2995.00,   594.00,   819,   68,   62,  20,  6.83,   5,   4, 23.07,  1546),  # Jessica Hans Vase
+        ('880816460277',  2199.00,     0.00,   270,   15,   13,   8,  9.35,   1,   1, 33.06,   584),  # Apex Floor Lamp
+        ('880120382310',  2157.00,   719.00,   428,   25,   23,   6,  7.74,   3,   2, 15.80,  1080),  # Apex Wall Lamp
+        ('1021718193334', 1798.00,   799.00,   920,   51,   45,  19,  9.63,   2,   0, 35.64,  1590),  # Manolito Stool
+        ('975799789205',  1369.00,   458.00,  5588,  272,  265, 346,  6.34,   6,   3, 55.56, 12936),  # Canopy Umbrella
+        ('824946188993',  1049.00,     0.00,  2599,   71,   58,  92,  9.30,   1,   0, 70.74,  4958),  # Taburete Bar Stool
+        ('887041510904',   873.00,   439.00,   970,   78,   70,  38,  6.88,   2,   0, 29.70,  2202),  # Coco Door Mat
+        ('737675603229',     0.00,     0.00,  1560,   48,   42,  47,  9.03,   0,   0, 60.11,  3182),  # Arcs Trolley
+        ('824452791755',     0.00,     0.00,    40,    0,    0,   7,  7.92,   0,   0, 29.45,   120),  # Facet Cabinet 副 SKU
+        ('1020815058332',    0.00,     0.00,   160,    8,    8,   2, 11.57,   0,   0, 80.23,   195),  # Barro Bowl & Plate
     ]
     SOURCE = 'manual_sycm_screenshot_2026-05-05'
     inserted = 0
     with db() as conn:
         cur = conn.cursor()
-        for pid, pay, refund, vis, cart_qty, cart_users, collect, stay, pay_buyers, new_buyers, bounce_pct in DATA:
+        for pid, pay, refund, vis, cart_qty, cart_users, collect, stay, pay_buyers, new_buyers, bounce_pct, pv in DATA:
             old_buyers = max(0, pay_buyers - new_buyers)
             pay_cvr  = (pay_buyers / vis) if vis > 0 else 0.0
             avp      = (pay / vis)        if vis > 0 else 0.0
@@ -3823,14 +3824,15 @@ def admin_syzt_import_week_2026_04_27():
             cur.execute("""
                 INSERT INTO fact_syzt_product (
                     stat_date, product_id,
-                    visitors, avg_stay_duration, bounce_rate,
+                    visitors, page_views, avg_stay_duration, bounce_rate,
                     collect_users, cart_qty, cart_users,
                     pay_amount, pay_cvr,
                     pay_new_buyers, pay_old_buyers, visitor_avg_value,
                     refund_amount, source_file
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (stat_date, product_id) DO UPDATE SET
                     visitors           = EXCLUDED.visitors,
+                    page_views         = EXCLUDED.page_views,
                     avg_stay_duration  = EXCLUDED.avg_stay_duration,
                     bounce_rate        = EXCLUDED.bounce_rate,
                     collect_users      = EXCLUDED.collect_users,
@@ -3844,7 +3846,7 @@ def admin_syzt_import_week_2026_04_27():
                     refund_amount      = EXCLUDED.refund_amount,
                     source_file        = EXCLUDED.source_file
             """, (
-                '2026-04-27', pid, vis, stay, bounce, collect, cart_qty, cart_users,
+                '2026-04-27', pid, vis, pv, stay, bounce, collect, cart_qty, cart_users,
                 pay, pay_cvr, new_buyers, old_buyers, avp, refund, SOURCE,
             ))
             inserted += 1
@@ -3861,6 +3863,65 @@ def admin_syzt_import_week_2026_04_27():
         "<a href='/admin/syzt-check'>→ 查看 Basket（580467335137）当周数据</a></p>"
         "<p><a href='/admin/syzt-check?pid=965048597796'>→ 查看 La Pittura</a></p>"
         "<p><a href='/admin/syzt-check?pid=564552361178'>→ 查看 Cotton Bag</a></p>"
+        "</body></html>"
+    )
+    return HTMLResponse(html)
+
+
+@app.get("/admin/wxst-import-week-2026-04-27", response_class=HTMLResponse)
+def admin_wxst_import_week_2026_04_27():
+    """
+    把 SYCM 截图人工录入的「推广消耗 / 推广直接ROI」灌到 fact_wxst_product。
+    SYCM 商品报表只显示 spend + roi，没有 impressions/clicks，所以 dashboard
+    "CTR" 仍会缺失，但「投放面板」的「花费」列能对齐。
+    """
+    # (pid, spend, roi)；只录入有推广花费的 PID
+    DATA = [
+        ('965048597796', 2513.84, 1.48),  # La Pittura
+        ('580467335137', 1666.56, 2.05),  # Basket
+        ('717349639294', 1677.94, 2.44),  # Weekday
+        ('690221882602', 1770.37, 0.00),  # Bowler Table
+        ('824946188993', 1527.09, 0.69),  # Taburete
+        ('737675603229', 1337.84, 0.00),  # Arcs Trolley
+        ('689952405763', 1166.74, 1.54),  # Revolver Stool
+        ('1020175879777', 1021.11, 2.32),  # Grid Bag
+        ('824607518747',  725.22, 0.00),  # Colour Rack
+        ('1016294283167', 715.72, 0.00),  # Facet Cabinet
+        ('781547798998',  698.41, 0.98),  # Slice Chopping
+        ('886839411718',  694.19, 0.64),  # Empire Vase
+        ('652664516885',  682.07, 0.00),  # Knit
+        ('742092260504',  606.30, 1.24),  # Apex Lamp
+        ('1022489092196', 217.07, 0.00),  # Conical Vase
+        ('682036237751',   55.52, 0.00),  # Korpus
+        ('1021718193334',   3.12, 0.00),  # Manolito Stool
+    ]
+    SOURCE = 'manual_sycm_screenshot_2026-05-05'
+    inserted = 0
+    with db() as conn:
+        cur = conn.cursor()
+        for pid, spend, roi in DATA:
+            # SYCM 推广直接ROI = total_gmv / spend，反算 total_gmv（没真值，先用 ROI×spend）
+            gmv_implied = spend * roi
+            cur.execute("""
+                INSERT INTO fact_wxst_product (
+                    stat_date, product_id, spend, roi, total_gmv, source_file
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (stat_date, product_id) DO UPDATE SET
+                    spend       = EXCLUDED.spend,
+                    roi         = EXCLUDED.roi,
+                    total_gmv   = EXCLUDED.total_gmv,
+                    source_file = EXCLUDED.source_file
+            """, ('2026-04-27', pid, spend, roi, gmv_implied, SOURCE))
+            inserted += 1
+        conn.commit()
+    total_spend = sum(r[1] for r in DATA)
+    html = (
+        "<html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>万象台导入</title></head><body style='font-family:sans-serif;padding:12px'>"
+        f"<h2>✅ 已导入 {inserted} 条万象台推广数据</h2>"
+        f"<p>合计推广花费 ¥{total_spend:,.2f}</p>"
+        f"<p>注意：SYCM 商品报表无 impressions/clicks，dashboard CTR 列仍会缺。</p>"
+        "<p style='margin-top:16px'><a href='/admin/syzt-import-week-2026-04-27'>← 返回 syzt 导入</a></p>"
         "</body></html>"
     )
     return HTMLResponse(html)
