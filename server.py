@@ -3927,6 +3927,131 @@ def admin_wxst_import_week_2026_04_27():
     return HTMLResponse(html)
 
 
+@app.get("/admin/syzt-audit", response_class=HTMLResponse)
+def admin_syzt_audit(
+    start: str = Query(default="2026-04-27"),
+    end: str = Query(default="2026-05-03"),
+):
+    """
+    跑一遍 fact_syzt_product 在区间内每个 PID 的数据校验，
+    所有违反业务规则的行/字段标红。
+    """
+    with db() as conn:
+        recs = rows(conn, """
+            SELECT s.product_id, s.stat_date,
+                   COALESCE(p.title, '?') AS title,
+                   s.pay_amount, s.refund_amount, s.visitors, s.page_views,
+                   s.cart_qty, s.cart_users, s.collect_users,
+                   s.avg_stay_duration, s.bounce_rate,
+                   s.pay_new_buyers, s.pay_old_buyers,
+                   s.pay_cvr, s.visitor_avg_value
+            FROM fact_syzt_product s
+            LEFT JOIN dim_product p ON s.product_id = p.product_id
+            WHERE s.stat_date BETWEEN %s AND %s
+            ORDER BY s.pay_amount DESC NULLS LAST, s.product_id
+        """, (start, end))
+
+    # 校验规则：返回 list of (level, field, msg)；level: 'error' / 'warn'
+    def audit_row(r):
+        issues = []
+        pay     = float(r['pay_amount']    or 0)
+        refund  = float(r['refund_amount'] or 0)
+        vis     = float(r['visitors']      or 0)
+        pv      = float(r['page_views']    or 0)
+        cq      = float(r['cart_qty']      or 0)
+        cu      = float(r['cart_users']    or 0)
+        coll    = float(r['collect_users'] or 0)
+        stay    = float(r['avg_stay_duration'] or 0)
+        bounce  = float(r['bounce_rate']   or 0)
+        nb      = float(r['pay_new_buyers'] or 0)
+        ob      = float(r['pay_old_buyers'] or 0)
+        cvr     = float(r['pay_cvr']       or 0)
+        avp     = float(r['visitor_avg_value'] or 0)
+        buyers  = nb + ob
+
+        # ── 硬错误（业务上不可能）──
+        if cu > vis and vis > 0:
+            issues.append(('error', 'cart_users', f'加购人数 {cu:.0f} > 访客数 {vis:.0f}（一人最多算一次）'))
+        if cq > 0 and cu > 0 and cq < cu:
+            issues.append(('error', 'cart_qty', f'加购件数 {cq:.0f} < 加购人数 {cu:.0f}（每人至少加 1 件）'))
+        if coll > vis and vis > 0:
+            issues.append(('error', 'collect_users', f'收藏人数 {coll:.0f} > 访客数 {vis:.0f}'))
+        if buyers > vis and vis > 0:
+            issues.append(('error', 'buyers', f'支付买家 {buyers:.0f} > 访客数 {vis:.0f}'))
+        if pay > 0 and vis == 0:
+            issues.append(('error', 'visitors', f'支付 ¥{pay:.2f} 但访客 = 0'))
+        if pv > 0 and vis > pv:
+            issues.append(('error', 'page_views', f'访客 {vis:.0f} > 浏览量 {pv:.0f}（一人至少浏览 1 页）'))
+        if bounce < 0 or bounce > 1:
+            issues.append(('error', 'bounce_rate', f'跳出率 {bounce:.4f} 不在 [0,1]'))
+        if stay < 0 or stay > 600:
+            issues.append(('error', 'stay', f'停留时长 {stay:.1f}s 不在 [0,600]'))
+        if cvr < 0 or cvr > 1:
+            issues.append(('error', 'pay_cvr', f'支付转化率 {cvr:.4f} 不在 [0,1]'))
+
+        # ── 软警告（异常但可能合理）──
+        if pay > 0 and refund > pay:
+            issues.append(('warn', 'refund', f'退款 ¥{refund:.0f} > 支付 ¥{pay:.0f}（退款率 {refund/pay*100:.0f}%，往期订单本周退？）'))
+        if vis > 0 and avp > 0 and avp > 1000:
+            issues.append(('warn', 'avp', f'访客平均价值 ¥{avp:.2f}/UV 偏高（可能是高客单 + 低流量小品）'))
+        if vis >= 1000 and avp > 0 and avp < 0.5:
+            issues.append(('warn', 'avp', f'访客平均价值 ¥{avp:.2f}/UV 极低（流量大但成交差）'))
+        if buyers > 0 and nb / buyers > 0.95:
+            issues.append(('warn', 'new_buyers', f'新客占比 {nb/buyers*100:.0f}%（几乎全新客，复购可能差）'))
+        if vis >= 100 and cu / vis > 0.30:
+            issues.append(('warn', 'cart_users', f'加购率 {cu/vis*100:.1f}% 异常高（可能羊毛活动或刷单）'))
+
+        return issues
+
+    # 统计
+    n_total = len(recs)
+    n_error = 0
+    n_warn  = 0
+    rows_html = []
+    for r in recs:
+        issues = audit_row(r)
+        n_error += sum(1 for lv, *_ in issues if lv == 'error')
+        n_warn  += sum(1 for lv, *_ in issues if lv == 'warn')
+        if not issues:
+            tag = "<span style='color:#16a34a'>✓ OK</span>"
+        else:
+            parts = []
+            for lv, field, msg in issues:
+                color = '#dc2626' if lv == 'error' else '#d97706'
+                parts.append(f"<div style='color:{color};font-size:12px'>· {msg}</div>")
+            tag = ''.join(parts)
+        title = (r.get('title') or '')[:24]
+        rows_html.append(
+            "<tr>"
+            f"<td>{r['product_id']}</td>"
+            f"<td style='font-size:12px'>{title}</td>"
+            f"<td style='text-align:right'>¥{float(r['pay_amount'] or 0):,.0f}</td>"
+            f"<td style='text-align:right'>{int(r['visitors'] or 0):,}</td>"
+            f"<td>{tag}</td>"
+            "</tr>"
+        )
+
+    html = (
+        "<html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>SYCM 数据审计</title></head>"
+        "<body style='font-family:sans-serif;padding:12px'>"
+        f"<h2>数据审计 · {start} ~ {end}</h2>"
+        f"<p>共 {n_total} 行 · "
+        f"<b style='color:#dc2626'>硬错误 {n_error}</b> · "
+        f"<b style='color:#d97706'>软警告 {n_warn}</b></p>"
+        "<details><summary style='cursor:pointer;color:#2563eb'>校验规则说明（点开看）</summary>"
+        "<ul style='font-size:12px'>"
+        "<li><b style='color:#dc2626'>硬错误</b>（业务不可能，多半是录入错）：加购人数>访客数、加购件数<加购人数、买家>访客、跳出率不在[0,1]、停留>600s 等</li>"
+        "<li><b style='color:#d97706'>软警告</b>（异常但可能真实）：退款>支付、访客均值过高/过低、新客占比>95%、加购率>30%</li>"
+        "</ul></details>"
+        "<table border=1 cellpadding=6 style='border-collapse:collapse;font-size:13px;margin-top:12px'>"
+        "<tr><th>PID</th><th>商品</th><th>支付额</th><th>访客</th><th>校验结果</th></tr>"
+        + ''.join(rows_html) +
+        "</table></body></html>"
+    )
+    return HTMLResponse(html)
+
+
 # ── 静态文件：直接访问 http://localhost:766 打开看板 ──
 @app.get("/")
 def serve_dashboard():
