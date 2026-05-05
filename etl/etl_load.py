@@ -430,12 +430,12 @@ def load_syzt_product(conn):
             search_pay_buyers=EXCLUDED.search_pay_buyers,
             source_file=EXCLUDED.source_file
     """
-    print(f"  生意参谋商品：{len(files)} 个 xls 文件（增量模式：已入库的跳过）")
+    # syzt 文件每次全量重跑：(stat_date, product_id) 上有 ON CONFLICT DO UPDATE，
+    # 重跑幂等。生意参谋经常补昨天/上周数据，同名 xls 重新下载是常态，靠 source_file
+    # 跳过会让补录数据永远进不来 —— dashboard 偏低就是这个 bug。
+    print(f"  生意参谋商品：{len(files)} 个 xls 文件（每次全量重跑，依赖 ON CONFLICT 幂等）")
     for fi, fpath in enumerate(files, 1):
         fname = os.path.basename(fpath)
-        if fname in loaded:
-            skipped_files += 1
-            continue
         headers, rows = read_xls(fpath)
         if not headers:
             print(f"    [{fi}/{len(files)}] {fname}: 0 行（无表头）")
