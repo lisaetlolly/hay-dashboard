@@ -113,8 +113,16 @@ PRODUCT_IDS, MAIN_PRODUCT_IDS = _load_product_ids()
 def safe_float(v):
     if v is None or str(v).strip() in ('', '--', 'N/A', 'nan', '-'):
         return None
+    s = str(v).replace(',', '').replace('%', '').replace('元', '').strip()
+    # SYCM 周/月维度报表会把金额导成「2.5万」「1.2亿」格式，纯数字解析会失败。
+    # 这里识别中文单位放大倍数，避免整列字段被解成 NULL 导致 dashboard 数低于 SYCM。
+    mult = 1.0
+    if s.endswith('万'):
+        mult, s = 10000.0, s[:-1].strip()
+    elif s.endswith('亿'):
+        mult, s = 100000000.0, s[:-1].strip()
     try:
-        return float(str(v).replace(',', '').replace('%', '').strip())
+        return float(s) * mult
     except:
         return None
 
