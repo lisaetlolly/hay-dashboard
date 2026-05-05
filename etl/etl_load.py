@@ -113,8 +113,16 @@ PRODUCT_IDS, MAIN_PRODUCT_IDS = _load_product_ids()
 def safe_float(v):
     if v is None or str(v).strip() in ('', '--', 'N/A', 'nan', '-'):
         return None
+    s = str(v).replace(',', '').replace('%', '').replace('元', '').strip()
+    # SYCM 周/月维度报表会把金额导成「2.5万」「1.2亿」格式，纯数字解析会失败。
+    # 这里识别中文单位放大倍数，避免整列字段被解成 NULL 导致 dashboard 数低于 SYCM。
+    mult = 1.0
+    if s.endswith('万'):
+        mult, s = 10000.0, s[:-1].strip()
+    elif s.endswith('亿'):
+        mult, s = 100000000.0, s[:-1].strip()
     try:
-        return float(str(v).replace(',', '').replace('%', '').strip())
+        return float(s) * mult
     except:
         return None
 
@@ -422,12 +430,12 @@ def load_syzt_product(conn):
             search_pay_buyers=EXCLUDED.search_pay_buyers,
             source_file=EXCLUDED.source_file
     """
-    print(f"  生意参谋商品：{len(files)} 个 xls 文件（增量模式：已入库的跳过）")
+    # syzt 文件每次全量重跑：(stat_date, product_id) 上有 ON CONFLICT DO UPDATE，
+    # 重跑幂等。生意参谋经常补昨天/上周数据，同名 xls 重新下载是常态，靠 source_file
+    # 跳过会让补录数据永远进不来 —— dashboard 偏低就是这个 bug。
+    print(f"  生意参谋商品：{len(files)} 个 xls 文件（每次全量重跑，依赖 ON CONFLICT 幂等）")
     for fi, fpath in enumerate(files, 1):
         fname = os.path.basename(fpath)
-        if fname in loaded:
-            skipped_files += 1
-            continue
         headers, rows = read_xls(fpath)
         if not headers:
             print(f"    [{fi}/{len(files)}] {fname}: 0 行（无表头）")
@@ -460,8 +468,13 @@ def load_syzt_product(conn):
             ocvr_raw = str(row.get('下单转化率') or '').strip()
             if ('%' in stay_raw):
                 dirty_skip += 1; continue
-            if avp_raw and not avp_raw.replace(',','').replace('.','').replace('-','').isascii():
-                # 访客平均价值列出现非 ASCII（如汉字）→ 商品名串过来了
+            # 访客平均价值列出现非 ASCII → 可能是「商品名串过来了」(列错位)，
+            # 也可能是合法的中文单位 "2.5万" / "1.2亿" / "xx元"。先剥离已知单位再判定，
+            # 避免周/月维度报表整行被误杀。
+            _avp_strip = avp_raw.replace(',','').replace('.','').replace('-','')
+            for _u in ('万', '亿', '元'):
+                _avp_strip = _avp_strip.replace(_u, '')
+            if avp_raw and _avp_strip and not _avp_strip.isascii():
                 dirty_skip += 1; continue
             if ocvr_raw and ocvr_raw.replace(',','').replace('.','').isdigit() and len(ocvr_raw.replace(',','').split('.')[0]) >= 8:
                 # 下单转化率应是 % 数；出现 8 位以上整数（PID 串过来）→ 跳

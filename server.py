@@ -13,7 +13,7 @@ import psycopg2
 import psycopg2.extras
 from fastapi import FastAPI, HTTPException, Query, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -3701,6 +3701,119 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
         }
     except subprocess.TimeoutExpired:
         raise HTTPException(500, "ETL 超时（>120s）")
+
+
+# ══════════════════════════════════════════════════
+# 手机友好的诊断端点（只读 + 一键重跑 ETL）
+# 用途：销售金额对不上 SYCM 时，在手机上一键诊断 + 修复
+# 不带鉴权（依赖 dashboard URL 不公开）；返回 HTML 表格手机能直接看
+# ══════════════════════════════════════════════════
+@app.get("/admin/syzt-check", response_class=HTMLResponse)
+def admin_syzt_check(
+    pid: str = Query(default="580467335137"),
+    start: str = Query(default="2026-04-27"),
+    end: str = Query(default="2026-05-03"),
+):
+    """查 fact_syzt_product 里这个 PID 在时间范围内的所有行，方便和 SYCM 对账"""
+    with db() as conn:
+        recs = rows(conn, """
+            SELECT stat_date, pay_amount, visitors, cart_users, cart_qty,
+                   refund_amount, source_file
+            FROM fact_syzt_product
+            WHERE product_id = %s AND stat_date BETWEEN %s AND %s
+            ORDER BY stat_date
+        """, (pid, start, end))
+        agg = row(conn, """
+            SELECT COALESCE(SUM(pay_amount), 0)   AS pay,
+                   COALESCE(SUM(visitors), 0)    AS vis,
+                   COALESCE(SUM(cart_users), 0)  AS cu,
+                   COALESCE(SUM(cart_qty), 0)    AS cq
+            FROM fact_syzt_product
+            WHERE product_id = %s AND stat_date BETWEEN %s AND %s
+        """, (pid, start, end))
+    body = [
+        f"<h2>PID {pid} · {start} ~ {end}</h2>",
+        f"<p><b>聚合：</b>支付金额 ¥{float(agg['pay'] or 0):,.2f} · "
+        f"访客 {int(agg['vis'] or 0):,} · "
+        f"加购人数 {int(agg['cu'] or 0):,} · "
+        f"加购件数 {int(agg['cq'] or 0):,} · "
+        f"<b>{len(recs)} 行</b></p>",
+        "<table border=1 cellpadding=6 style='border-collapse:collapse;font-size:13px'>",
+        "<tr><th>日期</th><th>支付金额</th><th>访客</th><th>加购人</th><th>加购件</th><th>退款</th><th>source_file</th></tr>",
+    ]
+    for r in recs:
+        body.append(
+            "<tr>"
+            f"<td>{r['stat_date']}</td>"
+            f"<td>{float(r['pay_amount'] or 0):,.2f}</td>"
+            f"<td>{int(r['visitors'] or 0):,}</td>"
+            f"<td>{int(r['cart_users'] or 0):,}</td>"
+            f"<td>{int(r['cart_qty'] or 0):,}</td>"
+            f"<td>{float(r['refund_amount'] or 0):,.2f}</td>"
+            f"<td style='font-size:11px'>{r['source_file'] or ''}</td>"
+            "</tr>"
+        )
+    body.append("</table>")
+    body.append(
+        "<p style='margin-top:16px'><a href='/admin/syzt-rerun' "
+        "style='padding:10px 18px;background:#dc2626;color:#fff;border-radius:6px;"
+        "text-decoration:none;display:inline-block'>清空当周数据并重跑 ETL</a></p>"
+    )
+    html = (
+        "<html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>SYCM 对账</title></head><body style='font-family:sans-serif;padding:12px'>"
+        + "".join(body) +
+        "</body></html>"
+    )
+    return HTMLResponse(html)
+
+
+@app.get("/admin/syzt-rerun", response_class=HTMLResponse)
+def admin_syzt_rerun(
+    start: str = Query(default="2026-04-27"),
+    end: str = Query(default="2026-05-03"),
+):
+    """清空指定区间的 syzt 行，再跑一次 ETL（subprocess 调 etl_load.py）"""
+    import subprocess
+    log_lines = []
+    # 1. 删除区间内的 syzt 行（所有 PID，让 ETL 重新填）
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "DELETE FROM fact_syzt_product WHERE stat_date BETWEEN %s AND %s",
+            (start, end),
+        )
+        deleted = cur.rowcount
+        conn.commit()
+        log_lines.append(f"DELETE fact_syzt_product {start}~{end}: {deleted} 行")
+    # 2. 跑 ETL
+    base_dir = DASHBOARD_DIR
+    neon_script = os.path.join(base_dir, "etl", "etl_load.py")
+    if not os.path.exists(neon_script):
+        return HTMLResponse(f"<pre>etl/etl_load.py 不存在</pre>", status_code=500)
+    try:
+        r = subprocess.run(
+            ["python3", neon_script],
+            cwd=base_dir, env=os.environ.copy(),
+            capture_output=True, text=True, timeout=300,
+        )
+        log_lines.append(f"ETL rc={r.returncode}")
+        log_lines.append(r.stdout[-2000:] if r.stdout else "(no stdout)")
+        if r.stderr:
+            log_lines.append("--- stderr ---")
+            log_lines.append(r.stderr[-1000:])
+    except subprocess.TimeoutExpired:
+        log_lines.append("ETL 超时（>300s）")
+    html = (
+        "<html><head><meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>ETL 重跑</title></head><body style='font-family:sans-serif;padding:12px'>"
+        f"<h2>ETL 重跑结果（{start} ~ {end}）</h2>"
+        f"<p><a href='/admin/syzt-check?start={start}&end={end}'>← 查看重跑后的数据</a></p>"
+        "<pre style='background:#f3f4f6;padding:12px;font-size:11px;overflow:auto'>"
+        + "\n".join(str(x) for x in log_lines) +
+        "</pre></body></html>"
+    )
+    return HTMLResponse(html)
 
 
 # ── 静态文件：直接访问 http://localhost:766 打开看板 ──
