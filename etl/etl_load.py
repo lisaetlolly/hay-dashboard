@@ -468,8 +468,13 @@ def load_syzt_product(conn):
             ocvr_raw = str(row.get('下单转化率') or '').strip()
             if ('%' in stay_raw):
                 dirty_skip += 1; continue
-            if avp_raw and not avp_raw.replace(',','').replace('.','').replace('-','').isascii():
-                # 访客平均价值列出现非 ASCII（如汉字）→ 商品名串过来了
+            # 访客平均价值列出现非 ASCII → 可能是「商品名串过来了」(列错位)，
+            # 也可能是合法的中文单位 "2.5万" / "1.2亿" / "xx元"。先剥离已知单位再判定，
+            # 避免周/月维度报表整行被误杀。
+            _avp_strip = avp_raw.replace(',','').replace('.','').replace('-','')
+            for _u in ('万', '亿', '元'):
+                _avp_strip = _avp_strip.replace(_u, '')
+            if avp_raw and _avp_strip and not _avp_strip.isascii():
                 dirty_skip += 1; continue
             if ocvr_raw and ocvr_raw.replace(',','').replace('.','').isdigit() and len(ocvr_raw.replace(',','').split('.')[0]) >= 8:
                 # 下单转化率应是 % 数；出现 8 位以上整数（PID 串过来）→ 跳
