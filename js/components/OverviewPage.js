@@ -403,42 +403,17 @@ const OverviewPage = defineComponent({
       return line.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${g.x(p.d).toFixed(1)} ${g.y(p.v).toFixed(1)}`).join(' ')
     }
 
-    const addSaveCell = async (year, day) => {
-      const v = addInputDraft.value?.[year]?.[day]
-      if (v === '' || v == null) return  // 空值不上传
-      const num = Number(v)
-      if (!Number.isFinite(num) || num < 0) return
-      const stat_date = `${year}-05-${String(day).padStart(2,'0')}`
-      try {
-        const u = JSON.parse(localStorage.getItem('hay_current_user') || '{}')
-        const res = await fetch('/api/618/addtocart-manual', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Username': u.username || '' },
-          body: JSON.stringify({
-            stat_date, year_label: year, dedup_users: Math.round(num),
-            updated_by: u.username || ''
-          })
-        })
-        if (!res.ok) {
-          const txt = await res.text()
-          console.warn('[618] save failed', res.status, txt)
-        }
-      } catch (e) {
-        console.warn('[618] save error', e)
-      }
-    }
-
     return {
       kpi, planData, tasks, meetings, rankMetric, rankCategory, rankData, rankLoading,
       kpiDefs, rankDefs, kpiVal, kpiChg, barW, rankFmt, fmtWan, imgSrc,
       dotColor, statusLabel, totalActualWan, prevTopList, prevPeriod, chgCls, chgTxt,
       selectedOverviewMetrics, overviewMetricOpts, trendSeries, trendGranularity,
       channelCatData,
-      // 618 加购看板
+      // 618 加购看板（数据从 /api/618/category-cumulative 来；admin 在设置页改）
       ADD_DAYS, ADD_CATS, ADD_CAT_COLOR,
-      addCategorySeries, addManualEntries, addLoading, addSelectedN, addInputDraft,
+      addCategorySeries, addLoading, addSelectedN,
       addManualKpi, addCategoryKpi, addChartLines, addChartGeom, addLinePath,
-      addSaveCell, fmtNum,
+      fmtNum,
     }
   },
   template: `
