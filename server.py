@@ -1438,10 +1438,13 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                   AND product_id = ANY(%s)
             """, (start, end, pids))
             if weekly:
-                # 用周表数据
+                # 用 sycm 周维度 xls 原始字段 — avg_stay_duration / bounce_rate / pay_cvr
+                # 直接是 sycm 后台计算好的"平均/转化"，不再做任何 AVG/加权
                 syzt = weekly
+                _data_src = 'sycm-weekly-xls'
             else:
-                # 日表 SUM 兜底（注意 visitors / pay_buyers 会比真实多算，因日表无去重）
+                _data_src = 'day-sum-fallback'
+                # 日表 SUM 兜底（visitors / pay_buyers 偏大；前端会顶部告警）
                 syzt = rows(conn, """
                     SELECT s.product_id AS pid,
                            COALESCE(SUM(s.pay_amount), 0)        AS gmv,
@@ -1511,6 +1514,15 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
         cur_metrics = calc_metrics(cur_period["start_date"], cur_period["end_date"])
         prev_metrics = calc_metrics(prev_period["start_date"], prev_period["end_date"]) if prev_period else {}
 
+        # 数据源标记 — 给前端顶部告警条用
+        _ds = row(conn, """
+            SELECT 1 FROM fact_syzt_weekly WHERE week_start = %s AND week_end = %s LIMIT 1
+        """, (cur_period["start_date"], cur_period["end_date"]))
+        data_source_note = {
+            'source': 'sycm 周维度 xls (week_start ~ week_end，UV/买家是去重值)' if _ds else 'sycm 日表 SUM (visitors/buyers 可能多算 5-15% — 建议从 sycm 导周报)',
+            'level':  'ok' if _ds else 'warn',
+        }
+
         # 6. 商品名 / 分类 / 图片
         prod_info = rows(conn, """
             SELECT spu_id, MAX(title) AS title, MAX(category_l1) AS category_l1
@@ -1554,6 +1566,7 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
         return {
             "period":      cur_period,
             "prev_period": prev_period,
+            "data_source": data_source_note,
             "groups":      groups,
             "task_templates": task_templates,
             "hidden": hidden_rows,
@@ -3485,6 +3498,49 @@ def get_overview_kpi(
 
 
 # ── 品类计划预算 ──────────────────────────────────
+
+@app.get("/api/overview/scene-breakdown")
+def get_scene_breakdown(
+    start: str = Query(default=None),
+    end:   str = Query(default=None),
+):
+    """4 个推广场景独立花费 + 数据源（人群推广 / 关键词推广 / 店铺直达 / 超级短视频）
+       不再做任何摊销/加权，直接是 sycm 营销场景报表的原始字段。
+    """
+    s, e = start or CAMPAIGN_START, end or date.today().isoformat()
+    with db() as conn:
+        rows_ = rows(conn, """
+            SELECT scene_name,
+                   COALESCE(SUM(spend), 0)::numeric(12,2)       AS spend,
+                   COALESCE(SUM(impressions), 0)                AS impressions,
+                   COALESCE(SUM(clicks), 0)                     AS clicks,
+                   COALESCE(SUM(total_gmv), 0)::numeric(12,2)   AS gmv,
+                   COALESCE(SUM(spend) / NULLIF(SUM(total_gmv), 0), 0)::numeric(8,4)
+                                                                AS spend_to_gmv_ratio
+            FROM fact_wxst_scene
+            WHERE stat_date BETWEEN %s AND %s
+            GROUP BY scene_name
+            ORDER BY spend DESC NULLS LAST
+        """, (s, e))
+        total_spend = sum(float(r["spend"] or 0) for r in rows_)
+        return {
+            "period": {"start": s, "end": e},
+            "scenes": [
+                {
+                    "name": r["scene_name"],
+                    "spend": float(r["spend"] or 0),
+                    "impressions": int(r["impressions"] or 0),
+                    "clicks": int(r["clicks"] or 0),
+                    "gmv": float(r["gmv"] or 0),
+                    "share": round(float(r["spend"] or 0) / total_spend * 100, 2) if total_spend else 0,
+                    "data_source": "sycm 营销场景报表 csv (fact_wxst_scene)",
+                } for r in rows_
+            ],
+            "total_spend": total_spend,
+            "data_source_note": "数据源：万象台 → 数据中心 → 营销场景报表 csv → fact_wxst_scene 表。各场景 spend 是原始字段，无任何加权/摊销。",
+        }
+
+
 @app.get("/api/plan/category")
 def get_plan_category():
     """读取品类计划占比，同时返回实际花费"""
