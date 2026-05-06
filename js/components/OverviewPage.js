@@ -198,7 +198,14 @@ const OverviewPage = defineComponent({
       const subD = (ds, n) => { const d = new Date(ds); d.setDate(d.getDate()-n); return d.toISOString().slice(0,10) }
       const prev = s === e ? { s: subD(s,1), e: subD(e,1) } : prevRange(s, e)
       prevPeriod.value = prev
-      kpi.value      = all.kpi
+      // KPI 优先调真后端 /api/overview/kpi (店铺级 fact_shop_overview)
+      // 不再用 computeAll().kpi 那个 25 主链商品级累加结果
+      try {
+        const realKpi = await fetch('/api/overview/kpi?start=' + s + '&end=' + e).then(r => r.json())
+        kpi.value = realKpi
+      } catch {
+        kpi.value = all.kpi  // fallback
+      }
       planData.value = all.plan
       meetings.value = all.meetings.slice(0, 6)
       channelCatData.value = computeChannelCatTable(s, e)
