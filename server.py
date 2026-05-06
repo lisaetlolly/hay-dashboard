@@ -204,7 +204,10 @@ def get_raw_data():
                         "cat": d["category_l1"] or "其他",
                         "category_l2": d["category_l2"] or "",
                         "inventory": d["inventory"] or 0,
+                        "alias_pids": [],  # 副 SKU 列表（spu_id 指向当前 sid 但 product_id != sid 的）
                     }
+                if d["product_id"] != sid:
+                    spu_meta[sid]["alias_pids"].append(d["product_id"])
 
             # 2. 取所有有数据的日期范围
             dates_row = row(conn, """
@@ -302,6 +305,7 @@ def get_raw_data():
                     "cat": meta["cat"],
                     "category_l2": meta["category_l2"],
                     "inventory": meta["inventory"],
+                    "alias_pids": meta.get("alias_pids", []),
                     "dates": all_dates,
                     "pay": arr_pay, "vis": arr_vis, "cart": arr_cart,
                     "collect": arr_collect, "cart_qty": arr_cart_qty, "fav_cart_users": arr_fav_cart_users, "refund": arr_refund,

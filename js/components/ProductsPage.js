@@ -436,7 +436,14 @@ const ProductsPage = defineComponent({
         </div>
         <div style="min-width:0">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-            <div style="font-size:15px;font-weight:700">{{ p.name }}</div>
+            <div style="font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <span>{{ p.name }}</span>
+              <span v-if="p.alias_pids && p.alias_pids.length"
+                    :title="'已合并副 SKU：' + p.alias_pids.join('、')"
+                    style="display:inline-flex;align-items:center;padding:1px 6px;font-size:10px;font-weight:600;background:#fef3c7;color:#92400e;border-radius:4px;cursor:help;line-height:1.4">
+                🔗 含 {{ p.alias_pids.length }} 个副 SKU
+              </span>
+            </div>
             <span style="font-size:10px;color:var(--muted);padding:2px 6px;border:1px solid var(--border);border-radius:99px">{{ p.cat }}</span>
             <span @click="setCardTab(p.pid, getCardTab(p.pid)==='xhs'?'daily':'xhs')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='xhs'?'#ff2442':'#ffccd5',background:getCardTab(p.pid)==='xhs'?'#ff2442':'#fff0f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='xhs'?'#fff':'#ff2442'}">小红书</span>
             <span @click="setCardTab(p.pid, getCardTab(p.pid)==='tasks'?'daily':'tasks')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='tasks'?'#d97706':'#fde68a',background:getCardTab(p.pid)==='tasks'?'#d97706':'#fffbeb',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='tasks'?'#fff':'#d97706'}">任务</span>
@@ -540,7 +547,7 @@ const ProductsPage = defineComponent({
     <div v-for="p in products" :key="p.pid" class="card" style="padding:12px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
         <div style="width:56px;height:56px;border:1px solid var(--border);border-radius:10px;background:#fafaf9;display:flex;align-items:center;justify-content:center"><img v-if="imgSrc(p.pid)" :src="imgSrc(p.pid)" style="max-width:48px;max-height:48px;object-fit:contain"></div>
-        <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.name }}</div><div style="font-size:10px;color:var(--muted)">{{ p.cat }}</div></div>
+        <div style="min-width:0;flex:1"><div style="font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.name }}<span v-if="p.alias_pids && p.alias_pids.length" :title="'已合并副 SKU：' + p.alias_pids.join('、')" style="margin-left:6px;padding:1px 5px;font-size:9px;background:#fef3c7;color:#92400e;border-radius:3px;cursor:help;font-weight:600">🔗 +{{ p.alias_pids.length }}</span></div><div style="font-size:10px;color:var(--muted)">{{ p.cat }}</div></div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px">
         <div v-for="m in summaryMetrics.slice(0,6)" :key="m.k"><div style="font-size:10px;color:var(--muted)">{{ m.l }}</div><div style="font-size:13px;font-weight:700">{{ fmt(p[m.k],m.fmt) }}</div></div>
