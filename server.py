@@ -221,6 +221,7 @@ def get_raw_data():
                        SUM(s.pay_amount)        AS pay,
                        SUM(s.visitors)          AS vis,
                        SUM(s.cart_users)        AS cart,
+                       SUM(s.cart_qty)          AS cart_qty,
                        SUM(s.collect_users)     AS collect,
                        SUM(s.refund_amount)     AS refund,
                        SUM(s.pay_new_buyers)    AS new_buyers,
@@ -270,6 +271,7 @@ def get_raw_data():
                 all_dates = sorted({r["d"] for r in syzt_rows} | set(wxst_rows.keys()))
                 # 构建 dates 数组 + 各列时序
                 arr_pay, arr_vis, arr_cart, arr_collect, arr_refund = [], [], [], [], []
+                arr_cart_qty, arr_fav_cart_users = [], []
                 arr_new_buyers, arr_pay_buyers, arr_old_buyers = [], [], []
                 arr_pv, arr_search_vis, arr_dwell, arr_bounce = [], [], [], []
                 arr_spend, arr_ctr, arr_roi = [], [], []
@@ -281,6 +283,8 @@ def get_raw_data():
                     arr_vis.append(int(sy.get("vis") or 0))
                     arr_cart.append(int(sy.get("cart") or 0))
                     arr_collect.append(int(sy.get("collect") or 0))
+                    arr_cart_qty.append(int(sy.get("cart_qty") or 0))
+                    arr_fav_cart_users.append(int(sy.get("cart") or 0) + int(sy.get("collect") or 0))
                     arr_refund.append(float(sy.get("refund") or 0))
                     arr_new_buyers.append(int(sy.get("new_buyers") or 0))
                     arr_old_buyers.append(int(sy.get("old_buyers") or 0))
@@ -300,7 +304,7 @@ def get_raw_data():
                     "inventory": meta["inventory"],
                     "dates": all_dates,
                     "pay": arr_pay, "vis": arr_vis, "cart": arr_cart,
-                    "collect": arr_collect, "refund": arr_refund,
+                    "collect": arr_collect, "cart_qty": arr_cart_qty, "fav_cart_users": arr_fav_cart_users, "refund": arr_refund,
                     "new_buyers": arr_new_buyers, "old_buyers": arr_old_buyers,
                     "pay_buyers": arr_pay_buyers,
                     "pv": arr_pv, "search_vis": arr_search_vis,
@@ -1418,24 +1422,40 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
             if not start or not end:
                 return {}
             result = {}
-            # syzt：gmv / vis / cart / cart_rate / pay_cvr / dwell_time
-            # 主 PID 严格匹配，不再用 spu_id 聚合关联子 PID（跟生意参谋页对齐）
-            # dwell_time 用简单算术平均（AVG(每天 stay) 忽略 0 值）—— 实测跟生意参谋
-            # 后台周维度页面 28/29 商品完全对齐。访客加权 / 末日值都对不上。
-            syzt = rows(conn, """
-                SELECT s.product_id AS pid,
-                       COALESCE(SUM(s.pay_amount), 0)        AS gmv,
-                       COALESCE(SUM(s.visitors), 0)          AS vis,
-                       COALESCE(SUM(s.cart_qty), 0)          AS cart,        -- 加购件数（生意参谋页面"商品加购件数"）
-                       COALESCE(SUM(s.cart_users), 0)        AS cart_users,  -- 加购人数（用于算加购率）
-                       COALESCE(SUM(s.cart_users)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS cart_rate,
-                       COALESCE(SUM(s.pay_new_buyers + s.pay_old_buyers)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS pay_cvr,
-                       COALESCE(AVG(NULLIF(s.avg_stay_duration, 0)), 0) AS dwell_time
-                FROM fact_syzt_product s
-                WHERE s.stat_date BETWEEN %s AND %s
-                  AND s.product_id = ANY(%s)
-                GROUP BY s.product_id
+            # 优先用 fact_syzt_weekly（visitor / pay_buyer 是 7 天去重值，跟 sycm 周维度页一致）
+            # 如果该 (start,end) 区间没有周表数据，fallback 到日表 SUM（自定义区间兼容）
+            weekly = rows(conn, """
+                SELECT product_id AS pid,
+                       COALESCE(pay_amount, 0)               AS gmv,
+                       COALESCE(visitors, 0)                 AS vis,
+                       COALESCE(cart_qty, 0)                 AS cart,
+                       COALESCE(cart_users, 0)               AS cart_users,
+                       COALESCE(cart_users::numeric / NULLIF(visitors,0) * 100, 0) AS cart_rate,
+                       COALESCE(pay_buyers::numeric / NULLIF(visitors,0) * 100, 0) AS pay_cvr,
+                       COALESCE(avg_stay_duration, 0)        AS dwell_time
+                FROM fact_syzt_weekly
+                WHERE week_start = %s AND week_end = %s
+                  AND product_id = ANY(%s)
             """, (start, end, pids))
+            if weekly:
+                # 用周表数据
+                syzt = weekly
+            else:
+                # 日表 SUM 兜底（注意 visitors / pay_buyers 会比真实多算，因日表无去重）
+                syzt = rows(conn, """
+                    SELECT s.product_id AS pid,
+                           COALESCE(SUM(s.pay_amount), 0)        AS gmv,
+                           COALESCE(SUM(s.visitors), 0)          AS vis,
+                           COALESCE(SUM(s.cart_qty), 0)          AS cart,
+                           COALESCE(SUM(s.cart_users), 0)        AS cart_users,
+                           COALESCE(SUM(s.cart_users)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS cart_rate,
+                           COALESCE(SUM(s.pay_new_buyers + s.pay_old_buyers)::numeric / NULLIF(SUM(s.visitors),0) * 100, 0) AS pay_cvr,
+                           COALESCE(AVG(NULLIF(s.avg_stay_duration, 0)), 0) AS dwell_time
+                    FROM fact_syzt_product s
+                    WHERE s.stat_date BETWEEN %s AND %s
+                      AND s.product_id = ANY(%s)
+                    GROUP BY s.product_id
+                """, (start, end, pids))
             for r in syzt:
                 result[r["pid"]] = {
                     "gmv": float(r["gmv"] or 0),
@@ -3329,60 +3349,138 @@ def get_overview_kpi(
     start: str = Query(default=None),
     end:   str = Query(default=None),
 ):
-    """总览4个KPI卡片：销售额、加购率、CTR、流量，含环比"""
+    """总览 KPI 卡片：销售/退款/买家数/转化率/加购/CTR 等，含环比。
+    注：visitors / cart_users 是「商品访问人次」累加（同一访客访问多商品多次），
+       跟生意参谋"店铺数据概览"页那个"店铺去重 UV"差 20-30%，xls 限制无法还原。
+    """
     s, e   = start or CAMPAIGN_START, end or date.today().isoformat()
     ps, pe = _prev_range(s, e)
     with db() as conn:
         def syzt_agg(s_, e_):
+            # 优先 fact_syzt_weekly：visitors / pay_buyers 是去重值，跟 sycm 总览一致
+            wk = row(conn, """
+                SELECT SUM(pay_amount)    AS pay,
+                       SUM(refund_amount) AS refund,
+                       SUM(visitors)      AS visitors,
+                       SUM(cart_users)    AS cart_users,
+                       SUM(collect_users) AS collect_users,
+                       SUM(pay_new_buyers) AS new_buyers,
+                       SUM(pay_old_buyers) AS old_buyers,
+                       SUM(pay_buyers)    AS pay_buyers
+                FROM fact_syzt_weekly
+                WHERE week_start = %s AND week_end = %s
+            """, (s_, e_))
+            if wk and (wk.get('pay') is not None):
+                return wk
+            # fallback: 日表 SUM（visitors/buyers 会偏大，无去重）
             return row(conn, """
-                SELECT SUM(pay_amount)  AS pay,
-                       SUM(visitors)   AS visitors,
-                       SUM(cart_users) AS cart_users
+                SELECT SUM(pay_amount)        AS pay,
+                       SUM(refund_amount)     AS refund,
+                       SUM(visitors)          AS visitors,
+                       SUM(cart_users)        AS cart_users,
+                       SUM(collect_users)     AS collect_users,
+                       SUM(pay_new_buyers)    AS new_buyers,
+                       SUM(pay_old_buyers)    AS old_buyers,
+                       SUM(pay_new_buyers + pay_old_buyers) AS pay_buyers
                 FROM fact_syzt_product
                 WHERE stat_date BETWEEN %s AND %s
             """, (s_, e_))
         def wxst_agg(s_, e_):
             return row(conn, """
                 SELECT SUM(clicks)      AS clicks,
-                       SUM(impressions) AS impressions
+                       SUM(impressions) AS impressions,
+                       SUM(spend)       AS spend
                 FROM fact_wxst_product
                 WHERE stat_date BETWEEN %s AND %s
+            """, (s_, e_))
+        def kw_spend_agg(s_, e_):
+            return row(conn, """
+                SELECT SUM(spend) AS kw_spend
+                FROM fact_wxst_scene
+                WHERE stat_date BETWEEN %s AND %s
+                  AND scene_name = '关键词推广'
             """, (s_, e_))
 
         cur  = syzt_agg(s, e)  or {}
         prev = syzt_agg(ps, pe) or {}
         wc   = wxst_agg(s, e)  or {}
         wp   = wxst_agg(ps, pe) or {}
+        kwc  = kw_spend_agg(s, e)  or {}
+        kwp  = kw_spend_agg(ps, pe) or {}
 
         def pct_change(a, b):
             if b and b > 0:
                 return round((a - b) / b * 100, 1)
             return None
 
+        def safe_div(a, b, scale=100, ndigits=4):
+            return round(a / b * scale, ndigits) if b else None
+
         pay      = float(cur.get("pay") or 0)
+        refund   = float(cur.get("refund") or 0)
+        net_pay  = pay - refund
         visitors = float(cur.get("visitors") or 0)
         cart     = float(cur.get("cart_users") or 0)
+        collect  = float(cur.get("collect_users") or 0)
+        new_b    = float(cur.get("new_buyers") or 0)
+        old_b    = float(cur.get("old_buyers") or 0)
+        pay_b    = float(cur.get("pay_buyers") or 0)
         clicks   = float(wc.get("clicks") or 0)
         imps     = float(wc.get("impressions") or 0)
-        ctr      = round(clicks / imps * 100, 4) if imps else None
-        cart_rate = round(cart / visitors * 100, 4) if visitors else None
+        spend    = float(wc.get("spend") or 0)
+        kw_spend = float(kwc.get("kw_spend") or 0)
 
-        ppay      = float(prev.get("pay") or 0)
-        pvisitors = float(prev.get("visitors") or 0)
-        pcart     = float(prev.get("cart_users") or 0)
-        pclicks   = float(wp.get("clicks") or 0)
-        pimps     = float(wp.get("impressions") or 0)
-        pctr      = round(pclicks / pimps * 100, 4) if pimps else None
-        pcart_rate = round(pcart / pvisitors * 100, 4) if pvisitors else None
+        ctr        = safe_div(clicks, imps, 100, 4)
+        cart_rate  = safe_div(cart, visitors, 100, 4)
+        pay_cvr    = safe_div(pay_b, visitors, 100, 4)
+        refund_rate= safe_div(refund, pay, 100, 2)
+        new_pct    = safe_div(new_b, pay_b or 0, 100, 2)
+        old_pct    = safe_div(old_b, pay_b or 0, 100, 2)
+        fav_cart   = collect + cart  # 总收藏加购数
+
+        # 上期
+        ppay     = float(prev.get("pay") or 0)
+        prefund  = float(prev.get("refund") or 0)
+        pnet_pay = ppay - prefund
+        pvis     = float(prev.get("visitors") or 0)
+        pcart    = float(prev.get("cart_users") or 0)
+        pcollect = float(prev.get("collect_users") or 0)
+        pnew_b   = float(prev.get("new_buyers") or 0)
+        pold_b   = float(prev.get("old_buyers") or 0)
+        ppay_b   = float(prev.get("pay_buyers") or 0)
+        pclicks  = float(wp.get("clicks") or 0)
+        pimps    = float(wp.get("impressions") or 0)
+        pspend   = float(wp.get("spend") or 0)
+        pkwspend = float(kwp.get("kw_spend") or 0)
+
+        pctr        = safe_div(pclicks, pimps, 100, 4)
+        pcart_rate  = safe_div(pcart, pvis, 100, 4)
+        ppay_cvr    = safe_div(ppay_b, pvis, 100, 4)
+        prefund_rate= safe_div(prefund, ppay, 100, 2)
+        pnew_pct    = safe_div(pnew_b, ppay_b or 0, 100, 2)
+        pold_pct    = safe_div(pold_b, ppay_b or 0, 100, 2)
+        pfav_cart   = pcollect + pcart
 
         return {
             "period":      {"start": s,  "end": e},
             "prev_period": {"start": ps, "end": pe},
+            # 原 4 个
             "pay_amount":  {"value": pay,       "prev": ppay,       "change_pct": pct_change(pay, ppay)},
-            "visitors":    {"value": visitors,  "prev": pvisitors,  "change_pct": pct_change(visitors, pvisitors)},
+            "visitors":    {"value": visitors,  "prev": pvis,       "change_pct": pct_change(visitors, pvis),
+                            "note": "商品访问人次（含跨商品重复）；店铺去重 UV 看生意参谋"},
             "cart_rate":   {"value": cart_rate, "prev": pcart_rate, "change_pct": pct_change(cart_rate or 0, pcart_rate or 0)},
             "ctr":         {"value": ctr,       "prev": pctr,       "change_pct": pct_change(ctr or 0, pctr or 0),
                             "note": "仅含投放商品"},
+            # 新增 6 个
+            "net_pay":      {"value": net_pay,    "prev": pnet_pay,    "change_pct": pct_change(net_pay, pnet_pay)},
+            "refund":       {"value": refund,     "prev": prefund,     "change_pct": pct_change(refund, prefund)},
+            "pay_buyers":   {"value": pay_b,      "prev": ppay_b,      "change_pct": pct_change(pay_b, ppay_b)},
+            "pay_cvr":      {"value": pay_cvr,    "prev": ppay_cvr,    "change_pct": pct_change(pay_cvr or 0, ppay_cvr or 0)},
+            "refund_rate":  {"value": refund_rate,"prev": prefund_rate,"change_pct": pct_change(refund_rate or 0, prefund_rate or 0)},
+            "new_buyer_pct":{"value": new_pct,    "prev": pnew_pct,    "change_pct": pct_change(new_pct or 0, pnew_pct or 0)},
+            "old_buyer_pct":{"value": old_pct,    "prev": pold_pct,    "change_pct": pct_change(old_pct or 0, pold_pct or 0)},
+            "fav_cart":     {"value": fav_cart,   "prev": pfav_cart,   "change_pct": pct_change(fav_cart, pfav_cart)},
+            "kw_spend":     {"value": kw_spend,   "prev": pkwspend,    "change_pct": pct_change(kw_spend, pkwspend)},
         }
 
 

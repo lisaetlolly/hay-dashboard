@@ -488,9 +488,13 @@ def load_syzt_product(conn):
                 dirty_skip += 1; continue
             def g(k):  return safe_float(row.get(k))
             def gp(k): return safe_pct(row.get(k))
-            # 数值兜底：停留时长 > 600 秒（10 分钟）显然异常，强制 0
+            # 数值兜底：停留时长 > 600 秒（10 分钟）显然异常
             stay_v = g('平均停留时长')
             if stay_v is not None and stay_v > 600:
+                dirty_skip += 1; continue
+            # 跳出率 > 1.5 (>150%) 列错位征兆 (整数 PID 被塞进跳出率列)
+            br_v = gp('商品详情页跳出率')
+            if br_v is not None and br_v > 1.5:
                 dirty_skip += 1; continue
             batch.append(_clean_row((
                 stat_date, pid,
@@ -1065,7 +1069,125 @@ def load_wxst_scene(conn):
 # ─────────────────────────────────────────────
 # 无限店铺流量
 # ─────────────────────────────────────────────
+
+def load_syzt_weekly(conn):
+    """
+    生意参谋 周/月维度商品 xls -> fact_syzt_weekly
+    文件名格式 *_{week_start}_{week_end}.xls 且两个日期不同。
+    周表的 visitors/pay_buyers 是 7 天去重值；任务面板/周报严格用周表。
+    """
+    d = os.path.join(DATA_DIR, '生意参谋商品_周维度')
+    if not os.path.isdir(d):
+        print('  [SKIP] 生意参谋商品_周维度 dir not found')
+        return
+    files = sorted(glob.glob(os.path.join(d, '*.xls')))
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS fact_syzt_weekly (
+          id SERIAL PRIMARY KEY,
+          week_start DATE NOT NULL, week_end DATE NOT NULL, product_id TEXT NOT NULL,
+          visitors REAL, page_views REAL, avg_stay_duration REAL, bounce_rate REAL,
+          collect_users REAL, cart_qty REAL, cart_users REAL,
+          pay_buyers REAL, pay_qty REAL, pay_amount REAL, pay_cvr REAL,
+          pay_new_buyers REAL, pay_old_buyers REAL, old_buyer_pay_amount REAL,
+          visitor_avg_value REAL, refund_amount REAL,
+          search_visitors REAL, search_pay_buyers REAL, search_pay_cvr REAL,
+          product_status TEXT, source_file TEXT, loaded_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (week_start, product_id)
+        )
+    """)
+    conn.commit()
+    loaded = _loaded_files(conn, 'fact_syzt_weekly')
+    new_files = [f for f in files if os.path.basename(f) not in loaded]
+    skipped = len(files) - len(new_files)
+    if skipped:
+        print(f'  [增量] 跳过 {skipped} 个已入库周文件')
+    if not new_files:
+        print(f'  [周维度] 无新文件（{len(files)} 个全部已入库）')
+        return
+    sql = """
+        INSERT INTO fact_syzt_weekly (
+          week_start, week_end, product_id, visitors, page_views,
+          avg_stay_duration, bounce_rate, collect_users, cart_qty, cart_users,
+          pay_buyers, pay_qty, pay_amount, pay_cvr, pay_new_buyers, pay_old_buyers,
+          old_buyer_pay_amount, visitor_avg_value, refund_amount,
+          search_visitors, search_pay_buyers, search_pay_cvr, product_status, source_file
+        ) VALUES %s
+        ON CONFLICT (week_start, product_id) DO UPDATE SET
+          week_end=EXCLUDED.week_end, visitors=EXCLUDED.visitors, page_views=EXCLUDED.page_views,
+          avg_stay_duration=EXCLUDED.avg_stay_duration, bounce_rate=EXCLUDED.bounce_rate,
+          collect_users=EXCLUDED.collect_users, cart_qty=EXCLUDED.cart_qty, cart_users=EXCLUDED.cart_users,
+          pay_buyers=EXCLUDED.pay_buyers, pay_qty=EXCLUDED.pay_qty, pay_amount=EXCLUDED.pay_amount,
+          pay_cvr=EXCLUDED.pay_cvr, pay_new_buyers=EXCLUDED.pay_new_buyers, pay_old_buyers=EXCLUDED.pay_old_buyers,
+          old_buyer_pay_amount=EXCLUDED.old_buyer_pay_amount, visitor_avg_value=EXCLUDED.visitor_avg_value,
+          refund_amount=EXCLUDED.refund_amount,
+          search_visitors=EXCLUDED.search_visitors, search_pay_buyers=EXCLUDED.search_pay_buyers,
+          search_pay_cvr=EXCLUDED.search_pay_cvr, product_status=EXCLUDED.product_status,
+          source_file=EXCLUDED.source_file
+    """
+    DATE_PAIR_RE = re.compile(r'(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})')
+    PID_RE = re.compile(r'^[0-9]{8,13}$')
+    total = 0
+    print(f'  生意参谋商品（周维度）：处理 {len(new_files)} 个文件')
+    for fi, fp in enumerate(new_files, 1):
+        fname = os.path.basename(fp)
+        m = DATE_PAIR_RE.search(fname)
+        if not m:
+            print(f'    [{fi}/{len(new_files)}] {fname}: 跳过（文件名无日期对）'); continue
+        week_start, week_end = m.group(1), m.group(2)
+        if week_start == week_end:
+            print(f'    [{fi}/{len(new_files)}] {fname}: 跳过（单日报，应去 fact_syzt_product）'); continue
+        hdr, rows = read_xls(fp)
+        if not hdr:
+            continue
+        batch = []
+        seen = set()
+        dirty = 0
+        for r in rows:
+            pid = str(r.get('商品ID', '')).strip().replace(',', '')
+            if not PID_RE.match(pid):
+                dirty += 1; continue
+            stay = str(r.get('平均停留时长') or '').strip()
+            avp = str(r.get('访客平均价值') or '').strip()
+            if '%' in stay: dirty += 1; continue
+            if avp and not avp.replace(',','').replace('.','').replace('-','').isascii():
+                dirty += 1; continue
+            if (week_start, pid) in seen: continue
+            seen.add((week_start, pid))
+            def g(k): return safe_float(r.get(k))
+            def gp(k): return safe_pct(r.get(k))
+            batch.append(_clean_row((
+                week_start, week_end, pid,
+                g('商品访客数'), g('商品浏览量'),
+                g('平均停留时长'), gp('商品详情页跳出率'),
+                g('商品收藏人数'), g('商品加购件数'), g('商品加购人数'),
+                g('支付买家数'), g('支付件数'), g('支付金额'),
+                gp('商品支付转化率'), g('支付新买家数'), g('支付老买家数'),
+                g('老买家支付金额'), g('访客平均价值'), g('成功退款金额'),
+                g('搜索引导访客数'), g('搜索引导支付买家数'), gp('搜索引导支付转化率'),
+                str(r.get('商品状态', '')) or None,
+                fname,
+            )))
+        if batch:
+            psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
+            conn.commit()
+        total += len(batch)
+        print(f'    [{fi}/{len(new_files)}] {fname}: 入 {len(batch)} 行（{week_start}~{week_end}），跳脏 {dirty}')
+    print(f'  fact_syzt_weekly: +{total} rows ({len(new_files)} new files)')
+
+
 def load_traffic(conn):
+    """
+    无限店铺流量来源 xls 解析。xls 是层级表，每行维度列数不等：
+      ['客户忠诚', '1,750', ...]                           -> 1 列 source_l2 + 数据从 col[1]
+      ['商品流量', '付费推广', '无界', '汇总', '汇总', '22691', ...] -> 5 列维度 + 数据从 col[5]
+    所以必须每行动态检测 data_start（第一个 numeric-like cell），
+    然后用 (data_start + col_offset['访客数'] - 1) 这种相对偏移取字段。
+
+    旧版 ETL 错把固定 col_idx[1] 当所有行的"访客数"列，导致：
+      - 多维度行的 visitors 实际取到的是字符串（如 '付费推广'）→ safe_float()→None
+      - pay_buyers 取到的是某个百分比/小数列 → 出现 9.15 / -55.06 这种鬼数字
+    """
     d = os.path.join(DATA_DIR, '无限店铺流量')
     if not os.path.isdir(d):
         print("  [SKIP] 无限店铺流量 dir not found")
@@ -1081,7 +1203,6 @@ def load_traffic(conn):
         return
     cur = conn.cursor()
     total = 0
-
     sql = """
         INSERT INTO fact_traffic (
             stat_date, source_l1, source_l2, source_l3, source_l4,
@@ -1095,13 +1216,13 @@ def load_traffic(conn):
             source_file=EXCLUDED.source_file
     """
     print(f"  无限店铺流量：开始处理 {len(files)} 个 xls 文件")
+    NUMERIC_RE = re.compile(r'^[\d,.\-%]+$')
     for fi, fpath in enumerate(files, 1):
         fname = os.path.basename(fpath)
         m = re.search(r'(\d{4}-\d{2}-\d{2})_\d{4}-\d{2}-\d{2}', fname)
         stat_date = m.group(1) if m else ''
         if not stat_date:
             continue
-
         try:
             from xls_reader import _extract_workbook_stream, _parse_biff8
             with open(fpath, 'rb') as f:
@@ -1113,7 +1234,6 @@ def load_traffic(conn):
         except Exception as e:
             print(f"  [WARN] {fname}: {e}")
             continue
-
         hdr_idx = None
         for i, row in enumerate(all_rows[:15]):
             if any('访客数' in str(v) for v in row):
@@ -1121,45 +1241,48 @@ def load_traffic(conn):
                 break
         if hdr_idx is None:
             continue
-
         col_names = [str(v).strip() for v in all_rows[hdr_idx]]
-        col_idx = {}
+        col_offset = {}
         for ci, cn in enumerate(col_names):
-            if cn and cn not in col_idx:
-                col_idx[cn] = ci
-
-        def gv(row, name):
-            ci = col_idx.get(name)
-            if ci is None or ci >= len(row):
-                return None
-            return safe_float(row[ci])
-
-        current_l1 = ''
+            if cn and cn not in col_offset:
+                col_offset[cn] = ci  # 0-based 含'来源名称'，重复列名只记第一次
         batch = []
         seen_keys = set()
         for row in all_rows[hdr_idx + 2:]:
             if not row or len(row) < 2:
                 continue
-            cell0 = str(row[0]).strip()
-            cell1 = str(row[1]).strip() if len(row) > 1 else ''
-            if cell0 and not re.match(r'^[\d,.\-%]+$', cell0):
-                current_l1 = cell0
-            if not cell1 or re.match(r'^[\d,.\-%]+$', cell1):
+            data_start = None
+            for ci, cell in enumerate(row):
+                cs = str(cell).strip()
+                if cs and NUMERIC_RE.match(cs):
+                    data_start = ci
+                    break
+            if data_start is None or data_start == 0:
                 continue
-            sl3 = str(row[2]).strip() if len(row) > 2 else ''
-            sl4 = str(row[3]).strip() if len(row) > 3 else ''
-            if re.match(r'^[\d,.\-%]+$', sl3): sl3 = ''
-            if re.match(r'^[\d,.\-%]+$', sl4): sl4 = ''
-            key = (stat_date, current_l1, cell1, sl3, sl4)
-            if key in seen_keys: continue
+            dims = [str(row[i]).strip() for i in range(data_start)]
+            sl1 = dims[0] if len(dims) > 0 else ''
+            sl2 = dims[1] if len(dims) > 1 else ''
+            sl3 = dims[2] if len(dims) > 2 else ''
+            sl4 = dims[3] if len(dims) > 3 else ''
+            key = (stat_date, sl1, sl2, sl3, sl4)
+            if key in seen_keys:
+                continue
             seen_keys.add(key)
+            def gv(name, _row=row, _ds=data_start):
+                offset = col_offset.get(name)
+                if offset is None or offset < 1:
+                    return None
+                idx = _ds + offset - 1
+                if idx >= len(_row):
+                    return None
+                return safe_float(_row[idx])
             batch.append((
-                stat_date, current_l1, cell1, sl3, sl4,
-                gv(row, '访客数'),
-                gv(row, '支付买家数'),
-                gv(row, '商品收藏人数'),
-                gv(row, '加购人数'),
-                fname
+                stat_date, sl1, sl2, sl3, sl4,
+                gv('访客数'),
+                gv('支付买家数'),
+                gv('商品收藏人数'),
+                gv('加购人数'),
+                fname,
             ))
         if batch:
             psycopg2.extras.execute_values(cur, sql, batch, page_size=200)
@@ -1169,9 +1292,7 @@ def load_traffic(conn):
             print(f"    [{fi}/{len(files)}] 累计 {total} 行")
     print(f"  fact_traffic: {total} rows ({len(files)} files)")
 
-# ─────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────
+
 def main():
     ap = argparse.ArgumentParser(description='HAY ETL loader -> Neon PostgreSQL')
     ap.add_argument('--reset', action='store_true', help='Drop and recreate all tables')
@@ -1202,6 +1323,8 @@ def main():
 
     print("[3] 生意参谋商品报表")
     load_syzt_product(conn)
+    print("[3b] 生意参谋商品（周维度）")
+    load_syzt_weekly(conn)
 
     print("[4] 万象台商品报表")
     load_wxst_product(conn)

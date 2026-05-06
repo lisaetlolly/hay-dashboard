@@ -73,7 +73,7 @@ const ProductsPage = defineComponent({
 
     function agg(p, s, e) {
       const prev = s === e ? { s: subDays(s,1), e: subDays(e,1) } : prevRange(s, e)
-      let pay=0,vis=0,cart=0,collect=0,refund=0,spend=0,ctr_s=0,ctr_n=0,ppay=0,pvis=0
+      let pay=0,vis=0,cart=0,cart_qty_total=0,collect=0,refund=0,spend=0,ctr_s=0,ctr_n=0,ppay=0,pvis=0
       let newBuyers=0, payBuyers=0
       const daily=[]
       for (let i=0;i<p.dates.length;i++) {
@@ -81,6 +81,7 @@ const ProductsPage = defineComponent({
         if (d>=s && d<=e) {
           const gmv = p.pay[i]||0, uv = p.vis[i]||0, cartN = p.cart[i]||0, rf = p.refund?.[i]||0
           const colN = p.collect?.[i]||0
+          const cartQtyN = p.cart_qty?.[i]||0
           const nb = p.new_buyers?.[i]||0
           // 支付买家数 = 新客 + 老客（兼容旧 RAW 没有 pay_buyers/old_buyers 字段时回退）
           const pb = (p.pay_buyers?.[i] != null) ? p.pay_buyers[i]
@@ -88,7 +89,7 @@ const ProductsPage = defineComponent({
           const spFromProduct = p.spend?.[i]||0
           const spFromDaily = RAW.pid_daily_spend?.[p.pid]?.[d]?.spend || 0
           const sp = spFromProduct > 0 ? spFromProduct : spFromDaily
-          pay += gmv; vis += uv; cart += cartN; collect += colN; refund += rf; spend += sp
+          pay += gmv; vis += uv; cart += cartN; collect += colN; refund += rf; spend += sp; cart_qty_total += cartQtyN
           newBuyers += nb; payBuyers += pb
           if ((p.ctr?.[i]||0)>0) { ctr_s += p.ctr[i]*100; ctr_n++ }
           const xhsInter = (RAW.xhs_notes||[]).filter(n => n.pid===p.pid && n.date===d).reduce((a,n)=>a+(n.inter||0),0)
@@ -99,7 +100,7 @@ const ProductsPage = defineComponent({
           const search_vis_v  = p.search_vis?.[i]    ?? null
           daily.push({
             d, gmv, uv, refund: rf, spend: sp, nb,
-            fav_cart: cartN + colN,
+            fav_cart: cartQtyN + colN,  // sycm 收藏加购 = 加购件数+收藏人数
             cart_rate: uv>0 ? cartN/uv*100 : null,
             // 转化率 = 支付买家 / UV (不再等同于加购率)
             conv_rate: uv>0 ? pb/uv*100 : null,
@@ -128,7 +129,7 @@ const ProductsPage = defineComponent({
         cart_rate: vis>0 ? +(cart/vis*100).toFixed(2) : null,
         // 转化率 = 支付买家 / UV，不是加购率
         conv_rate: vis>0 ? +(payBuyers/vis*100).toFixed(2) : null,
-        fav_cart: cart + collect,
+        fav_cart: cart_qty_total + collect,  // 件数+收藏人数
         new_buyers: newBuyers,
         pay_buyers: payBuyers,
         refund:+refund.toFixed(2), ad_spend:+spend.toFixed(2),
