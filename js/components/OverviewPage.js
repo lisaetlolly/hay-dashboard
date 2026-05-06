@@ -283,19 +283,25 @@ const OverviewPage = defineComponent({
     const ADD_DAYS = [1,2,3,4,5,6,7,8,9,10,11,12]
     const ADD_CATS = ['家具', '配饰', '灯具']  // 其他不画线，但参与 KPI 合计
     const ADD_CAT_COLOR = { '家具': '#6366f1', '配饰': '#ec4899', '灯具': '#f59e0b' }
-    const addCategorySeries = ref(null)        // /api/618/category-cumulative 返回值（含 .store）
+    const addCategorySeries = ref(null)        // /api/618/category-cumulative 返回值（含 .store, .windows）
     const addLoading = ref(false)
-    const addSelectedN = ref(null)             // 选 5/1-5/N 累计中的 N，默认=今年最后有数据那天
+
+    // ── picker ──
+    // 模式："single" = 单日；"range" = 任意区间（命中真去重就显示真值，否则按日求和）
+    const addMode = ref('single')
+    // 默认昨天（T-1），约束在 2026-05-01..2026-05-12
+    const _today = new Date()
+    const _yest  = new Date(_today.getTime() - 86400000)
+    const _ymd   = d => d.toISOString().slice(0, 10)
+    const _clampMay26 = ds => ds < '2026-05-01' ? '2026-05-01' : (ds > '2026-05-12' ? '2026-05-12' : ds)
+    const addSingleDate = ref(_clampMay26(_ymd(_yest)))
+    const addRangeStart = ref('2026-05-01')
+    const addRangeEnd   = ref(_clampMay26(_ymd(_yest)))
 
     const addLoadAll = async () => {
       addLoading.value = true
       try {
-        const cat = await fetch('/api/618/category-cumulative').then(r => r.json())
-        addCategorySeries.value = cat
-        // 默认 N = 今年最大有数据日（cumsum_naive 里最后一天）
-        const tDays = Object.keys((cat && cat.store && cat.store.this_year && cat.store.this_year.cumsum_naive) || {})
-          .map(s => parseInt(s.slice(8,10), 10)).sort((a,b)=>a-b)
-        addSelectedN.value = tDays.length ? tDays[tDays.length-1] : 1
+        addCategorySeries.value = await fetch('/api/618/category-cumulative').then(r => r.json())
       } catch (e) {
         console.warn('[618] load failed', e)
       }
@@ -303,51 +309,106 @@ const OverviewPage = defineComponent({
     }
     addLoadAll()
 
-    // 取某年 5/1-N 的全店累计加购：优先 sycm 真去重，没有就 fallback 到日值求和
-    // 返回 { value, source: 'dedup'|'sum'|null }
-    const pickStoreCum = (year, day) => {
-      const cs = addCategorySeries.value
-      if (!cs || !cs.store) return { value: null, source: null }
-      const tag = year === 2026 ? 'this_year' : 'last_year'
-      const yr = cs.store[tag] || {}
-      const ds = `${year}-05-${String(day).padStart(2,'0')}`
-      if (yr.cumsum_dedup && yr.cumsum_dedup[ds] != null) {
-        return { value: yr.cumsum_dedup[ds], source: 'dedup' }
-      }
-      if (yr.cumsum_naive && yr.cumsum_naive[ds] != null) {
-        return { value: yr.cumsum_naive[ds], source: 'sum' }
-      }
-      return { value: null, source: null }
-    }
-
     const fmtNum = n => n == null ? '—' : Number(n).toLocaleString()
     const yoyPct = (cur, prev) => {
       if (cur == null || prev == null || prev === 0) return null
       return +(((cur - prev) / prev) * 100).toFixed(1)
     }
 
-    // KPI 数据：全店累计加购人数（优先 sycm 真去重，fallback 日值求和）
+    // 5月内日期段枚举（YYYY-MM-DD）。约束：startStr 与 endStr 同年同月
+    const datesBetween = (startStr, endStr) => {
+      const yr = startStr.slice(0, 4)
+      const sd = parseInt(startStr.slice(8, 10), 10)
+      const ed = parseInt(endStr.slice(8, 10), 10)
+      const out = []
+      for (let d = sd; d <= ed; d++) out.push(`${yr}-05-${String(d).padStart(2, '0')}`)
+      return out
+    }
+
+    // 全店单日值：从 store.daily 直读（sycm 单日"商品加购人数"，单日内已去重）
+    const pickStoreSingle = (year, dateStr) => {
+      const cs = addCategorySeries.value
+      if (!cs || !cs.store) return { value: null, source: null }
+      const tag = year === 2026 ? 'this_year' : 'last_year'
+      const yr = cs.store[tag] || {}
+      const v = yr.daily?.[dateStr]
+      return v != null ? { value: v, source: 'daily' } : { value: null, source: null }
+    }
+
+    // 全店任意窗口：先看是否命中真去重（cumsum_dedup 或 windows 列表），否则 fallback daily 求和
+    const pickStoreWindow = (year, startStr, endStr) => {
+      const cs = addCategorySeries.value
+      if (!cs || !cs.store) return { value: null, source: null }
+      const tag = year === 2026 ? 'this_year' : 'last_year'
+      const yr = cs.store[tag] || {}
+      // 1) 起点恰好是 5/1 → 查 cumsum_dedup
+      if (startStr.endsWith('-05-01') && yr.cumsum_dedup && yr.cumsum_dedup[endStr] != null) {
+        return { value: yr.cumsum_dedup[endStr], source: 'dedup' }
+      }
+      // 2) 任意窗口 → 查 windows 列表
+      for (const w of (cs.store.windows || [])) {
+        if (w.start === startStr && w.end === endStr) {
+          return { value: w.users, source: 'dedup' }
+        }
+      }
+      // 3) fallback：daily 求和（必须红色"未去重"标）
+      const daily = yr.daily || {}
+      let sum = 0, count = 0
+      for (const d of datesBetween(startStr, endStr)) {
+        if (daily[d] != null) { sum += daily[d]; count++ }
+      }
+      return count > 0 ? { value: sum, source: 'sum' } : { value: null, source: null }
+    }
+
+    const _mirror25 = ds => ds.replace('2026', '2025')
+
+    // KPI 数据：全店加购人数（mode-aware）
     const addManualKpi = computed(() => {
-      const n = addSelectedN.value
-      if (!n) return { thisYr: null, lastYr: null, yoy: null, sourceThis: null, sourceLast: null }
-      const t = pickStoreCum(2026, n)
-      const l = pickStoreCum(2025, n)
+      if (addMode.value === 'single') {
+        const t = pickStoreSingle(2026, addSingleDate.value)
+        const l = pickStoreSingle(2025, _mirror25(addSingleDate.value))
+        return {
+          mode: 'single',
+          thisYr: t.value, lastYr: l.value,
+          yoy: yoyPct(t.value, l.value),
+          sourceThis: t.source, sourceLast: l.source,
+          dateLabel: addSingleDate.value.slice(5).replace('-', '/'),  // "05/05" → "5/5"
+        }
+      }
+      const t = pickStoreWindow(2026, addRangeStart.value, addRangeEnd.value)
+      const l = pickStoreWindow(2025, _mirror25(addRangeStart.value), _mirror25(addRangeEnd.value))
       return {
+        mode: 'range',
         thisYr: t.value, lastYr: l.value,
         yoy: yoyPct(t.value, l.value),
         sourceThis: t.source, sourceLast: l.source,
+        dateLabel: `${addRangeStart.value.slice(5).replace('-', '/')} - ${addRangeEnd.value.slice(5).replace('-', '/')}`,
       }
     })
 
-    // 品类累计 KPI：5/1-N 三大品类合计
+    // 品类 KPI（mode-aware）：单日 = 当天值；区间 = 区间内 daily 求和
+    const _catSumOnDates = (dailyMap, dates) => {
+      const o = { '家具': 0, '配饰': 0, '灯具': 0, '其他': 0 }
+      let any = false
+      for (const d of dates) {
+        const v = dailyMap[d]
+        if (v) { for (const c of Object.keys(o)) o[c] += v[c] || 0; any = true }
+      }
+      return any ? o : null
+    }
     const addCategoryKpi = computed(() => {
-      const n = addSelectedN.value
       const cs = addCategorySeries.value
-      if (!n || !cs) return { thisYr: null, lastYr: null, yoy: null, byCat: [] }
-      const dThis = `2026-05-${String(n).padStart(2,'0')}`
-      const dLast = `2025-05-${String(n).padStart(2,'0')}`
-      const cThis = cs?.this_year?.cumsum?.[dThis] || null
-      const cLast = cs?.last_year?.cumsum?.[dLast] || null
+      if (!cs) return { thisYr: null, lastYr: null, yoy: null, byCat: [], source: null }
+      let cThis, cLast, source
+      if (addMode.value === 'single') {
+        cThis = cs.this_year?.daily?.[addSingleDate.value] || null
+        cLast = cs.last_year?.daily?.[_mirror25(addSingleDate.value)] || null
+        source = 'daily'
+      } else {
+        cThis = _catSumOnDates(cs.this_year?.daily || {}, datesBetween(addRangeStart.value, addRangeEnd.value))
+        cLast = _catSumOnDates(cs.last_year?.daily || {}, datesBetween(_mirror25(addRangeStart.value), _mirror25(addRangeEnd.value)))
+        source = 'sum'
+      }
       const totalT = cThis ? (cThis['家具']+cThis['配饰']+cThis['灯具']) : null
       const totalL = cLast ? (cLast['家具']+cLast['配饰']+cLast['灯具']) : null
       const byCat = ADD_CATS.map(c => ({
@@ -356,21 +417,23 @@ const OverviewPage = defineComponent({
         lastYr: cLast ? cLast[c] : null,
         yoy:    cThis && cLast ? yoyPct(cThis[c], cLast[c]) : null,
       }))
-      return { thisYr: totalT, lastYr: totalL, yoy: yoyPct(totalT, totalL), byCat }
+      return { thisYr: totalT, lastYr: totalL, yoy: yoyPct(totalT, totalL), byCat, source }
     })
 
-    // SVG 折线图数据：3 品类 × 2 年 = 6 条折线（cumsum 沿 5/1-5/12）
+    // SVG 折线图数据：3 品类 × 2 年 = 6 条折线
+    // 单日模式：画 daily 值（单日值）；区间模式：画 cumsum 累计
     const addChartLines = computed(() => {
       const cs = addCategorySeries.value
       if (!cs) return []
+      const useCumsum = addMode.value === 'range'
       const lines = []
       for (const yr of [2026, 2025]) {
         const tag = yr === 2026 ? 'this_year' : 'last_year'
-        const cum = cs?.[tag]?.cumsum || {}
+        const series = (useCumsum ? cs?.[tag]?.cumsum : cs?.[tag]?.daily) || {}
         for (const cat of ADD_CATS) {
           const points = ADD_DAYS.map(d => {
             const ds = `${yr}-05-${String(d).padStart(2,'0')}`
-            const v = cum[ds]?.[cat]
+            const v = series[ds]?.[cat]
             return v == null ? null : { d, v }
           }).filter(Boolean)
           if (!points.length) continue
@@ -383,6 +446,17 @@ const OverviewPage = defineComponent({
         }
       }
       return lines
+    })
+
+    // 高亮区间或单日选择（图上显示一条竖线 / 一个色带）
+    const addChartHighlight = computed(() => {
+      if (addMode.value === 'single') {
+        const d = parseInt(addSingleDate.value.slice(8, 10), 10)
+        return { type: 'day', day: d }
+      }
+      const sd = parseInt(addRangeStart.value.slice(8, 10), 10)
+      const ed = parseInt(addRangeEnd.value.slice(8, 10), 10)
+      return { type: 'range', startDay: sd, endDay: ed }
     })
 
     // SVG 视图盒坐标
@@ -411,9 +485,10 @@ const OverviewPage = defineComponent({
       channelCatData,
       // 618 加购看板（数据从 /api/618/category-cumulative 来；admin 在设置页改）
       ADD_DAYS, ADD_CATS, ADD_CAT_COLOR,
-      addCategorySeries, addLoading, addSelectedN,
+      addCategorySeries, addLoading,
+      addMode, addSingleDate, addRangeStart, addRangeEnd,
       addManualKpi, addCategoryKpi, addChartLines, addChartGeom, addLinePath,
-      fmtNum,
+      addChartHighlight, fmtNum,
     }
   },
   template: `
@@ -433,19 +508,36 @@ const OverviewPage = defineComponent({
     </div>
   </div>
 
-  <!-- 618 加购看板（5/1-5/12，YoY vs 25年） -->
+  <!-- 618 加购看板（默认 T-1 单日；可选任意单日 / 任意区间） -->
   <div class="card" style="padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
       <div>
         <span class="card-title">618 加购看板</span>
-        <span class="card-sub" style="margin-left:8px">5/1-5/12 累计 · 同比 25 年</span>
+        <span class="card-sub" style="margin-left:8px">默认 T-1 单日 · YoY vs 25 年</span>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#64748b">
-        <span>累计区间：5/1 -</span>
-        <select v-model.number="addSelectedN"
-          style="padding:3px 8px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;font-size:12px">
-          <option v-for="d in ADD_DAYS" :key="d" :value="d">5/{{ d }}</option>
-        </select>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#64748b;flex-wrap:wrap">
+        <!-- 模式切换 -->
+        <div style="display:inline-flex;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden">
+          <button @click="addMode='single'"
+            :style="{padding:'4px 10px',fontSize:'12px',border:'none',cursor:'pointer',
+                     background: addMode==='single' ? 'var(--accent)' : '#fff',
+                     color:    addMode==='single' ? '#fff' : '#64748b'}">单日</button>
+          <button @click="addMode='range'"
+            :style="{padding:'4px 10px',fontSize:'12px',border:'none',borderLeft:'1px solid #e2e8f0',cursor:'pointer',
+                     background: addMode==='range' ? 'var(--accent)' : '#fff',
+                     color:    addMode==='range' ? '#fff' : '#64748b'}">区间</button>
+        </div>
+        <!-- 日期选择 -->
+        <input v-if="addMode==='single'" type="date" v-model="addSingleDate"
+          min="2026-05-01" max="2026-05-12"
+          style="padding:3px 6px;border-radius:6px;border:1px solid #e2e8f0;font-size:12px">
+        <template v-else>
+          <input type="date" v-model="addRangeStart" min="2026-05-01" max="2026-05-12"
+            style="padding:3px 6px;border-radius:6px;border:1px solid #e2e8f0;font-size:12px">
+          <span>-</span>
+          <input type="date" v-model="addRangeEnd" min="2026-05-01" max="2026-05-12"
+            style="padding:3px 6px;border-radius:6px;border:1px solid #e2e8f0;font-size:12px">
+        </template>
       </div>
     </div>
 
@@ -453,9 +545,17 @@ const OverviewPage = defineComponent({
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px">
       <div class="kpi-card" style="background:#f8fafc">
         <div class="kpi-label">
-          <span class="info-wrap">全店累计加购人数<span class="info-btn">?<span class="tooltip">优先用 sycm 后台 UI 上选 5/1-N 自定义区间得到的"商品加购人数"（真去重）；当天没录入就 fallback 到日值求和（跨日不去重，标"按日求和"）。25 年 5/6 与 5/12 已是真去重值。</span></span></span>
-          <span v-if="addManualKpi.sourceThis==='sum'" style="color:#f59e0b;font-size:11px;margin-left:4px">按日求和</span>
-          <span v-else-if="addManualKpi.sourceThis==='dedup'" style="color:#16a34a;font-size:11px;margin-left:4px">真去重</span>
+          <span class="info-wrap">
+            全店加购人数<span style="color:#64748b;font-weight:400;margin-left:4px">{{ addManualKpi.dateLabel }}</span>
+            <span class="info-btn">?<span class="tooltip">单日：sycm 当天"商品加购人数"（单日内已去重）。
+区间：先尝试匹配预定义真去重窗口（5/1-5/5、5/1-5/6、5/1-5/12、5/6-5/10、5/11-5/12 等运营提供的）；匹配不上就按日求和（红色"未去重"，仅供参考）。</span></span>
+          </span>
+          <span v-if="addManualKpi.sourceThis==='dedup'"
+                style="color:#16a34a;font-size:11px;margin-left:4px;background:#dcfce7;padding:1px 6px;border-radius:4px">真去重</span>
+          <span v-else-if="addManualKpi.sourceThis==='sum'"
+                style="color:#dc2626;font-size:11px;margin-left:4px;background:#fee2e2;padding:1px 6px;border-radius:4px">按日求和·未去重</span>
+          <span v-else-if="addManualKpi.sourceThis==='daily'"
+                style="color:#0369a1;font-size:11px;margin-left:4px;background:#e0f2fe;padding:1px 6px;border-radius:4px">单日</span>
         </div>
         <div class="kpi-value" style="color:#0f172a">
           {{ fmtNum(addManualKpi.thisYr) }}
@@ -464,12 +564,16 @@ const OverviewPage = defineComponent({
           <span :class="['chg', addManualKpi.yoy==null?'':(addManualKpi.yoy>=0?'chg-up':'chg-dn')]">
             {{ addManualKpi.yoy==null ? '—' : (addManualKpi.yoy>=0?'+':'') + addManualKpi.yoy + '%' }}
           </span>
-          <span>vs 25年同期 {{ fmtNum(addManualKpi.lastYr) }}<span v-if="addManualKpi.sourceLast==='dedup'" style="color:#16a34a;margin-left:2px">·真</span></span>
+          <span>vs 25年同期 {{ fmtNum(addManualKpi.lastYr) }}</span>
         </div>
       </div>
       <div class="kpi-card" style="background:#f8fafc">
         <div class="kpi-label">
-          <span class="info-wrap">三大品类合计加购<span class="info-btn">?<span class="tooltip">家具+配饰+灯具，xls 单品按 cat_map 分类后日累计求和（跨日不去重）</span></span></span>
+          <span class="info-wrap">三大品类合计加购<span class="info-btn">?<span class="tooltip">家具+配饰+灯具，xls 单品按 cat_map 分类汇总。区间模式 = 区间内日值求和（跨日不去重）。</span></span></span>
+          <span v-if="addCategoryKpi.source==='sum'"
+                style="color:#dc2626;font-size:11px;margin-left:4px;background:#fee2e2;padding:1px 6px;border-radius:4px">按日求和</span>
+          <span v-else-if="addCategoryKpi.source==='daily'"
+                style="color:#0369a1;font-size:11px;margin-left:4px;background:#e0f2fe;padding:1px 6px;border-radius:4px">单日</span>
         </div>
         <div class="kpi-value" style="color:#0f172a">
           {{ fmtNum(addCategoryKpi.thisYr) }}
@@ -496,10 +600,11 @@ const OverviewPage = defineComponent({
       </div>
     </div>
 
-    <!-- 主图：3 品类 × 2 年 并排折线（cumsum） -->
+    <!-- 主图：3 品类 × 2 年 并排折线 -->
     <div>
       <div>
-        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:12px;color:#64748b">
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:6px;font-size:12px;color:#64748b">
+          <span style="font-weight:600;color:#475569">{{ addMode==='single' ? '日加购人数' : '累计加购人数' }}</span>
           <span v-for="c in ADD_CATS" :key="c" style="display:inline-flex;align-items:center;gap:4px">
             <span style="width:14px;height:2px;display:inline-block" :style="{background:ADD_CAT_COLOR[c]}"></span>
             {{ c }} · 26年
@@ -518,6 +623,17 @@ const OverviewPage = defineComponent({
             <text :x="addChartGeom.padL - 4" :y="addChartGeom.y(tick) + 3"
                   text-anchor="end" font-size="10" fill="#94a3b8">{{ fmtNum(tick) }}</text>
           </g>
+          <!-- 高亮：区间画底纹色带，单日画虚线 -->
+          <rect v-if="addChartHighlight.type==='range'"
+                :x="addChartGeom.x(addChartHighlight.startDay) - 6"
+                :y="addChartGeom.padT"
+                :width="addChartGeom.x(addChartHighlight.endDay) - addChartGeom.x(addChartHighlight.startDay) + 12"
+                :height="addChartGeom.H - addChartGeom.padT - addChartGeom.padB"
+                fill="#fef3c7" fill-opacity="0.5" />
+          <line v-else-if="addChartHighlight.type==='day'"
+                :x1="addChartGeom.x(addChartHighlight.day)" :x2="addChartGeom.x(addChartHighlight.day)"
+                :y1="addChartGeom.padT" :y2="addChartGeom.H - addChartGeom.padB"
+                stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="3,3" />
           <!-- x 轴 -->
           <text v-for="d in ADD_DAYS" :key="'x'+d"
                 :x="addChartGeom.x(d)" :y="addChartGeom.H - 8"
@@ -531,7 +647,7 @@ const OverviewPage = defineComponent({
             <circle v-for="p in ln.points" :key="ln.cat+ln.year+p.d"
                     :cx="addChartGeom.x(p.d)" :cy="addChartGeom.y(p.v)" r="2.5"
                     :fill="ln.color" :fill-opacity="ln.dashed ? 0.5 : 1">
-              <title>{{ ln.cat }} · {{ ln.year }}-5-{{ p.d }} 累计 {{ fmtNum(p.v) }}</title>
+              <title>{{ ln.cat }} · {{ ln.year }}-5-{{ p.d }}: {{ fmtNum(p.v) }}</title>
             </circle>
           </g>
         </svg>
