@@ -75,6 +75,64 @@ def create_tables():
                     duration_seconds INT DEFAULT 0
                 )
             """)
+            # 618 加购看板 — 全店去重累计加购人数（手填，sycm 后台 UI 上能看到的整段去重数）
+            # （旧表，留兼容；新数据走 addtocart_618_data）
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS addtocart_618_manual (
+                    stat_date     DATE PRIMARY KEY,
+                    year_label    INT NOT NULL,
+                    dedup_users   INT NOT NULL,
+                    note          TEXT NOT NULL DEFAULT '',
+                    updated_at    TIMESTAMPTZ DEFAULT now(),
+                    updated_by    TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            # ── 618 加购看板新表：3 类数据统一存这里 ──
+            # data_type:
+            #   'daily'      日加购人数        (start_date == end_date)
+            #   'cum_dedup'  5/1-5/N 累计去重 (start_date 固定为 YYYY-05-01)
+            #   'win_dedup'  任意窗口段去重    (start_date < end_date)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS addtocart_618_data (
+                    id          SERIAL PRIMARY KEY,
+                    data_type   TEXT NOT NULL CHECK (data_type IN ('daily','cum_dedup','win_dedup')),
+                    start_date  DATE NOT NULL,
+                    end_date    DATE NOT NULL,
+                    users       INT  NOT NULL CHECK (users >= 0),
+                    note        TEXT NOT NULL DEFAULT '',
+                    updated_at  TIMESTAMPTZ DEFAULT now(),
+                    updated_by  TEXT NOT NULL DEFAULT '',
+                    UNIQUE (data_type, start_date, end_date)
+                )
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_618_data_type_date ON addtocart_618_data(data_type, end_date)")
+            # 一次性 seed：把 etl_618_addtocart.py 里 hardcoded 的种子值灌进 DB（已存在则跳过）
+            try:
+                from etl.etl_618_addtocart import (
+                    STORE_DAILY_ADDTOCART, STORE_CUM_DEDUP, STORE_WIN_DEDUP
+                )
+                for ds, v in STORE_DAILY_ADDTOCART.items():
+                    cur.execute("""
+                        INSERT INTO addtocart_618_data (data_type, start_date, end_date, users, updated_by, note)
+                        VALUES ('daily', %s, %s, %s, 'seed', '初始 seed')
+                        ON CONFLICT (data_type, start_date, end_date) DO NOTHING
+                    """, (ds, ds, int(v)))
+                for ds, v in STORE_CUM_DEDUP.items():
+                    yr = ds[:4]
+                    cur.execute("""
+                        INSERT INTO addtocart_618_data (data_type, start_date, end_date, users, updated_by, note)
+                        VALUES ('cum_dedup', %s, %s, %s, 'seed', '初始 seed')
+                        ON CONFLICT (data_type, start_date, end_date) DO NOTHING
+                    """, (f"{yr}-05-01", ds, int(v)))
+                for (start, end), v in STORE_WIN_DEDUP.items():
+                    cur.execute("""
+                        INSERT INTO addtocart_618_data (data_type, start_date, end_date, users, updated_by, note)
+                        VALUES ('win_dedup', %s, %s, %s, 'seed', '初始 seed')
+                        ON CONFLICT (data_type, start_date, end_date) DO NOTHING
+                    """, (start, end, int(v)))
+            except Exception as e:
+                import logging
+                logging.warning(f"618 seed skipped: {e}")
             conn.commit()
     except Exception as e:
         import logging
@@ -935,6 +993,130 @@ def update_audience_plan(body: AudiencePlanUpdate, _user=Depends(require_permiss
             "total_pct": round(total, 1),
             "warning": "计划总和不为 100%" if abs(total - 100) > 0.5 else None
         }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 618 加购看板 — 三大品类日累计 (xls 直读) + 全店数据 (DB > hardcoded merge)
+# ══════════════════════════════════════════════════════════════════════
+
+def _load_618_db_overrides() -> dict:
+    """从 addtocart_618_data 把 admin 改过的值读出来，merge 到 hardcoded 之上"""
+    overrides = {"daily": {}, "cum_dedup": {}, "win_dedup": {}}
+    try:
+        with db() as conn:
+            recs = rows(conn, """
+                SELECT data_type,
+                       TO_CHAR(start_date,'YYYY-MM-DD') AS start_date,
+                       TO_CHAR(end_date,  'YYYY-MM-DD') AS end_date,
+                       users
+                FROM addtocart_618_data
+            """)
+        for r in recs:
+            t = r["data_type"]
+            if t == "daily":
+                overrides["daily"][r["end_date"]] = int(r["users"])
+            elif t == "cum_dedup":
+                overrides["cum_dedup"][r["end_date"]] = int(r["users"])
+            elif t == "win_dedup":
+                overrides["win_dedup"][(r["start_date"], r["end_date"])] = int(r["users"])
+    except Exception as e:
+        import logging
+        logging.warning(f"618 DB overrides not loaded (using hardcoded only): {e}")
+    return overrides
+
+
+@app.get("/api/618/category-cumulative")
+def get_618_category_cumulative():
+    """
+    618 看板主数据。返回三大品类日累计 + 全店日值/累计去重/窗口去重。
+    数据源：
+      - 品类（家具/配饰/灯具/其他）：直接读 25年5月/ 与 生意参谋商品/ 单品 xls
+      - 全店：merge addtocart_618_data 表 (admin 在设置页改过) 与 hardcoded 默认
+    """
+    try:
+        from etl.etl_618_addtocart import build_618_category_series
+        return build_618_category_series(DASHBOARD_DIR, db_overrides=_load_618_db_overrides())
+    except Exception as e:
+        import logging, traceback
+        logging.error("618 category-cumulative failed: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, f"读取 618 品类数据失败：{e}")
+
+
+# ── 618 全店数据 CRUD（addtocart_618_data 表）──────────────
+@app.get("/api/618/store-data")
+def list_618_store_data():
+    """admin 在设置页加载所有 618 数据明细。包含 hardcoded fallback 的状态。"""
+    with db() as conn:
+        try:
+            recs = rows(conn, """
+                SELECT id, data_type,
+                       TO_CHAR(start_date,'YYYY-MM-DD') AS start_date,
+                       TO_CHAR(end_date,  'YYYY-MM-DD') AS end_date,
+                       users, note,
+                       TO_CHAR(updated_at,'YYYY-MM-DD HH24:MI') AS updated_at,
+                       updated_by
+                FROM addtocart_618_data
+                ORDER BY data_type, start_date, end_date
+            """)
+        except Exception:
+            recs = []
+    return {"items": recs}
+
+
+class Store618Item(BaseModel):
+    data_type: str            # 'daily' | 'cum_dedup' | 'win_dedup'
+    start_date: str           # YYYY-MM-DD
+    end_date: str             # YYYY-MM-DD
+    users: int                # ≥0
+    note: Optional[str] = ""
+    updated_by: Optional[str] = ""
+
+
+@app.post("/api/618/store-data")
+def upsert_618_store_data(body: Store618Item,
+                           _user=Depends(require_permission('metric.edit'))):
+    if body.data_type not in ("daily", "cum_dedup", "win_dedup"):
+        raise HTTPException(400, "data_type 必须是 daily / cum_dedup / win_dedup")
+    if body.users < 0:
+        raise HTTPException(400, "users 不能为负")
+    from datetime import datetime
+    try:
+        sd = datetime.strptime(body.start_date, "%Y-%m-%d").date()
+        ed = datetime.strptime(body.end_date,   "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "日期格式应为 YYYY-MM-DD")
+    if body.data_type == "daily" and sd != ed:
+        raise HTTPException(400, "daily 类型 start_date 必须 = end_date")
+    if body.data_type == "cum_dedup" and (sd.month != 5 or sd.day != 1):
+        raise HTTPException(400, "cum_dedup 类型 start_date 必须是 YYYY-05-01")
+    if body.data_type == "win_dedup" and ed < sd:
+        raise HTTPException(400, "win_dedup 类型 end_date 不能早于 start_date")
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO addtocart_618_data (data_type, start_date, end_date, users, note, updated_by, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (data_type, start_date, end_date) DO UPDATE SET
+                users = EXCLUDED.users,
+                note  = EXCLUDED.note,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = now()
+            RETURNING id
+        """, (body.data_type, body.start_date, body.end_date, body.users,
+              body.note or "", body.updated_by or ""))
+        new_id = cur.fetchone()[0]
+        conn.commit()
+    return {"ok": True, "id": new_id}
+
+
+@app.delete("/api/618/store-data/{row_id}")
+def delete_618_store_data(row_id: int,
+                           _user=Depends(require_permission('metric.edit'))):
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("DELETE FROM addtocart_618_data WHERE id = %s", (row_id,))
+        conn.commit()
+    return {"ok": True}
 
 
 # ── 内容报表（短视频/直播）汇总 ──

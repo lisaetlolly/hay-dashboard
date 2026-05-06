@@ -604,7 +604,107 @@ const SettingsPage = defineComponent({
     }
     Vue.onMounted(loadAiConfig)
 
+    // ──────────────────────────────────────────────────────────────────
+    // 618 加购数据管理（admin） — 增/删/改 addtocart_618_data 表
+    // ──────────────────────────────────────────────────────────────────
+    const cart618Items = Vue.ref([])
+    const cart618Loading = Vue.ref(false)
+    const cart618Msg = Vue.ref('')
+    const cart618Form = Vue.ref({
+      data_type: 'cum_dedup',
+      start_date: '2026-05-01',
+      end_date:   '',
+      users: '',
+      note: '',
+    })
+
+    const cart618LoadAll = async () => {
+      cart618Loading.value = true
+      try {
+        const r = await fetch('/api/618/store-data').then(r => r.json())
+        cart618Items.value = r.items || []
+      } catch (e) {
+        cart618Msg.value = '加载失败：' + e
+      }
+      cart618Loading.value = false
+    }
+    const cart618Grouped = Vue.computed(() => {
+      const out = { daily: [], cum_dedup: [], win_dedup: [] }
+      for (const it of cart618Items.value) {
+        if (out[it.data_type]) out[it.data_type].push(it)
+      }
+      return out
+    })
+
+    // 选了 data_type 后自动调整默认 start/end，让管理员省力
+    const cart618OnTypeChange = () => {
+      const t = cart618Form.value.data_type
+      const today = new Date().toISOString().slice(0, 10)
+      if (t === 'daily') {
+        cart618Form.value.start_date = today
+        cart618Form.value.end_date   = today
+      } else if (t === 'cum_dedup') {
+        const yr = today.slice(0, 4)
+        cart618Form.value.start_date = `${yr}-05-01`
+        cart618Form.value.end_date   = today
+      } else {
+        cart618Form.value.start_date = '2026-05-01'
+        cart618Form.value.end_date   = today
+      }
+    }
+
+    const cart618Save = async () => {
+      const f = cart618Form.value
+      if (!f.users && f.users !== 0) { cart618Msg.value = '✗ 加购人数必填'; return }
+      if (f.data_type === 'daily' && !f.start_date) { cart618Msg.value = '✗ 选个日期'; return }
+      if (f.data_type === 'daily') f.end_date = f.start_date
+      try {
+        const u = JSON.parse(localStorage.getItem('hay_current_user') || '{}')
+        const res = await fetch('/api/618/store-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Username': u.username || '' },
+          body: JSON.stringify({
+            data_type: f.data_type,
+            start_date: f.start_date,
+            end_date: f.end_date,
+            users: Math.round(Number(f.users)),
+            note: f.note || '',
+            updated_by: u.username || '',
+          }),
+        })
+        if (!res.ok) { cart618Msg.value = '✗ 保存失败：' + (await res.text()); return }
+        cart618Msg.value = '✓ 已保存（看板会自动刷新）'
+        f.users = ''; f.note = ''
+        await cart618LoadAll()
+        setTimeout(() => { cart618Msg.value = '' }, 3000)
+      } catch (e) {
+        cart618Msg.value = '✗ ' + e
+      }
+    }
+
+    const cart618Delete = async (id) => {
+      if (!confirm('删除这条数据？hardcoded 默认值仍会兜底。')) return
+      try {
+        const u = JSON.parse(localStorage.getItem('hay_current_user') || '{}')
+        const res = await fetch(`/api/618/store-data/${id}`, {
+          method: 'DELETE',
+          headers: { 'X-Username': u.username || '' },
+        })
+        if (!res.ok) { cart618Msg.value = '✗ 删除失败：' + (await res.text()); return }
+        await cart618LoadAll()
+        cart618Msg.value = '✓ 已删除'
+        setTimeout(() => { cart618Msg.value = '' }, 3000)
+      } catch (e) {
+        cart618Msg.value = '✗ ' + e
+      }
+    }
+
+    Vue.onMounted(cart618LoadAll)
+
     return {
+      // 618 加购数据管理
+      cart618Items, cart618Loading, cart618Msg, cart618Form, cart618Grouped,
+      cart618OnTypeChange, cart618Save, cart618Delete, cart618LoadAll,
       me,isAdmin,pwForm,changePassword,
       users,metrics,permGroups,PERM_LABELS,expandedUserId,toggleExpand,meetings,can,setMe,
       userModal,openAddUser,openEditUser,saveUserModal,deleteUser,togglePerm,
@@ -932,6 +1032,97 @@ const SettingsPage = defineComponent({
       </div>
       <div v-if="audiencePlanMsg" style="margin-top:8px;font-size:12px"
         :style="{color: audiencePlanMsg.includes('失败') ? 'var(--red)' : 'var(--green)'}">{{ audiencePlanMsg }}</div>
+    </div>
+  </div>
+
+  <!-- 618 加购数据管理（admin 可改）-->
+  <div v-if="isAdmin" class="card" style="padding:16px">
+    <div class="card-header" style="margin-bottom:14px">
+      <span class="card-title">618 加购数据管理</span>
+      <span class="card-sub">总览页"618 加购看板"取数源；admin 改完，看板自动刷新（无需重启）</span>
+    </div>
+
+    <!-- 新增/编辑表单 -->
+    <div style="background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:140px 1fr 1fr 110px auto;gap:8px;align-items:end">
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+          <span style="color:var(--muted)">类型</span>
+          <select v-model="cart618Form.data_type" @change="cart618OnTypeChange"
+            style="border:1px solid var(--border);border-radius:6px;padding:6px;font-size:12px;background:#fff">
+            <option value="cum_dedup">5/1-5/N 累计去重</option>
+            <option value="daily">日加购人数</option>
+            <option value="win_dedup">任意窗口去重</option>
+          </select>
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+          <span style="color:var(--muted)">起始日期</span>
+          <input type="date" v-model="cart618Form.start_date"
+            :disabled="cart618Form.data_type==='daily'"
+            style="border:1px solid var(--border);border-radius:6px;padding:6px;font-size:12px">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+          <span style="color:var(--muted)">结束日期</span>
+          <input type="date" v-model="cart618Form.end_date"
+            :disabled="cart618Form.data_type==='daily'"
+            style="border:1px solid var(--border);border-radius:6px;padding:6px;font-size:12px">
+        </label>
+        <label style="display:flex;flex-direction:column;gap:4px;font-size:12px">
+          <span style="color:var(--muted)">加购人数</span>
+          <input type="number" min="0" v-model="cart618Form.users" placeholder="如 6514"
+            style="border:1px solid var(--border);border-radius:6px;padding:6px;font-size:12px">
+        </label>
+        <button @click="cart618Save"
+          style="border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:6px;padding:7px 16px;font-size:12px;cursor:pointer;font-weight:600">
+          保存
+        </button>
+      </div>
+      <input v-model="cart618Form.note" placeholder="备注（可选，比如"sycm 5/6 截图"）"
+        style="width:100%;margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:6px;font-size:12px;box-sizing:border-box">
+      <div v-if="cart618Msg" style="margin-top:6px;font-size:12px"
+        :style="{color: cart618Msg.startsWith('✓') ? '#16a34a' : '#dc2626'}">{{ cart618Msg }}</div>
+      <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.6">
+        <strong>类型说明：</strong>
+        <br>· <strong>5/1-5/N 累计去重</strong> — sycm 后台选 5/1-5/N 自定义区间得到的"商品加购人数"。每天 T+1 加一行（看板 KPI 主用）
+        <br>· <strong>日加购人数</strong> — 每天单天值（核心指标监控里的）。给折线图当 fallback 用
+        <br>· <strong>任意窗口去重</strong> — 比如 5/6-5/10 这种段值，目前不直接显示，备用
+      </div>
+    </div>
+
+    <!-- 已录入清单（按类型分组）-->
+    <div v-if="cart618Loading" style="color:var(--muted);font-size:12px">加载中…</div>
+    <div v-else style="display:flex;flex-direction:column;gap:14px">
+      <div v-for="(grp, key) in cart618Grouped" :key="key">
+        <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px">
+          {{ key === 'cum_dedup' ? '5/1-5/N 累计去重' : key === 'daily' ? '日加购人数' : '任意窗口去重' }}
+          <span style="color:var(--muted);font-weight:400">（{{ grp.length }} 条）</span>
+        </div>
+        <div v-if="!grp.length" style="font-size:11px;color:var(--muted);padding:6px 0">— 暂无 —</div>
+        <table v-else style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="color:var(--muted);border-bottom:1px solid var(--border)">
+              <th style="text-align:left;padding:5px 8px;font-weight:500;width:140px">起始</th>
+              <th style="text-align:left;padding:5px 8px;font-weight:500;width:140px">结束</th>
+              <th style="text-align:right;padding:5px 8px;font-weight:500;width:100px">人数</th>
+              <th style="text-align:left;padding:5px 8px;font-weight:500">备注</th>
+              <th style="text-align:left;padding:5px 8px;font-weight:500;width:140px">最近改</th>
+              <th style="text-align:right;padding:5px 8px;font-weight:500;width:60px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="it in grp" :key="it.id" style="border-bottom:1px solid #f1f5f9">
+              <td style="padding:5px 8px">{{ it.start_date }}</td>
+              <td style="padding:5px 8px">{{ it.end_date }}</td>
+              <td style="padding:5px 8px;text-align:right;font-variant-numeric:tabular-nums">{{ Number(it.users).toLocaleString() }}</td>
+              <td style="padding:5px 8px;color:var(--muted)">{{ it.note || '—' }}</td>
+              <td style="padding:5px 8px;color:var(--muted)">{{ it.updated_by || '—' }}<br><span style="font-size:10px">{{ it.updated_at }}</span></td>
+              <td style="padding:5px 8px;text-align:right">
+                <button @click="cart618Delete(it.id)"
+                  style="border:1px solid var(--border);background:#fff;color:#dc2626;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">删</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
 

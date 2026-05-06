@@ -275,12 +275,170 @@ const OverviewPage = defineComponent({
       }).filter(Boolean)
     })
 
+    // ══════════════════════════════════════════════════════════════════
+    // 618 加购看板 — 5/1-5/12 累计同比（YoY）
+    // - 全店去重累计：sycm 后台 UI 数字，由用户手填，存 addtocart_618_manual
+    // - 三大品类（家具/配饰/灯具）日累计：xls 直读 + cat_map 汇总（跨日不去重）
+    // ══════════════════════════════════════════════════════════════════
+    const ADD_DAYS = [1,2,3,4,5,6,7,8,9,10,11,12]
+    const ADD_CATS = ['家具', '配饰', '灯具']  // 其他不画线，但参与 KPI 合计
+    const ADD_CAT_COLOR = { '家具': '#6366f1', '配饰': '#ec4899', '灯具': '#f59e0b' }
+    const addCategorySeries = ref(null)        // /api/618/category-cumulative 返回值（含 .store）
+    const addLoading = ref(false)
+    const addSelectedN = ref(null)             // 选 5/1-5/N 累计中的 N，默认=今年最后有数据那天
+
+    const addLoadAll = async () => {
+      addLoading.value = true
+      try {
+        const cat = await fetch('/api/618/category-cumulative').then(r => r.json())
+        addCategorySeries.value = cat
+        // 默认 N = 今年最大有数据日（cumsum_naive 里最后一天）
+        const tDays = Object.keys((cat && cat.store && cat.store.this_year && cat.store.this_year.cumsum_naive) || {})
+          .map(s => parseInt(s.slice(8,10), 10)).sort((a,b)=>a-b)
+        addSelectedN.value = tDays.length ? tDays[tDays.length-1] : 1
+      } catch (e) {
+        console.warn('[618] load failed', e)
+      }
+      addLoading.value = false
+    }
+    addLoadAll()
+
+    // 取某年 5/1-N 的全店累计加购：优先 sycm 真去重，没有就 fallback 到日值求和
+    // 返回 { value, source: 'dedup'|'sum'|null }
+    const pickStoreCum = (year, day) => {
+      const cs = addCategorySeries.value
+      if (!cs || !cs.store) return { value: null, source: null }
+      const tag = year === 2026 ? 'this_year' : 'last_year'
+      const yr = cs.store[tag] || {}
+      const ds = `${year}-05-${String(day).padStart(2,'0')}`
+      if (yr.cumsum_dedup && yr.cumsum_dedup[ds] != null) {
+        return { value: yr.cumsum_dedup[ds], source: 'dedup' }
+      }
+      if (yr.cumsum_naive && yr.cumsum_naive[ds] != null) {
+        return { value: yr.cumsum_naive[ds], source: 'sum' }
+      }
+      return { value: null, source: null }
+    }
+
+    const fmtNum = n => n == null ? '—' : Number(n).toLocaleString()
+    const yoyPct = (cur, prev) => {
+      if (cur == null || prev == null || prev === 0) return null
+      return +(((cur - prev) / prev) * 100).toFixed(1)
+    }
+
+    // KPI 数据：全店累计加购人数（优先 sycm 真去重，fallback 日值求和）
+    const addManualKpi = computed(() => {
+      const n = addSelectedN.value
+      if (!n) return { thisYr: null, lastYr: null, yoy: null, sourceThis: null, sourceLast: null }
+      const t = pickStoreCum(2026, n)
+      const l = pickStoreCum(2025, n)
+      return {
+        thisYr: t.value, lastYr: l.value,
+        yoy: yoyPct(t.value, l.value),
+        sourceThis: t.source, sourceLast: l.source,
+      }
+    })
+
+    // 品类累计 KPI：5/1-N 三大品类合计
+    const addCategoryKpi = computed(() => {
+      const n = addSelectedN.value
+      const cs = addCategorySeries.value
+      if (!n || !cs) return { thisYr: null, lastYr: null, yoy: null, byCat: [] }
+      const dThis = `2026-05-${String(n).padStart(2,'0')}`
+      const dLast = `2025-05-${String(n).padStart(2,'0')}`
+      const cThis = cs?.this_year?.cumsum?.[dThis] || null
+      const cLast = cs?.last_year?.cumsum?.[dLast] || null
+      const totalT = cThis ? (cThis['家具']+cThis['配饰']+cThis['灯具']) : null
+      const totalL = cLast ? (cLast['家具']+cLast['配饰']+cLast['灯具']) : null
+      const byCat = ADD_CATS.map(c => ({
+        cat: c,
+        thisYr: cThis ? cThis[c] : null,
+        lastYr: cLast ? cLast[c] : null,
+        yoy:    cThis && cLast ? yoyPct(cThis[c], cLast[c]) : null,
+      }))
+      return { thisYr: totalT, lastYr: totalL, yoy: yoyPct(totalT, totalL), byCat }
+    })
+
+    // SVG 折线图数据：3 品类 × 2 年 = 6 条折线（cumsum 沿 5/1-5/12）
+    const addChartLines = computed(() => {
+      const cs = addCategorySeries.value
+      if (!cs) return []
+      const lines = []
+      for (const yr of [2026, 2025]) {
+        const tag = yr === 2026 ? 'this_year' : 'last_year'
+        const cum = cs?.[tag]?.cumsum || {}
+        for (const cat of ADD_CATS) {
+          const points = ADD_DAYS.map(d => {
+            const ds = `${yr}-05-${String(d).padStart(2,'0')}`
+            const v = cum[ds]?.[cat]
+            return v == null ? null : { d, v }
+          }).filter(Boolean)
+          if (!points.length) continue
+          lines.push({
+            cat, year: yr, color: ADD_CAT_COLOR[cat],
+            dashed: yr === 2025,
+            label: `${cat} · ${yr}`,
+            points,
+          })
+        }
+      }
+      return lines
+    })
+
+    // SVG 视图盒坐标
+    const addChartGeom = computed(() => {
+      const W = 720, H = 220, padL = 40, padR = 12, padT = 14, padB = 26
+      const lines = addChartLines.value
+      let maxV = 0
+      for (const ln of lines) for (const p of ln.points) if (p.v > maxV) maxV = p.v
+      maxV = Math.max(10, Math.ceil(maxV * 1.1 / 100) * 100)
+      const x = d => padL + ((d - 1) / (12 - 1)) * (W - padL - padR)
+      const y = v => H - padB - (v / maxV) * (H - padT - padB)
+      const yTicks = [0, 0.25, 0.5, 0.75, 1].map(t => Math.round(maxV * t))
+      return { W, H, padL, padR, padT, padB, maxV, x, y, yTicks }
+    })
+
+    const addLinePath = (line) => {
+      const g = addChartGeom.value
+      return line.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${g.x(p.d).toFixed(1)} ${g.y(p.v).toFixed(1)}`).join(' ')
+    }
+
+    const addSaveCell = async (year, day) => {
+      const v = addInputDraft.value?.[year]?.[day]
+      if (v === '' || v == null) return  // 空值不上传
+      const num = Number(v)
+      if (!Number.isFinite(num) || num < 0) return
+      const stat_date = `${year}-05-${String(day).padStart(2,'0')}`
+      try {
+        const u = JSON.parse(localStorage.getItem('hay_current_user') || '{}')
+        const res = await fetch('/api/618/addtocart-manual', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Username': u.username || '' },
+          body: JSON.stringify({
+            stat_date, year_label: year, dedup_users: Math.round(num),
+            updated_by: u.username || ''
+          })
+        })
+        if (!res.ok) {
+          const txt = await res.text()
+          console.warn('[618] save failed', res.status, txt)
+        }
+      } catch (e) {
+        console.warn('[618] save error', e)
+      }
+    }
+
     return {
       kpi, planData, tasks, meetings, rankMetric, rankCategory, rankData, rankLoading,
       kpiDefs, rankDefs, kpiVal, kpiChg, barW, rankFmt, fmtWan, imgSrc,
       dotColor, statusLabel, totalActualWan, prevTopList, prevPeriod, chgCls, chgTxt,
       selectedOverviewMetrics, overviewMetricOpts, trendSeries, trendGranularity,
       channelCatData,
+      // 618 加购看板
+      ADD_DAYS, ADD_CATS, ADD_CAT_COLOR,
+      addCategorySeries, addManualEntries, addLoading, addSelectedN, addInputDraft,
+      addManualKpi, addCategoryKpi, addChartLines, addChartGeom, addLinePath,
+      addSaveCell, fmtNum,
     }
   },
   template: `
@@ -297,6 +455,113 @@ const OverviewPage = defineComponent({
         <span :class="['chg', chgCls(kpiChg(k.key))]">{{ chgTxt(kpiChg(k.key)) }}</span>
         <span>vs 上期等长周期</span>
       </div>
+    </div>
+  </div>
+
+  <!-- 618 加购看板（5/1-5/12，YoY vs 25年） -->
+  <div class="card" style="padding:16px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+      <div>
+        <span class="card-title">618 加购看板</span>
+        <span class="card-sub" style="margin-left:8px">5/1-5/12 累计 · 同比 25 年</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#64748b">
+        <span>累计区间：5/1 -</span>
+        <select v-model.number="addSelectedN"
+          style="padding:3px 8px;border-radius:6px;border:1px solid #e2e8f0;background:#fff;font-size:12px">
+          <option v-for="d in ADD_DAYS" :key="d" :value="d">5/{{ d }}</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 顶部 KPI 行：全店去重（手填） + 三大品类合计 -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px">
+      <div class="kpi-card" style="background:#f8fafc">
+        <div class="kpi-label">
+          <span class="info-wrap">全店累计加购人数<span class="info-btn">?<span class="tooltip">优先用 sycm 后台 UI 上选 5/1-N 自定义区间得到的"商品加购人数"（真去重）；当天没录入就 fallback 到日值求和（跨日不去重，标"按日求和"）。25 年 5/6 与 5/12 已是真去重值。</span></span></span>
+          <span v-if="addManualKpi.sourceThis==='sum'" style="color:#f59e0b;font-size:11px;margin-left:4px">按日求和</span>
+          <span v-else-if="addManualKpi.sourceThis==='dedup'" style="color:#16a34a;font-size:11px;margin-left:4px">真去重</span>
+        </div>
+        <div class="kpi-value" style="color:#0f172a">
+          {{ fmtNum(addManualKpi.thisYr) }}
+        </div>
+        <div class="kpi-footer">
+          <span :class="['chg', addManualKpi.yoy==null?'':(addManualKpi.yoy>=0?'chg-up':'chg-dn')]">
+            {{ addManualKpi.yoy==null ? '—' : (addManualKpi.yoy>=0?'+':'') + addManualKpi.yoy + '%' }}
+          </span>
+          <span>vs 25年同期 {{ fmtNum(addManualKpi.lastYr) }}<span v-if="addManualKpi.sourceLast==='dedup'" style="color:#16a34a;margin-left:2px">·真</span></span>
+        </div>
+      </div>
+      <div class="kpi-card" style="background:#f8fafc">
+        <div class="kpi-label">
+          <span class="info-wrap">三大品类合计加购<span class="info-btn">?<span class="tooltip">家具+配饰+灯具，xls 单品按 cat_map 分类后日累计求和（跨日不去重）</span></span></span>
+        </div>
+        <div class="kpi-value" style="color:#0f172a">
+          {{ fmtNum(addCategoryKpi.thisYr) }}
+        </div>
+        <div class="kpi-footer">
+          <span :class="['chg', addCategoryKpi.yoy==null?'':(addCategoryKpi.yoy>=0?'chg-up':'chg-dn')]">
+            {{ addCategoryKpi.yoy==null ? '—' : (addCategoryKpi.yoy>=0?'+':'') + addCategoryKpi.yoy + '%' }}
+          </span>
+          <span>vs 25年同期 {{ fmtNum(addCategoryKpi.lastYr) }}</span>
+        </div>
+      </div>
+      <div v-for="c in addCategoryKpi.byCat" :key="c.cat" class="kpi-card" style="background:#fafafa">
+        <div class="kpi-label">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:99px;margin-right:4px"
+                :style="{background: ADD_CAT_COLOR[c.cat]}"></span>{{ c.cat }} 累计
+        </div>
+        <div class="kpi-value" style="font-size:18px">{{ fmtNum(c.thisYr) }}</div>
+        <div class="kpi-footer">
+          <span :class="['chg', c.yoy==null?'':(c.yoy>=0?'chg-up':'chg-dn')]">
+            {{ c.yoy==null ? '—' : (c.yoy>=0?'+':'') + c.yoy + '%' }}
+          </span>
+          <span>{{ fmtNum(c.lastYr) }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主图：3 品类 × 2 年 并排折线（cumsum） -->
+    <div>
+      <div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:12px;color:#64748b">
+          <span v-for="c in ADD_CATS" :key="c" style="display:inline-flex;align-items:center;gap:4px">
+            <span style="width:14px;height:2px;display:inline-block" :style="{background:ADD_CAT_COLOR[c]}"></span>
+            {{ c }} · 26年
+          </span>
+          <span v-for="c in ADD_CATS" :key="c+'-l'" style="display:inline-flex;align-items:center;gap:4px;opacity:.7">
+            <span style="width:14px;height:0;border-top:2px dashed" :style="{borderColor:ADD_CAT_COLOR[c]}"></span>
+            {{ c }} · 25年
+          </span>
+        </div>
+        <svg :viewBox="'0 0 ' + addChartGeom.W + ' ' + addChartGeom.H" style="width:100%;height:240px;background:#fff">
+          <!-- y 轴网格 -->
+          <g v-for="(tick, i) in addChartGeom.yTicks" :key="'y'+i">
+            <line :x1="addChartGeom.padL" :x2="addChartGeom.W - addChartGeom.padR"
+                  :y1="addChartGeom.y(tick)" :y2="addChartGeom.y(tick)"
+                  stroke="#f1f5f9" stroke-width="1" />
+            <text :x="addChartGeom.padL - 4" :y="addChartGeom.y(tick) + 3"
+                  text-anchor="end" font-size="10" fill="#94a3b8">{{ fmtNum(tick) }}</text>
+          </g>
+          <!-- x 轴 -->
+          <text v-for="d in ADD_DAYS" :key="'x'+d"
+                :x="addChartGeom.x(d)" :y="addChartGeom.H - 8"
+                text-anchor="middle" font-size="10" fill="#94a3b8">5/{{ d }}</text>
+          <!-- 折线 -->
+          <path v-for="(ln, i) in addChartLines" :key="'p'+i"
+                :d="addLinePath(ln)" fill="none" :stroke="ln.color" stroke-width="1.8"
+                :stroke-dasharray="ln.dashed ? '4,3' : ''" />
+          <!-- 数据点 -->
+          <g v-for="(ln, i) in addChartLines" :key="'pt'+i">
+            <circle v-for="p in ln.points" :key="ln.cat+ln.year+p.d"
+                    :cx="addChartGeom.x(p.d)" :cy="addChartGeom.y(p.v)" r="2.5"
+                    :fill="ln.color" :fill-opacity="ln.dashed ? 0.5 : 1">
+              <title>{{ ln.cat }} · {{ ln.year }}-5-{{ p.d }} 累计 {{ fmtNum(p.v) }}</title>
+            </circle>
+          </g>
+        </svg>
+      </div>
+
     </div>
   </div>
 
