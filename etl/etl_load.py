@@ -323,9 +323,9 @@ def load_dim_product(conn):
             """INSERT INTO dim_product(product_id, spu_id, title, category_l1, category_l2, inventory)
                VALUES(%s,%s,%s,%s,%s,%s)
                ON CONFLICT(product_id) DO UPDATE SET
-                   spu_id=EXCLUDED.spu_id, title=EXCLUDED.title,
-                   category_l1=EXCLUDED.category_l1, category_l2=EXCLUDED.category_l2,
-                   inventory=EXCLUDED.inventory""",
+                   inventory=EXCLUDED.inventory
+                   -- title/spu_id/category_l1/category_l2 一旦 INSERT 后不再被 ETL 覆盖
+                   -- 这些字段需要人工修复 (UPDATE dim_product SET ...)，避免 sycm xls 串行污染""",
             (pid, sid, title, l1, l2, inv)
         )
         inserted += 1
@@ -349,10 +349,8 @@ def load_dim_product(conn):
         cur.execute(
             """INSERT INTO dim_product(product_id, spu_id, title, category_l1, category_l2, inventory)
                VALUES(%s,%s,%s,%s,%s,%s)
-               ON CONFLICT(product_id) DO UPDATE SET
-                   title       = EXCLUDED.title,
-                   category_l1 = EXCLUDED.category_l1,
-                   category_l2 = EXCLUDED.category_l2""",
+               ON CONFLICT(product_id) DO NOTHING
+                   -- EXTRA_PRODUCTS 仅用于"补 dim 缺失的 PID"，不主动覆盖已有数据""",
             (pid, sid, title, l1, l2, inv)
         )
     conn.commit()
@@ -1174,6 +1172,191 @@ def load_syzt_weekly(conn):
         total += len(batch)
         print(f'    [{fi}/{len(new_files)}] {fname}: 入 {len(batch)} 行（{week_start}~{week_end}），跳脏 {dirty}')
     print(f'  fact_syzt_weekly: +{total} rows ({len(new_files)} new files)')
+
+
+
+def load_shop_overview(conn):
+    """
+    sycm 数据概览页 xls -> fact_shop_overview
+    支持两类源文件：
+      - 宏观监控-核心指标监控-*.xls (26 字段全)
+      - 交易总览-*.xls (9 字段)
+    放到 ~/Downloads/数据库数据/店铺数据概览/ 文件夹
+    数据是店铺级（含全部商品），跟商品级 fact_syzt_* 完全独立。
+    """
+    d = os.path.join(DATA_DIR, '店铺数据概览')
+    if not os.path.isdir(d):
+        print('  [SKIP] 店铺数据概览 dir not found')
+        return
+    files = sorted(glob.glob(os.path.join(d, '*.xls')))
+    if not files:
+        print('  [店铺数据概览] 无文件')
+        return
+
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS fact_shop_overview (
+          id SERIAL PRIMARY KEY,
+          period_start DATE NOT NULL, period_end DATE NOT NULL,
+          period_type TEXT, terminal TEXT DEFAULT '所有终端',
+          pay_amount NUMERIC(14,2), refund_amount NUMERIC(14,2), pay_qty INTEGER,
+          cart_users INTEGER, cart_qty INTEGER, page_views INTEGER, visitors INTEGER,
+          micro_visitors INTEGER, collect_users INTEGER, avg_stay_seconds NUMERIC(8,2),
+          order_buyers INTEGER, pay_buyers INTEGER, order_cvr NUMERIC(8,4),
+          bounce_rate NUMERIC(8,4), order_amount NUMERIC(14,2),
+          collect_visit_cvr NUMERIC(8,4), cart_visit_cvr NUMERIC(8,4),
+          pay_old_buyers INTEGER, old_buyer_pay_amount NUMERIC(14,2),
+          pay_cvr NUMERIC(8,4), pay_new_buyers INTEGER,
+          pay_product_count INTEGER, order_qty INTEGER, visit_product_count INTEGER,
+          avg_order_value NUMERIC(10,2), order_to_pay_cvr NUMERIC(8,4),
+          source_file TEXT, loaded_at TIMESTAMPTZ DEFAULT NOW(),
+          UNIQUE (period_start, period_end, terminal)
+        )
+    """)
+    conn.commit()
+
+    from xls_reader import _extract_workbook_stream, _parse_biff8
+    from datetime import date, timedelta
+    import re as _re
+
+    def _f(v):
+        if v is None or v == '' or v == '-': return None
+        s = str(v).replace(',','').replace('%','').strip()
+        try: return float(s)
+        except: return None
+    def _i(v):
+        n = _f(v); return int(n) if n is not None else None
+    def _p(v):
+        if v is None or v == '': return None
+        is_pct = '%' in str(v)
+        n = _f(v)
+        return n / 100 if (n is not None and is_pct) else n
+
+    DATE_PAIR = _re.compile(r'(\d{4}-\d{2}-\d{2})[-_ ]+(\d{4}-\d{2}-\d{2})')
+    DATE_ONE = _re.compile(r'(\d{4}-\d{2}-\d{2})')
+
+    records = []
+    for fp in files:
+        fname = os.path.basename(fp)
+        is_macro = '宏观监控' in fname
+        try:
+            with open(fp, 'rb') as fh: raw = fh.read()
+            rows_x = _parse_biff8(_extract_workbook_stream(raw))
+        except Exception as e:
+            print(f'  [WARN] {fname}: {e}'); continue
+
+        m = DATE_PAIR.search(fname) or DATE_ONE.search(fname)
+        if not m: continue
+        if m.lastindex and m.lastindex >= 2:
+            fname_start, fname_end = m.group(1), m.group(2)
+        else:
+            fname_start = fname_end = m.group(1)
+        if fname_start == fname_end: ptype = 'day'
+        else:
+            n_days = (date.fromisoformat(fname_end) - date.fromisoformat(fname_start)).days + 1
+            ptype = 'week' if 6 <= n_days <= 8 else ('month' if 28 <= n_days <= 31 else 'custom')
+
+        # 找表头
+        hdr_idx = None
+        for i, r in enumerate(rows_x[:15]):
+            if any('支付金额' in str(v) for v in r) and any(('日期' in str(v) or '统计日期' in str(v)) for v in r):
+                hdr_idx = i; break
+        if hdr_idx is None: continue
+        hdr = [str(v).strip() for v in rows_x[hdr_idx]]
+        def col(name):
+            try: return hdr.index(name)
+            except: return -1
+
+        for r in rows_x[hdr_idx + 1:]:
+            if not r or len(r) < 5: continue
+            d_str = str(r[0]).strip()
+            if not d_str.startswith('20'): continue
+            try: end_d = date.fromisoformat(d_str)
+            except: continue
+            if is_macro:
+                if ptype == 'day': start_d = end_d
+                elif ptype == 'week': start_d = end_d - timedelta(days=6)
+                elif ptype == 'month': start_d = end_d.replace(day=1)
+                else: start_d = end_d
+            else:
+                # 交易总览每行就是一天
+                start_d = end_d
+                ptype = 'day'
+            terminal = str(r[1] or '所有终端').strip() if not is_macro else '所有终端'
+            if not is_macro and terminal != '所有终端': continue
+
+            def gv(name, fn=_f):
+                ci = col(name)
+                return fn(r[ci]) if ci >= 0 and ci < len(r) else None
+
+            if is_macro:
+                rec = (
+                    start_d.isoformat(), end_d.isoformat(), ptype, '所有终端',
+                    gv('支付金额'), gv('成功退货退款金额'), gv('支付件数', _i),
+                    gv('商品加购人数', _i), gv('商品加购件数', _i),
+                    gv('商品浏览量', _i), gv('商品访客数', _i),
+                    gv('商品微详情访客数', _i), gv('商品收藏人数', _i),
+                    gv('商品平均停留时长'), gv('下单买家数', _i),
+                    gv('支付买家数', _i), gv('下单转化率', _p),
+                    gv('商品详情页跳出率', _p), gv('下单金额'),
+                    gv('访问收藏转化率', _p), gv('访问加购转化率', _p),
+                    gv('支付老买家数', _i), gv('老买家支付金额'),
+                    gv('支付转化率', _p), gv('支付新买家数', _i),
+                    gv('有支付商品数', _i), gv('下单件数', _i),
+                    gv('有访问商品数', _i), gv('客单价'),
+                    None, fname,
+                )
+            else:
+                rec = (
+                    start_d.isoformat(), end_d.isoformat(), 'day', terminal,
+                    _f(r[2]), None, None, None, None, None, None, None, None, None,
+                    _i(r[6]) if len(r) > 6 else None, _i(r[3]),
+                    None, None, _f(r[5]) if len(r) > 5 else None,
+                    None, None, None, None,
+                    _p(r[7]) if len(r) > 7 else None, None, None, None, None,
+                    _f(r[4]) if len(r) > 4 else None,
+                    _p(r[8]) if len(r) > 8 else None, fname,
+                )
+            records.append(rec)
+
+    # 去重：宏观监控覆盖交易总览（同 (start, end, terminal) 时）
+    dedup = {}
+    for r in records:
+        key = (r[0], r[1], r[3])
+        if key not in dedup or dedup[key][9] is None:  # idx 9 = page_views (宏观有，交易总览无)
+            dedup[key] = r
+        elif dedup[key][9] is None and r[9] is not None:
+            dedup[key] = r
+
+    if dedup:
+        sql = """INSERT INTO fact_shop_overview (
+            period_start, period_end, period_type, terminal,
+            pay_amount, refund_amount, pay_qty, cart_users, cart_qty,
+            page_views, visitors, micro_visitors, collect_users, avg_stay_seconds,
+            order_buyers, pay_buyers, order_cvr, bounce_rate, order_amount,
+            collect_visit_cvr, cart_visit_cvr, pay_old_buyers, old_buyer_pay_amount,
+            pay_cvr, pay_new_buyers, pay_product_count, order_qty, visit_product_count,
+            avg_order_value, order_to_pay_cvr, source_file
+        ) VALUES %s
+        ON CONFLICT (period_start, period_end, terminal) DO UPDATE SET
+          pay_amount=EXCLUDED.pay_amount, refund_amount=EXCLUDED.refund_amount,
+          pay_qty=EXCLUDED.pay_qty, cart_users=EXCLUDED.cart_users, cart_qty=EXCLUDED.cart_qty,
+          page_views=EXCLUDED.page_views, visitors=EXCLUDED.visitors,
+          micro_visitors=EXCLUDED.micro_visitors, collect_users=EXCLUDED.collect_users,
+          avg_stay_seconds=EXCLUDED.avg_stay_seconds, order_buyers=EXCLUDED.order_buyers,
+          pay_buyers=EXCLUDED.pay_buyers, order_cvr=EXCLUDED.order_cvr,
+          bounce_rate=EXCLUDED.bounce_rate, order_amount=EXCLUDED.order_amount,
+          collect_visit_cvr=EXCLUDED.collect_visit_cvr, cart_visit_cvr=EXCLUDED.cart_visit_cvr,
+          pay_old_buyers=EXCLUDED.pay_old_buyers, old_buyer_pay_amount=EXCLUDED.old_buyer_pay_amount,
+          pay_cvr=EXCLUDED.pay_cvr, pay_new_buyers=EXCLUDED.pay_new_buyers,
+          pay_product_count=EXCLUDED.pay_product_count, order_qty=EXCLUDED.order_qty,
+          visit_product_count=EXCLUDED.visit_product_count,
+          avg_order_value=EXCLUDED.avg_order_value, order_to_pay_cvr=EXCLUDED.order_to_pay_cvr,
+          source_file=EXCLUDED.source_file
+        """
+        psycopg2.extras.execute_values(cur, sql, list(dedup.values()), page_size=200)
+        conn.commit()
+    print(f'  fact_shop_overview: {len(dedup)} rows ({len(files)} files)')
 
 
 def load_traffic(conn):

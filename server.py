@@ -3374,7 +3374,23 @@ def get_overview_kpi(
     ps, pe = _prev_range(s, e)
     with db() as conn:
         def syzt_agg(s_, e_):
-            # 优先 fact_syzt_weekly：visitors / pay_buyers 是去重值，跟 sycm 总览一致
+            # 第一优先：fact_shop_overview (sycm 数据概览页，店铺级权威总览)
+            sho = row(conn, """
+                SELECT pay_amount       AS pay,
+                       refund_amount    AS refund,
+                       visitors         AS visitors,
+                       cart_users       AS cart_users,
+                       collect_users    AS collect_users,
+                       pay_new_buyers   AS new_buyers,
+                       pay_old_buyers   AS old_buyers,
+                       pay_buyers       AS pay_buyers
+                FROM fact_shop_overview
+                WHERE period_start = %s AND period_end = %s AND terminal = '所有终端'
+                LIMIT 1
+            """, (s_, e_))
+            if sho and (sho.get('pay') is not None):
+                return sho
+            # 第二优先：fact_syzt_weekly (商品级周表)
             wk = row(conn, """
                 SELECT SUM(pay_amount)    AS pay,
                        SUM(refund_amount) AS refund,
