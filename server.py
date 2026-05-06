@@ -3374,7 +3374,7 @@ def get_overview_kpi(
     ps, pe = _prev_range(s, e)
     with db() as conn:
         def syzt_agg(s_, e_):
-            # 第一优先：fact_shop_overview (sycm 数据概览页，店铺级权威总览)
+            # 第一优先：fact_shop_overview 精确区间匹配 (sycm 数据概览页权威值)
             sho = row(conn, """
                 SELECT pay_amount       AS pay,
                        refund_amount    AS refund,
@@ -3390,6 +3390,22 @@ def get_overview_kpi(
             """, (s_, e_))
             if sho and (sho.get('pay') is not None):
                 return sho
+            # 第二优先：fact_shop_overview 按日累加 (无去重字段 pay/refund 准；UV/buyers 可能多算 5-15%)
+            sho_daily = row(conn, """
+                SELECT SUM(pay_amount)         AS pay,
+                       SUM(refund_amount)      AS refund,
+                       SUM(visitors)           AS visitors,
+                       SUM(cart_users)         AS cart_users,
+                       SUM(collect_users)      AS collect_users,
+                       SUM(pay_new_buyers)     AS new_buyers,
+                       SUM(pay_old_buyers)     AS old_buyers,
+                       SUM(pay_buyers)         AS pay_buyers
+                FROM fact_shop_overview
+                WHERE period_type = 'day' AND period_start BETWEEN %s AND %s
+                  AND terminal = '所有终端'
+            """, (s_, e_))
+            if sho_daily and (sho_daily.get('pay') is not None) and float(sho_daily.get('pay') or 0) > 0:
+                return sho_daily
             # 第二优先：fact_syzt_weekly (商品级周表)
             wk = row(conn, """
                 SELECT SUM(pay_amount)    AS pay,
