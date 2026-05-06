@@ -28,6 +28,45 @@ if not NEON_DSN:
 
 DASHBOARD_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ── 25 个主链官方 PID（单品视图、商品管理、KPI 计算用） ────────────
+# 生产库 dim_product 里实际有 57 条 spu==pid 的行（含历史/关联/SKU 噪声），
+# 单纯按 spu_id==product_id 推断会得到 53 个，跟运营预期"主链 25"对不上。
+# 因此前后端共用这一份硬编码清单，单一数据源。
+OFFICIAL_25_PIDS = [
+    '1020175879777',  # Grid Bag 尼龙包
+    '580467335137',   # Basket 收纳篓
+    '652664516885',   # Knit 衣架
+    '975799789205',   # Canopy Umbrella 雨伞
+    '1020815058332',  # Barro Bowl & Plate 碗盘
+    '717349639294',   # Weekday 长凳
+    '824946188993',   # Taburete 8 Bar Stool 吧椅
+    '824607518747',   # Colour Rack 落地衣架
+    '824882661931',   # Common Pendant & Table Cord 灯具组
+    '742092260504',   # Apex Lamp 台灯
+    '682036237751',   # Korpus 置物架
+    '886839411718',   # Empire Vase 花瓶
+    '880816460277',   # Apex Floor Lamp 落地灯
+    '965048597796',   # La Pittura 餐盘
+    '888002957800',   # Weekend Bag 帆布袋
+    '1016294283167',  # Facet Cabinet 边柜
+    '737675603229',   # Arcs Trolley 小推车
+    '583134215392',   # Jessica Hans Vase 花瓶
+    '781547798998',   # Slice Chopping Board 砧板
+    '679198301351',   # Colour Crate 收纳篮
+    '880120382310',   # Apex Wall Lamp 壁灯
+    '690221882602',   # Bowler Table 茶几
+    '1022489092196',  # Conical Vase 花瓶
+    '887041510904',   # Coco Door Mat 地垫
+    '689952405763',   # Revolver Stool & Bar Stool 吧椅
+]
+# 4 个"扩展"商品 — 任务面板能查名字，但不算主链 25（不出现在单品视图）
+EXTRA_TASK_PIDS = [
+    '564552361178',   # Cotton Bag 帆布包
+    '1021718193334',  # Manolito Stool 矮凳
+    '818210888511',   # Paper Shade 灯罩
+    '886901025905',   # PC Portable Lamp 便携灯
+]
+
 app = FastAPI(title="HAY Dashboard API")
 
 # 挂载商品图片静态目录
@@ -415,20 +454,11 @@ def get_raw_data():
             except Exception:
                 video_daily = {}
 
-            # 9. official_pids = 主链 SPU 列表（dim_product 里 spu_id == product_id 的）
-            #    排除 ETL 的 EXTRA_PRODUCTS 兜底（Cotton Bag / PC Portable / Paper Shade / Manolito 等）
-            #    它们写进 dim_product 是为了让任务面板能查到名字，不是主链单品。
-            EXTRA_FALLBACK_PIDS = {
-                '564552361178',   # Cotton Bag
-                '886901025905',   # PC Portable Lamp
-                '818210888511',   # Paper Shade
-                '1021718193334',  # Manolito Stool
-                # Barro Bowl & Plate (1020815058332) 是真主链，留在 25 里
-                # Facet 副SKU (824452791755) spu!=pid，本来就不会被算进
-            }
-            official_pids = sorted({d["spu_id"] for d in dim
-                                    if d["spu_id"] == d["product_id"]
-                                    and d["product_id"] not in EXTRA_FALLBACK_PIDS})
+            # 9. official_pids = 主链 25 个 PID。
+            # 不再走 dim_product 推断（生产库里 spu==pid 的行有 57 条，
+            # 包含历史/关联/副SKU 噪声，运营看到 53 主链觉得对不上）。
+            # 改用模块顶部的 OFFICIAL_25_PIDS 常量，前后端单一数据源。
+            official_pids = sorted(set(OFFICIAL_25_PIDS))
 
             # 9a. img_map —— 实际扫描 25个商品图片/ 目录，避免幽灵路径
             img_map = {}
@@ -1547,41 +1577,9 @@ def get_tasks_with_metrics(period_label: Optional[str] = None):
                      t.updated_at DESC NULLS LAST, t.id DESC
         """)
 
-        # 4a. 25 个主链官方 PID — 硬编码，和前端 RAW.official_pids 完全一致。
-        # 不再走 dim_product 推断（spu_id==product_id 在生产库里覆盖不全，会漏到 13~17 个）。
-        OFFICIAL_25_PIDS = [
-            '1020175879777',  # Grid Bag 尼龙包
-            '580467335137',   # Basket 收纳篓
-            '652664516885',   # Knit 衣架
-            '975799789205',   # Canopy Umbrella 雨伞
-            '1020815058332',  # Barro Bowl & Plate 碗盘
-            '717349639294',   # Weekday 长凳
-            '824946188993',   # Taburete 8 Bar Stool 吧椅
-            '824607518747',   # Colour Rack 落地衣架
-            '824882661931',   # Common Pendant & Table Cord 灯具组
-            '742092260504',   # Apex Lamp 台灯
-            '682036237751',   # Korpus 置物架
-            '886839411718',   # Empire Vase 花瓶
-            '880816460277',   # Apex Floor Lamp 落地灯
-            '965048597796',   # La Pittura 餐盘
-            '888002957800',   # Weekend Bag 帆布袋
-            '1016294283167',  # Facet Cabinet 边柜
-            '737675603229',   # Arcs Trolley 小推车
-            '583134215392',   # Jessica Hans Vase 花瓶
-            '781547798998',   # Slice Chopping Board 砧板
-            '679198301351',   # Colour Crate 收纳篮
-            '880120382310',   # Apex Wall Lamp 壁灯
-            '690221882602',   # Bowler Table 茶几
-            '1022489092196',  # Conical Vase 花瓶
-            '887041510904',   # Coco Door Mat 地垫
-            '689952405763',   # Revolver Stool & Bar Stool 吧椅
-            # 4 扩展商品（也显示进团队 tab）
-            '564552361178',   # Cotton Bag 帆布包
-            '1021718193334',  # Manolito Stool 矮凳
-            '818210888511',   # Paper Shade 灯罩
-            '886901025905',   # PC Portable Lamp 便携灯
-        ]
-        official_pids = sorted(set(OFFICIAL_25_PIDS))
+        # 4a. 任务面板的"全部 PID" = 25 主链 + 4 扩展（任务能查到名字）= 29 个
+        # OFFICIAL_25_PIDS 与 EXTRA_TASK_PIDS 在 server.py 模块顶部定义。
+        official_pids = sorted(set(OFFICIAL_25_PIDS) | set(EXTRA_TASK_PIDS))
 
         # 4b. 涉及到的 product_id：25 个主链 + 当期 tasks 表里实际出现的 PID
         pids_with_tasks = {t["product_id"] for t in tasks}
