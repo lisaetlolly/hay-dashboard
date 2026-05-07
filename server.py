@@ -4614,6 +4614,209 @@ def admin_syzt_audit(
     return HTMLResponse(html)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Seeding Hub · KOL 数据上报 webhook
+# ══════════════════════════════════════════════════════════════════════
+# - POST /api/seeding/kol-webhook   接收平台推送的博主资料
+# - GET  /api/seeding/kols          seeding-hub.html 启动时读取
+# - POST /api/seeding/kol-webhook/test  健康检查
+# 鉴权（可选）：环境变量 SEEDING_WEBHOOK_TOKEN 设了之后，请求头需带 X-Seeding-Token
+# 字段映射兜底：常见命名（中文/snake_case/camelCase）都接
+
+_SEEDING_KOL_TABLE_READY = False
+
+def _ensure_seeding_kol_table():
+    global _SEEDING_KOL_TABLE_READY
+    if _SEEDING_KOL_TABLE_READY:
+        return
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS seeding_kols (
+                id              SERIAL PRIMARY KEY,
+                match_key       TEXT UNIQUE NOT NULL,
+                red_id          TEXT,
+                internal_user_id TEXT,
+                name            TEXT,
+                followers       INTEGER,
+                likes           BIGINT,
+                gender          TEXT,
+                ip_location     TEXT,
+                contact         TEXT,
+                bio             TEXT,
+                profile_url     TEXT,
+                pgy_url         TEXT,
+                avatar_url      TEXT,
+                raw_payload     JSONB,
+                source          TEXT,
+                received_at     TIMESTAMPTZ DEFAULT NOW(),
+                updated_at      TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        conn.commit()
+    _SEEDING_KOL_TABLE_READY = True
+
+
+def _pick(d: dict, *keys):
+    """从 dict 里拿第一个非空字段（容多种命名）"""
+    for k in keys:
+        if k in d and d[k] not in (None, "", []):
+            return d[k]
+    return None
+
+
+def _normalize_kol_payload(payload: dict) -> dict:
+    """把任意命名的入参映射到我们字段。返回 dict，未识别字段都进 raw_payload。"""
+    p = payload or {}
+    red_id = _pick(p, "小红书号", "redId", "red_id", "xhs_id", "xhsId", "xhsNo", "xhs_no")
+    internal_id = _pick(p, "博主ID", "userId", "user_id", "internalUserId", "internal_id", "blogger_id", "bloggerId")
+    name = _pick(p, "昵称", "博主昵称", "name", "nickname", "userName", "user_name")
+    followers = _pick(p, "粉丝数", "followers", "fans", "fans_count", "fansCount")
+    likes = _pick(p, "获赞与收藏", "likes", "likesAndCollects", "likes_collects", "interactCount", "interact_count")
+    gender = _pick(p, "性别", "博主性别", "gender", "sex")
+    ip_location = _pick(p, "IP地址", "ip", "ipLocation", "ip_location", "location")
+    contact = _pick(p, "邮箱", "email", "contact")
+    bio = _pick(p, "简介", "博主简介", "bio", "desc", "description")
+    profile_url = _pick(p, "博主链接", "profileUrl", "profile_url", "url", "xhs_url", "xhsUrl")
+    pgy_url = _pick(p, "蒲公英链接", "pgyUrl", "pgy_url")
+    avatar_url = _pick(p, "头像链接", "博主头像链接", "avatarUrl", "avatar_url", "avatar")
+
+    def _to_int(x):
+        try: return int(x)
+        except Exception: return None
+
+    out = {
+        "red_id": str(red_id) if red_id is not None else None,
+        "internal_user_id": str(internal_id) if internal_id is not None else None,
+        "name": str(name) if name is not None else None,
+        "followers": _to_int(followers),
+        "likes": _to_int(likes),
+        "gender": str(gender) if gender is not None else None,
+        "ip_location": str(ip_location) if ip_location is not None else None,
+        "contact": str(contact) if contact is not None else None,
+        "bio": str(bio) if bio is not None else None,
+        "profile_url": str(profile_url) if profile_url is not None else None,
+        "pgy_url": str(pgy_url) if pgy_url is not None else None,
+        "avatar_url": str(avatar_url) if avatar_url is not None else None,
+    }
+    # 计算稳定 match_key，优先小红书号 > 博主ID(mongoId) > 昵称
+    match_key = out["red_id"] or out["internal_user_id"] or (f"name:{out['name']}" if out["name"] else None)
+    out["match_key"] = match_key
+    return out
+
+
+def _check_seeding_token(x_token: Optional[str] = Header(default=None, alias="X-Seeding-Token")):
+    expected = os.environ.get("SEEDING_WEBHOOK_TOKEN", "")
+    # 没设环境变量 → 不做校验（允许平台先联调）
+    if not expected:
+        return True
+    if x_token != expected:
+        raise HTTPException(401, "X-Seeding-Token 不匹配")
+    return True
+
+
+@app.post("/api/seeding/kol-webhook")
+def seeding_kol_webhook(
+    payload: Any,
+    request_source: Optional[str] = Header(default=None, alias="X-Source"),
+    _ok: bool = Depends(_check_seeding_token),
+):
+    """
+    接收 KOL 数据上报。payload 可以是单条 dict，或一组 [dict, dict, ...]。
+    匹配规则：先按小红书号，否则按博主ID(mongoId)，再否则按昵称。
+    """
+    _ensure_seeding_kol_table()
+    items = payload if isinstance(payload, list) else [payload]
+    if not items:
+        raise HTTPException(400, "空 payload")
+
+    accepted, skipped = 0, 0
+    errors = []
+    with db() as conn:
+        cur = conn.cursor()
+        for raw in items:
+            if not isinstance(raw, dict):
+                skipped += 1
+                continue
+            row_data = _normalize_kol_payload(raw)
+            if not row_data["match_key"]:
+                skipped += 1
+                errors.append("缺少小红书号/博主ID/昵称三者之一，跳过")
+                continue
+            try:
+                cur.execute("""
+                    INSERT INTO seeding_kols
+                      (match_key, red_id, internal_user_id, name, followers, likes,
+                       gender, ip_location, contact, bio, profile_url, pgy_url, avatar_url,
+                       raw_payload, source, received_at, updated_at)
+                    VALUES
+                      (%(match_key)s, %(red_id)s, %(internal_user_id)s, %(name)s, %(followers)s, %(likes)s,
+                       %(gender)s, %(ip_location)s, %(contact)s, %(bio)s, %(profile_url)s, %(pgy_url)s, %(avatar_url)s,
+                       %(raw)s::jsonb, %(source)s, NOW(), NOW())
+                    ON CONFLICT (match_key) DO UPDATE SET
+                      red_id           = COALESCE(EXCLUDED.red_id,           seeding_kols.red_id),
+                      internal_user_id = COALESCE(EXCLUDED.internal_user_id, seeding_kols.internal_user_id),
+                      name             = COALESCE(EXCLUDED.name,             seeding_kols.name),
+                      followers        = COALESCE(EXCLUDED.followers,        seeding_kols.followers),
+                      likes            = COALESCE(EXCLUDED.likes,            seeding_kols.likes),
+                      gender           = COALESCE(EXCLUDED.gender,           seeding_kols.gender),
+                      ip_location      = COALESCE(EXCLUDED.ip_location,      seeding_kols.ip_location),
+                      contact          = COALESCE(EXCLUDED.contact,          seeding_kols.contact),
+                      bio              = COALESCE(EXCLUDED.bio,              seeding_kols.bio),
+                      profile_url      = COALESCE(EXCLUDED.profile_url,      seeding_kols.profile_url),
+                      pgy_url          = COALESCE(EXCLUDED.pgy_url,          seeding_kols.pgy_url),
+                      avatar_url       = COALESCE(EXCLUDED.avatar_url,       seeding_kols.avatar_url),
+                      raw_payload      = EXCLUDED.raw_payload,
+                      source           = COALESCE(EXCLUDED.source,           seeding_kols.source),
+                      updated_at       = NOW()
+                """, {
+                    **row_data,
+                    "raw": psycopg2.extras.Json(raw),
+                    "source": request_source,
+                })
+                accepted += 1
+            except Exception as e:
+                skipped += 1
+                errors.append(str(e)[:200])
+        conn.commit()
+
+    return {"ok": True, "accepted": accepted, "skipped": skipped, "errors": errors}
+
+
+@app.get("/api/seeding/kol-webhook/test")
+def seeding_kol_webhook_test():
+    """健康检查。可在浏览器地址栏直接打开。"""
+    _ensure_seeding_kol_table()
+    return {"ok": True, "msg": "endpoint alive — POST 同地址即可上报"}
+
+
+@app.get("/api/seeding/kols")
+def seeding_kol_list():
+    """seeding-hub.html 启动时拉取已收到的 KOL 数据。"""
+    _ensure_seeding_kol_table()
+    with db() as conn:
+        return rows(conn, """
+            SELECT
+              red_id          AS "redId",
+              internal_user_id AS "internalUserId",
+              name,
+              followers,
+              likes,
+              gender,
+              ip_location     AS "ipLocation",
+              contact,
+              bio,
+              profile_url     AS "profileUrl",
+              pgy_url         AS "pgyUrl",
+              avatar_url      AS "avatarUrl",
+              source,
+              received_at     AS "receivedAt",
+              updated_at      AS "updatedAt"
+            FROM seeding_kols
+            ORDER BY updated_at DESC
+        """)
+
+
 # ── 静态文件：直接访问 http://localhost:766 打开看板 ──
 @app.get("/")
 def serve_dashboard():

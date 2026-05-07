@@ -506,28 +506,14 @@ const defaultData = {
     blogger: ['美妆', '穿搭', '美食', '母婴', '运动', '宠物', '旅行', '颜值', '剧情', '才艺']
   },
   // 图片
-  images: [
-    { id: 'img1', title: '春季新品场景图 01', dataUrl: '', emoji: '🌸', tags: ['美妆', '场景图', '产品图'], createdAt: Date.now() - 86400000*7, uploadedBy: '管理员' },
-    { id: 'img2', title: '九宫格穿搭样片', dataUrl: '', emoji: '👗', tags: ['穿搭', '九宫格'], createdAt: Date.now() - 86400000*5, uploadedBy: '管理员' },
-    { id: 'img3', title: '居家好物合集', dataUrl: '', emoji: '🏠', tags: ['居家', '生活方式'], createdAt: Date.now() - 86400000*3, uploadedBy: '运营A' }
-  ],
+  images: [],
   // KOL（按 RED ID 唯一）
-  kols: [
-    { id: 'k1', redId: 'xhs8821', name: '小柚子爱护肤', followers: 45000, type: '美妆', tier: '腰部', contact: 'xhs_88@example.com', wechat: 'yuzi-pr', city: '上海', cooperationStatus: '已合作', notes: '互动率高，对产品配方较挑剔', createdAt: Date.now() - 86400000*30 },
-    { id: 'k2', redId: 'xhs9912', name: '柚柚的搭配日记', followers: 12000, type: '穿搭', tier: '尾部', contact: 'youyou@example.com', wechat: 'youyou-pr', city: '杭州', cooperationStatus: '意向中', notes: '风格清冷，适合白色系产品', createdAt: Date.now() - 86400000*20 },
-    { id: 'k3', redId: 'xhs5566', name: '小柚子爱护肤', followers: 220000, type: '美妆', tier: '头部', contact: 'official@xhs5566.com', wechat: 'biz-555', city: '广州', cooperationStatus: '未联系', notes: '同名博主，注意区分', createdAt: Date.now() - 86400000*10 }
-  ],
+  kols: [],
   // Seeding 记录
-  seedings: [
-    { id: 's1', kolRedId: 'xhs8821', skuList: 'SKU-A001×2, SKU-B003×1', shipDate: Date.now() - 86400000*15, trackingNo: 'SF1234567890', deliveryStatus: '已签收', shippingAddress: '上海市XXX', cost: 350, notes: '春季新品种草', createdAt: Date.now() - 86400000*16 },
-    { id: 's2', kolRedId: 'xhs9912', skuList: 'SKU-A001×1', shipDate: Date.now() - 86400000*8, trackingNo: 'SF9876543210', deliveryStatus: '运输中', shippingAddress: '杭州市XXX', cost: 120, notes: '', createdAt: Date.now() - 86400000*8 }
-  ],
+  seedings: [],
   // 笔记表现
-  notes: [
-    { id: 'n1', seedingId: 's1', kolRedId: 'xhs8821', title: '这个春季必入的护肤组合', noteUrl: 'https://xhs.com/note/123', postDate: Date.now() - 86400000*10, exposure: 85000, engagement: 4200, conversion: 156, performanceTags: ['高转化'], imageIds: ['img1'] },
-    { id: 'n2', seedingId: 's1', kolRedId: 'xhs8821', title: '日常护肤vlog', noteUrl: 'https://xhs.com/note/124', postDate: Date.now() - 86400000*5, exposure: 320000, engagement: 8500, conversion: 80, performanceTags: ['高曝光', '高溢出'], imageIds: [] }
-  ],
-  // 文案库
+  notes: [],
+  // 文案库（bannedWords 是广告法真规则，保留；其余清空待补真实内容）
   copy: {
     bannedWords: [
       { id: 'bw1', word: '最佳', reason: '极限词', source: '《广告法》第九条', createdAt: Date.now() },
@@ -536,26 +522,132 @@ const defaultData = {
       { id: 'bw4', word: '彻底根治', reason: '医疗广告禁用词', source: '《广告法》第十六条', createdAt: Date.now() },
       { id: 'bw5', word: '100%有效', reason: '绝对化用语', source: '《广告法》第九条', createdAt: Date.now() }
     ],
-    mascot: [
-      { id: 'm1', name: '品小宝', desc: '官方品牌IP，圆脸，粉色头发，戴小眼镜，温柔治愈风。', usage: '所有海报、产品图、社媒头像', tone: '温柔、可信赖、好闺蜜', createdAt: Date.now() }
-    ],
-    titles: [
-      { id: 't1', content: '【春日焕新】3步get水光肌', usage: '春季活动', tags: ['节日', '种草'], createdAt: Date.now() },
-      { id: 't2', content: '夏天到了，这瓶不能少', usage: '夏季活动', tags: ['日常'], createdAt: Date.now() }
-    ],
-    slogans: [
-      { id: 'sl1', content: '陪你美得真实自在', usage: '品牌主slogan', tags: ['主'], createdAt: Date.now() },
-      { id: 'sl2', content: '让护肤回归初心', usage: '产品线A', tags: ['产品线'], createdAt: Date.now() }
-    ],
-    copy: [
-      { id: 'c1', content: '换季敏感不用怕，这一瓶安抚到位～配方温和到孕妇都能用，姐妹们冲！', usage: '种草模板·敏肌', tags: ['种草', '敏肌'], createdAt: Date.now() },
-      { id: 'c2', content: '在家也能做的轻医美，每晚10分钟，肌肤喝饱水', usage: '种草模板·补水', tags: ['种草', '补水'], createdAt: Date.now() }
-    ]
+    mascot: [],
+    titles: [],
+    slogans: [],
+    copy: []
   }
 };
 
 let data = loadData();
 let currentView = 'dashboard';
+
+/* === 3月博主素材（自动注入，21位博主、117个素材） === */
+const MARCH_SEED = {"kols": [{"id": "k_mar_akyko", "redId": "Akyko", "name": "Akyko", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：衣架", "createdAt": 1741334400000}, {"id": "k_mar_averyp", "redId": "AveryP", "name": "AveryP", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_oldseven", "redId": "Oldseven", "name": "Oldseven", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid、Grid全系列、吧台椅、吧椅深度讲解", "createdAt": 1741334400000}, {"id": "k_mar_ptao", "redId": "Ptao", "name": "Ptao", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：台灯、花瓶、衣架", "createdAt": 1741334400000}, {"id": "k_mar_rreneeni", "redId": "Rreneeni", "name": "Rreneeni", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_saladbob", "redId": "Saladbob", "name": "Saladbob", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_lyumay", "redId": "lyumay", "name": "lyumay", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid包", "createdAt": 1741334400000}, {"id": "k_mar_unacc", "redId": "unacc", "name": "unacc", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_unaccc", "redId": "unaccc", "name": "unaccc", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_zaza", "redId": "zaza吼", "name": "zaza吼", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_27182", "redId": "一原", "name": "一原", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：地毯、洗衣篮、衣架", "createdAt": 1741334400000}, {"id": "k_mar_42187", "redId": "一颗大枣", "name": "一颗大枣", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_73177", "redId": "三聿三聿", "name": "三聿三聿", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：花瓶、餐盘", "createdAt": 1741334400000}, {"id": "k_mar_38561", "redId": "徐拉蒂", "name": "徐拉蒂", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：花瓶", "createdAt": 1741334400000}, {"id": "k_mar_60760", "redId": "杜可疯", "name": "杜可疯", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_98380", "redId": "杰西卡", "name": "杰西卡", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid、花瓶、餐盘", "createdAt": 1741334400000}, {"id": "k_mar_37473", "redId": "董洁", "name": "董洁", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：La餐具", "createdAt": 1741334400000}, {"id": "k_mar_80166", "redId": "郝眉毛", "name": "郝眉毛", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid", "createdAt": 1741334400000}, {"id": "k_mar_41008", "redId": "露露子", "name": "露露子", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：吧台椅、水壶、花瓶", "createdAt": 1741334400000}, {"id": "k_mar_19826", "redId": "青年女动物", "name": "青年女动物", "followers": 0, "type": "居家", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Apex灯", "createdAt": 1741334400000}, {"id": "k_mar_3149", "redId": "马肥丝", "name": "马肥丝", "followers": 0, "type": "生活方式", "tier": "", "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月素材已交付：Grid种草", "createdAt": 1741334400000}], "seedings": [{"id": "s_mar_akyko", "kolRedId": "Akyko", "skuList": "衣架", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·3个素材", "createdAt": 1741334400000}, {"id": "s_mar_averyp", "kolRedId": "AveryP", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·10个素材", "createdAt": 1741334400000}, {"id": "s_mar_oldseven", "kolRedId": "Oldseven", "skuList": "Grid、Grid全系列、吧台椅、吧椅深度讲解", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·2个素材", "createdAt": 1741334400000}, {"id": "s_mar_ptao", "kolRedId": "Ptao", "skuList": "台灯、花瓶、衣架", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·11个素材", "createdAt": 1741334400000}, {"id": "s_mar_rreneeni", "kolRedId": "Rreneeni", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·8个素材", "createdAt": 1741334400000}, {"id": "s_mar_saladbob", "kolRedId": "Saladbob", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·1个素材", "createdAt": 1741334400000}, {"id": "s_mar_lyumay", "kolRedId": "lyumay", "skuList": "Grid包", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·1个素材", "createdAt": 1741334400000}, {"id": "s_mar_unacc", "kolRedId": "unacc", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·2个素材", "createdAt": 1741334400000}, {"id": "s_mar_unaccc", "kolRedId": "unaccc", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·4个素材", "createdAt": 1741334400000}, {"id": "s_mar_zaza", "kolRedId": "zaza吼", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·5个素材", "createdAt": 1741334400000}, {"id": "s_mar_27182", "kolRedId": "一原", "skuList": "地毯、洗衣篮、衣架", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·9个素材", "createdAt": 1741334400000}, {"id": "s_mar_42187", "kolRedId": "一颗大枣", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·9个素材", "createdAt": 1741334400000}, {"id": "s_mar_73177", "kolRedId": "三聿三聿", "skuList": "花瓶、餐盘", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·6个素材", "createdAt": 1741334400000}, {"id": "s_mar_38561", "kolRedId": "徐拉蒂", "skuList": "花瓶", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·7个素材", "createdAt": 1741334400000}, {"id": "s_mar_60760", "kolRedId": "杜可疯", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·2个素材", "createdAt": 1741334400000}, {"id": "s_mar_98380", "kolRedId": "杰西卡", "skuList": "Grid、花瓶、餐盘", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·12个素材", "createdAt": 1741334400000}, {"id": "s_mar_37473", "kolRedId": "董洁", "skuList": "La餐具", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·3个素材", "createdAt": 1741334400000}, {"id": "s_mar_80166", "kolRedId": "郝眉毛", "skuList": "Grid", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·6个素材", "createdAt": 1741334400000}, {"id": "s_mar_41008", "kolRedId": "露露子", "skuList": "吧台椅、水壶、花瓶", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·12个素材", "createdAt": 1741334400000}, {"id": "s_mar_19826", "kolRedId": "青年女动物", "skuList": "Apex灯", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·3个素材", "createdAt": 1741334400000}, {"id": "s_mar_3149", "kolRedId": "马肥丝", "skuList": "Grid种草", "shipDate": 1740960000000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "notes": "3月种草·1个素材", "createdAt": 1741334400000}], "images": [{"id": "img_mar_akyko_1_jpg", "title": "@Akyko · 衣架 1", "dataUrl": "3月博主素材/@Akyko-衣架1.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Akyko", "isVideo": false, "fileName": "@Akyko-衣架1.JPG"}, {"id": "img_mar_akyko_2_jpg", "title": "@Akyko · 衣架 2", "dataUrl": "3月博主素材/@Akyko-衣架2.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Akyko", "isVideo": false, "fileName": "@Akyko-衣架2.JPG"}, {"id": "img_mar_akyko_3_jpg", "title": "@Akyko · 衣架 3", "dataUrl": "3月博主素材/@Akyko-衣架3.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Akyko", "isVideo": false, "fileName": "@Akyko-衣架3.JPG"}, {"id": "img_mar_averyp_1_jpeg", "title": "@AveryP · Grid 1", "dataUrl": "3月博主素材/@AveryP-Grid1.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid1.jpeg"}, {"id": "img_mar_averyp_2_jpeg", "title": "@AveryP · Grid 2", "dataUrl": "3月博主素材/@AveryP-Grid2.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid2.jpeg"}, {"id": "img_mar_averyp_3_jpeg", "title": "@AveryP · Grid 3", "dataUrl": "3月博主素材/@AveryP-Grid3.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid3.jpeg"}, {"id": "img_mar_averyp_4_jpeg", "title": "@AveryP · Grid 4", "dataUrl": "3月博主素材/@AveryP-Grid4.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid4.jpeg"}, {"id": "img_mar_averyp_5_jpeg", "title": "@AveryP · Grid 5", "dataUrl": "3月博主素材/@AveryP-Grid5.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid5.jpeg"}, {"id": "img_mar_averyp_6_jpeg", "title": "@AveryP · Grid 6", "dataUrl": "3月博主素材/@AveryP-Grid6.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid6.jpeg"}, {"id": "img_mar_averyp_7_jpeg", "title": "@AveryP · Grid 7", "dataUrl": "3月博主素材/@AveryP-Grid7.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid7.jpeg"}, {"id": "img_mar_averyp_8_jpeg", "title": "@AveryP · Grid 8", "dataUrl": "3月博主素材/@AveryP-Grid8.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid8.jpeg"}, {"id": "img_mar_averyp_9_jpeg", "title": "@AveryP · Grid 9", "dataUrl": "3月博主素材/@AveryP-Grid9.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid9.jpeg"}, {"id": "img_mar_averyp_10_jpeg", "title": "@AveryP · Grid 10", "dataUrl": "3月博主素材/@AveryP-Grid10.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "AveryP", "isVideo": false, "fileName": "@AveryP-Grid10.jpeg"}, {"id": "img_mar_oldseven_0_mov", "title": "@Oldseven · Grid/吧椅深度讲解", "dataUrl": "3月博主素材/@oldseven -Grid:吧椅深度讲解.mov", "emoji": "🎬", "tags": ["3月素材", "视频", "Grid", "吧椅深度讲解"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Oldseven", "isVideo": true, "fileName": "@oldseven -Grid:吧椅深度讲解.mov"}, {"id": "img_mar_oldseven_1_mov", "title": "@Oldseven · Grid全系列/吧台椅 1", "dataUrl": "3月博主素材/@Oldseven- Grid全系列:吧台椅1.mov", "emoji": "🎬", "tags": ["3月素材", "视频", "Grid全系列", "吧台椅"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Oldseven", "isVideo": true, "fileName": "@Oldseven- Grid全系列:吧台椅1.mov"}, {"id": "img_mar_ptao_1_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 1", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯1.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯1.jpeg"}, {"id": "img_mar_ptao_2_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 2", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯2.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯2.jpeg"}, {"id": "img_mar_ptao_3_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 3", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯3.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯3.jpeg"}, {"id": "img_mar_ptao_4_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 4", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯4.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯4.jpeg"}, {"id": "img_mar_ptao_5_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 5", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯5.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯5.jpeg"}, {"id": "img_mar_ptao_6_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 6", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯6.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯6.jpeg"}, {"id": "img_mar_ptao_7_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 7", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯7.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯7.jpeg"}, {"id": "img_mar_ptao_8_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 8", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯8.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯8.jpeg"}, {"id": "img_mar_ptao_9_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 9", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯9.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯9.jpeg"}, {"id": "img_mar_ptao_10_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 10", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯10.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯10.jpeg"}, {"id": "img_mar_ptao_11_jpeg", "title": "@Ptao · 衣架/花瓶/台灯 11", "dataUrl": "3月博主素材/@Ptao-衣架:花瓶:台灯11.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "花瓶", "台灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Ptao", "isVideo": false, "fileName": "@Ptao-衣架:花瓶:台灯11.jpeg"}, {"id": "img_mar_rreneeni_1_jpg", "title": "@Rreneeni · Grid 1", "dataUrl": "3月博主素材/@Rreneeni-Grid1.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Rreneeni", "isVideo": false, "fileName": "@Rreneeni-Grid1.jpg"}, {"id": "img_mar_rreneeni_2_jpg", "title": "@Rreneeni · Grid 2", "dataUrl": "3月博主素材/@Rreneeni-Grid2.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Rreneeni", "isVideo": false, "fileName": "@Rreneeni-Grid2.jpg"}, {"id": "img_mar_rreneeni_3_jpg", "title": "@Rreneeni · Grid 3", "dataUrl": "3月博主素材/@Rreneeni-Grid3.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Rreneeni", "isVideo": false, "fileName": "@Rreneeni-Grid3.jpg"}, {"id": "img_mar_rreneeni_4_jpg", "title": "@Rreneeni · Grid 4", "dataUrl": "3月博主素材/@Rreneeni-Grid4.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Rreneeni", "isVideo": false, "fileName": "@Rreneeni-Grid4.jpg"}, {"id": "img_mar_rreneeni_5_jpg", "title": "@Rreneeni · Grid 5", "dataUrl": "3月博主素材/@Rreneeni-Grid5.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Rreneeni", "isVideo": false, "fileName": "@Rreneeni-Grid5.jpg"}, {"id": "img_mar_rreneeni_6_jpg", "title": "@Rreneeni · Grid 6", "dataUrl": "3月博主素材/@Rreneeni-Grid6.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Rreneeni", "isVideo": false, "fileName": "@Rreneeni-Grid6.jpg"}, {"id": "img_mar_rreneeni_7_jpg", "title": "@Rreneeni · Grid 7", "dataUrl": "3月博主素材/@Rreneeni-Grid7.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Rreneeni", "isVideo": false, "fileName": "@Rreneeni-Grid7.jpg"}, {"id": "img_mar_rreneeni_8_jpg", "title": "@Rreneeni · Grid 8", "dataUrl": "3月博主素材/@Rreneeni-Grid8.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Rreneeni", "isVideo": false, "fileName": "@Rreneeni-Grid8.jpg"}, {"id": "img_mar_saladbob_3_mov", "title": "@Saladbob · Grid 3", "dataUrl": "3月博主素材/@Saladbob- Grid3.mov", "emoji": "🎬", "tags": ["3月素材", "视频", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "Saladbob", "isVideo": true, "fileName": "@Saladbob- Grid3.mov"}, {"id": "img_mar_lyumay_0_mp4", "title": "@lyumay · Grid包", "dataUrl": "3月博主素材/@lyumay-Grid包.mp4", "emoji": "🎬", "tags": ["3月素材", "视频", "Grid包"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "lyumay", "isVideo": true, "fileName": "@lyumay-Grid包.mp4"}, {"id": "img_mar_unacc_1_jpeg", "title": "@unacc · Grid 1", "dataUrl": "3月博主素材/@unacc-Grid1.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "unacc", "isVideo": false, "fileName": "@unacc-Grid1.jpeg"}, {"id": "img_mar_unacc_2_jpeg", "title": "@unacc · Grid 2", "dataUrl": "3月博主素材/@unacc-Grid2.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "unacc", "isVideo": false, "fileName": "@unacc-Grid2.jpeg"}, {"id": "img_mar_unaccc_1_jpg", "title": "@unaccc · Grid 1", "dataUrl": "3月博主素材/@unaccc-Grid1.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "unaccc", "isVideo": false, "fileName": "@unaccc-Grid1.jpg"}, {"id": "img_mar_unaccc_2_jpg", "title": "@unaccc · Grid 2", "dataUrl": "3月博主素材/@unaccc-Grid2.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "unaccc", "isVideo": false, "fileName": "@unaccc-Grid2.jpg"}, {"id": "img_mar_unaccc_3_jpg", "title": "@unaccc · Grid 3", "dataUrl": "3月博主素材/@unaccc-Grid3.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "unaccc", "isVideo": false, "fileName": "@unaccc-Grid3.jpg"}, {"id": "img_mar_unaccc_4_jpg", "title": "@unaccc · Grid 4", "dataUrl": "3月博主素材/@unaccc-Grid4.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "unaccc", "isVideo": false, "fileName": "@unaccc-Grid4.jpg"}, {"id": "img_mar_zaza_1_jpg", "title": "@zaza吼 · Grid 1", "dataUrl": "3月博主素材/@zaza吼-Grid1.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "zaza吼", "isVideo": false, "fileName": "@zaza吼-Grid1.jpg"}, {"id": "img_mar_zaza_2_jpg", "title": "@zaza吼 · Grid 2", "dataUrl": "3月博主素材/@zaza吼-Grid2.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "zaza吼", "isVideo": false, "fileName": "@zaza吼-Grid2.jpg"}, {"id": "img_mar_zaza_3_jpg", "title": "@zaza吼 · Grid 3", "dataUrl": "3月博主素材/@zaza吼-Grid3.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "zaza吼", "isVideo": false, "fileName": "@zaza吼-Grid3.jpg"}, {"id": "img_mar_zaza_4_jpg", "title": "@zaza吼 · Grid 4", "dataUrl": "3月博主素材/@zaza吼-Grid4.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "zaza吼", "isVideo": false, "fileName": "@zaza吼-Grid4.jpg"}, {"id": "img_mar_zaza_5_jpg", "title": "@zaza吼 · Grid 5", "dataUrl": "3月博主素材/@zaza吼-Grid5.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "zaza吼", "isVideo": false, "fileName": "@zaza吼-Grid5.jpg"}, {"id": "img_mar__1_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 1", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯1.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯1.JPG"}, {"id": "img_mar__3_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 3", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯3.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯3.JPG"}, {"id": "img_mar__4_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 4", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯4.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯4.JPG"}, {"id": "img_mar__5_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 5", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯5.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯5.JPG"}, {"id": "img_mar__6_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 6", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯6.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯6.JPG"}, {"id": "img_mar__7_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 7", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯7.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯7.JPG"}, {"id": "img_mar__9_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 9", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯9.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯9.JPG"}, {"id": "img_mar__10_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 10", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯10.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯10.JPG"}, {"id": "img_mar__11_jpg", "title": "@一原 · 衣架/洗衣篮/地毯 11", "dataUrl": "3月博主素材/@一原-衣架:洗衣篮:地毯11.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "衣架", "洗衣篮", "地毯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一原", "isVideo": false, "fileName": "@一原-衣架:洗衣篮:地毯11.JPG"}, {"id": "img_mar__1_jpeg", "title": "@一颗大枣 · Grid 1", "dataUrl": "3月博主素材/@一颗大枣-Grid1.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid1.jpeg"}, {"id": "img_mar__2_jpeg", "title": "@一颗大枣 · Grid 2", "dataUrl": "3月博主素材/@一颗大枣-Grid2.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid2.jpeg"}, {"id": "img_mar__3_jpeg", "title": "@一颗大枣 · Grid 3", "dataUrl": "3月博主素材/@一颗大枣-Grid3.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid3.jpeg"}, {"id": "img_mar__4_jpeg", "title": "@一颗大枣 · Grid 4", "dataUrl": "3月博主素材/@一颗大枣-Grid4.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid4.jpeg"}, {"id": "img_mar__5_jpeg", "title": "@一颗大枣 · Grid 5", "dataUrl": "3月博主素材/@一颗大枣-Grid5.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid5.jpeg"}, {"id": "img_mar__6_jpeg", "title": "@一颗大枣 · Grid 6", "dataUrl": "3月博主素材/@一颗大枣-Grid6.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid6.jpeg"}, {"id": "img_mar__7_jpeg", "title": "@一颗大枣 · Grid 7", "dataUrl": "3月博主素材/@一颗大枣-Grid7.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid7.jpeg"}, {"id": "img_mar__8_jpeg", "title": "@一颗大枣 · Grid 8", "dataUrl": "3月博主素材/@一颗大枣-Grid8.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid8.jpeg"}, {"id": "img_mar__9_jpeg", "title": "@一颗大枣 · Grid 9", "dataUrl": "3月博主素材/@一颗大枣-Grid9.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "一颗大枣", "isVideo": false, "fileName": "@一颗大枣-Grid9.jpeg"}, {"id": "img_mar__1_jpg", "title": "@三聿三聿 · 花瓶/餐盘 1", "dataUrl": "3月博主素材/@三聿三聿-花瓶:餐盘1.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "三聿三聿", "isVideo": false, "fileName": "@三聿三聿-花瓶:餐盘1.JPG"}, {"id": "img_mar__2_jpg", "title": "@三聿三聿 · 花瓶/餐盘 2", "dataUrl": "3月博主素材/@三聿三聿-花瓶:餐盘2.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "三聿三聿", "isVideo": false, "fileName": "@三聿三聿-花瓶:餐盘2.JPG"}, {"id": "img_mar__3_jpg", "title": "@三聿三聿 · 花瓶/餐盘 3", "dataUrl": "3月博主素材/@三聿三聿-花瓶:餐盘3.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "三聿三聿", "isVideo": false, "fileName": "@三聿三聿-花瓶:餐盘3.JPG"}, {"id": "img_mar__4_jpg", "title": "@三聿三聿 · 花瓶/餐盘 4", "dataUrl": "3月博主素材/@三聿三聿-花瓶:餐盘4.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "三聿三聿", "isVideo": false, "fileName": "@三聿三聿-花瓶:餐盘4.JPG"}, {"id": "img_mar__5_jpg", "title": "@三聿三聿 · 花瓶/餐盘 5", "dataUrl": "3月博主素材/@三聿三聿-花瓶:餐盘5.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "三聿三聿", "isVideo": false, "fileName": "@三聿三聿-花瓶:餐盘5.JPG"}, {"id": "img_mar__6_jpg", "title": "@三聿三聿 · 花瓶/餐盘 6", "dataUrl": "3月博主素材/@三聿三聿-花瓶:餐盘6.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "三聿三聿", "isVideo": false, "fileName": "@三聿三聿-花瓶:餐盘6.JPG"}, {"id": "img_mar__1_jpg", "title": "@徐拉蒂 · 花瓶 1", "dataUrl": "3月博主素材/@徐拉蒂-花瓶1.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "徐拉蒂", "isVideo": false, "fileName": "@徐拉蒂-花瓶1.jpg"}, {"id": "img_mar__2_jpg", "title": "@徐拉蒂 · 花瓶 2", "dataUrl": "3月博主素材/@徐拉蒂-花瓶2.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "徐拉蒂", "isVideo": false, "fileName": "@徐拉蒂-花瓶2.jpg"}, {"id": "img_mar__3_jpg", "title": "@徐拉蒂 · 花瓶 3", "dataUrl": "3月博主素材/@徐拉蒂-花瓶3.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "徐拉蒂", "isVideo": false, "fileName": "@徐拉蒂-花瓶3.jpg"}, {"id": "img_mar__4_jpg", "title": "@徐拉蒂 · 花瓶 4", "dataUrl": "3月博主素材/@徐拉蒂-花瓶4.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "徐拉蒂", "isVideo": false, "fileName": "@徐拉蒂-花瓶4.jpg"}, {"id": "img_mar__5_jpg", "title": "@徐拉蒂 · 花瓶 5", "dataUrl": "3月博主素材/@徐拉蒂-花瓶5.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "徐拉蒂", "isVideo": false, "fileName": "@徐拉蒂-花瓶5.jpg"}, {"id": "img_mar__6_jpg", "title": "@徐拉蒂 · 花瓶 6", "dataUrl": "3月博主素材/@徐拉蒂-花瓶6.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "徐拉蒂", "isVideo": false, "fileName": "@徐拉蒂-花瓶6.jpg"}, {"id": "img_mar__7_jpg", "title": "@徐拉蒂 · 花瓶 7", "dataUrl": "3月博主素材/@徐拉蒂-花瓶7.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "徐拉蒂", "isVideo": false, "fileName": "@徐拉蒂-花瓶7.jpg"}, {"id": "img_mar__1_jpg", "title": "@杜可疯 · Grid 1", "dataUrl": "3月博主素材/@杜可疯-Grid1.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杜可疯", "isVideo": false, "fileName": "@杜可疯-Grid1.jpg"}, {"id": "img_mar__2_jpg", "title": "@杜可疯 · Grid 2", "dataUrl": "3月博主素材/@杜可疯-Grid2.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杜可疯", "isVideo": false, "fileName": "@杜可疯-Grid2.jpg"}, {"id": "img_mar__1_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 1", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘1.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘1.jpg"}, {"id": "img_mar__2_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 2", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘2.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘2.jpg"}, {"id": "img_mar__3_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 3", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘3.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘3.jpg"}, {"id": "img_mar__4_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 4", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘4.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘4.jpg"}, {"id": "img_mar__5_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 5", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘5.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘5.jpg"}, {"id": "img_mar__6_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 6", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘6.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘6.jpg"}, {"id": "img_mar__7_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 7", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘7.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘7.jpg"}, {"id": "img_mar__8_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 8", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘8.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘8.jpg"}, {"id": "img_mar__9_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 9", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘9.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘9.jpg"}, {"id": "img_mar__10_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 10", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘10.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘10.jpg"}, {"id": "img_mar__11_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 11", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘11.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘11.jpg"}, {"id": "img_mar__12_jpg", "title": "@杰西卡 · Grid/花瓶/餐盘 12", "dataUrl": "3月博主素材/@杰西卡-Grid:花瓶:餐盘12.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid", "花瓶", "餐盘"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "杰西卡", "isVideo": false, "fileName": "@杰西卡-Grid:花瓶:餐盘12.jpg"}, {"id": "img_mar__1_png", "title": "@董洁 · La餐具 1", "dataUrl": "3月博主素材/@董洁-La餐具1.PNG", "emoji": "📷", "tags": ["3月素材", "图片", "La餐具"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "董洁", "isVideo": false, "fileName": "@董洁-La餐具1.PNG"}, {"id": "img_mar__2_png", "title": "@董洁 · La餐具 2", "dataUrl": "3月博主素材/@董洁-La餐具2.PNG", "emoji": "📷", "tags": ["3月素材", "图片", "La餐具"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "董洁", "isVideo": false, "fileName": "@董洁-La餐具2.PNG"}, {"id": "img_mar__3_png", "title": "@董洁 · La餐具 3", "dataUrl": "3月博主素材/@董洁-La餐具3.PNG", "emoji": "📷", "tags": ["3月素材", "图片", "La餐具"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "董洁", "isVideo": false, "fileName": "@董洁-La餐具3.PNG"}, {"id": "img_mar__1_jpeg", "title": "@郝眉毛 · Grid 1", "dataUrl": "3月博主素材/@郝眉毛-Grid1.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "郝眉毛", "isVideo": false, "fileName": "@郝眉毛-Grid1.jpeg"}, {"id": "img_mar__2_jpeg", "title": "@郝眉毛 · Grid 2", "dataUrl": "3月博主素材/@郝眉毛-Grid2.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "郝眉毛", "isVideo": false, "fileName": "@郝眉毛-Grid2.jpeg"}, {"id": "img_mar__3_jpeg", "title": "@郝眉毛 · Grid 3", "dataUrl": "3月博主素材/@郝眉毛-Grid3.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "郝眉毛", "isVideo": false, "fileName": "@郝眉毛-Grid3.jpeg"}, {"id": "img_mar__4_jpeg", "title": "@郝眉毛 · Grid 4", "dataUrl": "3月博主素材/@郝眉毛-Grid4.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "郝眉毛", "isVideo": false, "fileName": "@郝眉毛-Grid4.jpeg"}, {"id": "img_mar__5_jpeg", "title": "@郝眉毛 · Grid 5", "dataUrl": "3月博主素材/@郝眉毛-Grid5.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "郝眉毛", "isVideo": false, "fileName": "@郝眉毛-Grid5.jpeg"}, {"id": "img_mar__6_jpeg", "title": "@郝眉毛 · Grid 6", "dataUrl": "3月博主素材/@郝眉毛-Grid6.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "Grid"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "郝眉毛", "isVideo": false, "fileName": "@郝眉毛-Grid6.jpeg"}, {"id": "img_mar__1_jpeg", "title": "@露露子 · 吧台椅 1", "dataUrl": "3月博主素材/@露露子-吧台椅1.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "吧台椅"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-吧台椅1.jpeg"}, {"id": "img_mar__2_jpeg", "title": "@露露子 · 吧台椅 2", "dataUrl": "3月博主素材/@露露子-吧台椅2.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "吧台椅"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-吧台椅2.jpeg"}, {"id": "img_mar__3_jpeg", "title": "@露露子 · 吧台椅 3", "dataUrl": "3月博主素材/@露露子-吧台椅3.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "吧台椅"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-吧台椅3.jpeg"}, {"id": "img_mar__4_jpeg", "title": "@露露子 · 吧台椅 4", "dataUrl": "3月博主素材/@露露子-吧台椅4.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "吧台椅"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-吧台椅4.jpeg"}, {"id": "img_mar__5_jpeg", "title": "@露露子 · 吧台椅 5", "dataUrl": "3月博主素材/@露露子-吧台椅5.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "吧台椅"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-吧台椅5.jpeg"}, {"id": "img_mar__1_jpeg", "title": "@露露子 · 花瓶/水壶 1", "dataUrl": "3月博主素材/@露露子-花瓶:水壶1.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "水壶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-花瓶:水壶1.jpeg"}, {"id": "img_mar__2_jpeg", "title": "@露露子 · 花瓶/水壶 2", "dataUrl": "3月博主素材/@露露子-花瓶:水壶2.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "水壶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-花瓶:水壶2.jpeg"}, {"id": "img_mar__3_jpeg", "title": "@露露子 · 花瓶/水壶 3", "dataUrl": "3月博主素材/@露露子-花瓶:水壶3.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "水壶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-花瓶:水壶3.jpeg"}, {"id": "img_mar__4_jpeg", "title": "@露露子 · 花瓶/水壶 4", "dataUrl": "3月博主素材/@露露子-花瓶:水壶4.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "水壶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-花瓶:水壶4.jpeg"}, {"id": "img_mar__5_jpeg", "title": "@露露子 · 花瓶/水壶 5", "dataUrl": "3月博主素材/@露露子-花瓶:水壶5.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "水壶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-花瓶:水壶5.jpeg"}, {"id": "img_mar__6_jpeg", "title": "@露露子 · 花瓶/水壶 6", "dataUrl": "3月博主素材/@露露子-花瓶:水壶6.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "水壶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-花瓶:水壶6.jpeg"}, {"id": "img_mar__7_jpeg", "title": "@露露子 · 花瓶/水壶 7", "dataUrl": "3月博主素材/@露露子-花瓶:水壶7.jpeg", "emoji": "📷", "tags": ["3月素材", "图片", "花瓶", "水壶"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "露露子", "isVideo": false, "fileName": "@露露子-花瓶:水壶7.jpeg"}, {"id": "img_mar__1_jpg", "title": "@青年女动物 · Apex灯 1", "dataUrl": "3月博主素材/@青年女动物-Apex灯1.jpg", "emoji": "📷", "tags": ["3月素材", "图片", "Apex灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "青年女动物", "isVideo": false, "fileName": "@青年女动物-Apex灯1.jpg"}, {"id": "img_mar__2_jpg", "title": "@青年女动物 · Apex灯 2", "dataUrl": "3月博主素材/@青年女动物-Apex灯2.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "Apex灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "青年女动物", "isVideo": false, "fileName": "@青年女动物-Apex灯2.JPG"}, {"id": "img_mar__3_jpg", "title": "@青年女动物 · Apex灯 3", "dataUrl": "3月博主素材/@青年女动物-Apex灯3.JPG", "emoji": "📷", "tags": ["3月素材", "图片", "Apex灯"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "青年女动物", "isVideo": false, "fileName": "@青年女动物-Apex灯3.JPG"}, {"id": "img_mar__0_mov", "title": "@马肥丝 · Grid种草", "dataUrl": "3月博主素材/@马肥丝-Grid种草.mov", "emoji": "🎬", "tags": ["3月素材", "视频", "Grid种草"], "createdAt": 1741334400000, "uploadedBy": "导入·3月", "kolRedId": "马肥丝", "isVideo": true, "fileName": "@马肥丝-Grid种草.mov"}]};
+
+
+/* 一次性清理：把首版 defaultData 里的 demo 假数据从已存在的 localStorage 抹掉 */
+function purgeDemoData_v1() {
+  if (data.demoDataPurged_v1) return;
+  const demoIds = {
+    images:   new Set(['img1','img2','img3']),
+    kols:     new Set(['k1','k2','k3']),
+    seedings: new Set(['s1','s2']),
+    notes:    new Set(['n1','n2']),
+    titles:   new Set(['t1','t2']),
+    slogans:  new Set(['sl1','sl2']),
+    copy:     new Set(['c1','c2']),
+    mascot:   new Set(['m1']),
+  };
+  if (Array.isArray(data.images))   data.images   = data.images.filter(x => !demoIds.images.has(x.id));
+  if (Array.isArray(data.kols))     data.kols     = data.kols.filter(x => !demoIds.kols.has(x.id));
+  if (Array.isArray(data.seedings)) data.seedings = data.seedings.filter(x => !demoIds.seedings.has(x.id));
+  if (Array.isArray(data.notes))    data.notes    = data.notes.filter(x => !demoIds.notes.has(x.id));
+  if (data.copy) {
+    if (Array.isArray(data.copy.titles))  data.copy.titles  = data.copy.titles.filter(x => !demoIds.titles.has(x.id));
+    if (Array.isArray(data.copy.slogans)) data.copy.slogans = data.copy.slogans.filter(x => !demoIds.slogans.has(x.id));
+    if (Array.isArray(data.copy.copy))    data.copy.copy    = data.copy.copy.filter(x => !demoIds.copy.has(x.id));
+    if (Array.isArray(data.copy.mascot))  data.copy.mascot  = data.copy.mascot.filter(x => !demoIds.mascot.has(x.id));
+  }
+  data.demoDataPurged_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 已清理首版 demo 数据');
+}
+
+/* 拉取后端 webhook 收到的真实 KOL 资料，合并进本地（按"小红书号 → 博主ID → 昵称"优先级匹配） */
+async function pullRemoteKols() {
+  try {
+    const resp = await fetch('/api/seeding/kols', { headers: { 'Accept': 'application/json' } });
+    if (!resp.ok) { console.warn('[seeding-hub] /api/seeding/kols 不可用：', resp.status); return; }
+    const remote = await resp.json();
+    if (!Array.isArray(remote) || !remote.length) return;
+
+    let updated = 0, created = 0;
+    remote.forEach(r => {
+      // 候选匹配：红书号 / mongoId / 昵称（任一命中即更新）
+      let local = null;
+      if (r.redId) local = data.kols.find(k => k.redId === r.redId);
+      if (!local && r.internalUserId) local = data.kols.find(k => k.internalUserId === r.internalUserId);
+      if (!local && r.name) local = data.kols.find(k => k.name === r.name);
+
+      const patch = {
+        redId:          r.redId          || (local && local.redId)          || (r.name||''),
+        internalUserId: r.internalUserId || (local && local.internalUserId) || '',
+        name:           r.name           || (local && local.name)           || '',
+        followers:      (r.followers != null) ? r.followers : (local ? local.followers : 0),
+        likes:          (r.likes     != null) ? r.likes     : (local ? local.likes     : null),
+        gender:         r.gender         || (local && local.gender)         || '',
+        ipLocation:     r.ipLocation     || (local && local.ipLocation)     || '',
+        city:           r.ipLocation     || (local && local.city)           || '',  // 复用 city 字段展示
+        contact:        r.contact        || (local && local.contact)        || '',
+        bio:            r.bio            || (local && local.bio)            || '',
+        profileUrl:     r.profileUrl     || (local && local.profileUrl)     || '',
+        pgyUrl:         r.pgyUrl         || (local && local.pgyUrl)         || '',
+        avatarUrl:      r.avatarUrl      || (local && local.avatarUrl)      || '',
+      };
+
+      if (local) {
+        // 真小红书号到了 → 顺手把所有引用占位 redId 的 seedings/notes/images 一起改掉
+        const oldRedId = local.redId;
+        Object.assign(local, patch);
+        if (oldRedId && patch.redId && oldRedId !== patch.redId) {
+          data.seedings.forEach(s => { if (s.kolRedId === oldRedId) s.kolRedId = patch.redId; });
+          data.notes.forEach(n => { if (n.kolRedId === oldRedId) n.kolRedId = patch.redId; });
+          if (Array.isArray(data.images)) data.images.forEach(im => { if (im.kolRedId === oldRedId) im.kolRedId = patch.redId; });
+        }
+        updated++;
+      } else {
+        data.kols.push(Object.assign({
+          id: uid('k'),
+          tier: '', type: '', wechat: '',
+          cooperationStatus: '已合作',
+          notes: r.bio || '',
+          createdAt: Date.now()
+        }, patch));
+        created++;
+      }
+    });
+    if (updated || created) {
+      saveData();
+      console.log(`[seeding-hub] 远程 KOL 同步：更新 ${updated}，新建 ${created}`);
+      if (typeof render === 'function') render();
+    }
+  } catch (e) {
+    console.warn('[seeding-hub] 拉远程 KOL 失败（可能是离线 / 后端没部署）：', e.message);
+  }
+}
+
+function mergeMarchSeed() {
+  if (data.marchSeedImported_v1) return;
+  data.kols     = data.kols     || [];
+  data.seedings = data.seedings || [];
+  data.images   = data.images   || [];
+
+  const kolByRed = new Set(data.kols.map(k => k.redId));
+  MARCH_SEED.kols.forEach(k => { if (!kolByRed.has(k.redId)) data.kols.push(k); });
+
+  const seedKey = new Set(data.seedings.map(s => s.id));
+  MARCH_SEED.seedings.forEach(s => { if (!seedKey.has(s.id)) data.seedings.push(s); });
+
+  const imgKey = new Set(data.images.map(i => i.id));
+  MARCH_SEED.images.forEach(i => { if (!imgKey.has(i.id)) data.images.push(i); });
+
+  data.marchSeedImported_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 已合并 3 月博主素材：', MARCH_SEED.kols.length, 'KOL /', MARCH_SEED.images.length, '素材');
+}
+
+
 
 function loadData() {
   try {
@@ -728,7 +820,7 @@ function renderDashboard(root) {
 }
 function renderRecentActivity() {
   const events = [];
-  data.kols.forEach(k => events.push({ ts: k.createdAt, text: `新增 KOL：${k.name} (${k.redId})` }));
+  data.kols.forEach(k => events.push({ ts: k.createdAt, text: (k.redId && k.redId !== k.name) ? `新增 KOL：${k.name} (${k.redId})` : `新增 KOL：${k.name}` }));
   data.seedings.forEach(s => events.push({ ts: s.createdAt, text: `寄送 Seeding：${s.skuList} → ${kolName(s.kolRedId)}` }));
   data.notes.forEach(n => events.push({ ts: n.postDate, text: `笔记发布：${n.title}` }));
   events.sort((a,b) => b.ts - a.ts);
@@ -1409,7 +1501,7 @@ function renderKols(root) {
                   <strong>${escape(k.name)}</strong>
                   ${nameMap[k.name]>1?`<span class="tag" style="background:#FFF3E0;color:#B8550B;font-size:10px;margin-left:4px;">同名 ×${nameMap[k.name]}</span>`:''}
                 </td>
-                <td><code style="font-size:12px;">${escape(k.redId)}</code></td>
+                <td>${fmtRedId(k.redId, k.name)}</td>
                 <td>${formatNum(k.followers)}</td>
                 <td><span class="tag">${k.tier||'-'}</span></td>
                 <td><span class="tag blogger">${k.type||'-'}</span></td>
@@ -1441,8 +1533,8 @@ function openKolModal(id) {
       </div>
       <div class="form-group">
         <label class="form-label">小红书 ID * (唯一)</label>
-        <input class="input" id="kolRedId" value="${escape(k.redId)}" ${id?'disabled':''}>
-        <div class="form-hint">作为唯一身份标识</div>
+        <input class="input" id="kolRedId" value="${(k.redId && k.redId !== k.name) ? escape(k.redId) : ''}" placeholder="${(k.redId && k.redId !== k.name) ? '' : '例如 xhs8821'}" ${(id && k.redId && k.redId !== k.name) ? 'disabled' : ''}>
+        <div class="form-hint">${(id && k.redId && k.redId !== k.name) ? '已确认的 ID 不能修改' : (id ? '当前是占位（用昵称替代），填入真实 ID 后会自动同步到 Seeding/笔记记录' : '作为唯一身份标识')}</div>
       </div>
       <div class="form-group">
         <label class="form-label">粉丝数</label>
@@ -1495,7 +1587,9 @@ function openKolModal(id) {
     const redId = document.getElementById('kolRedId').value.trim();
     const name = document.getElementById('kolName').value.trim();
     if (!redId || !name) { toast('昵称与小红书 ID 必填', 'error'); return false; }
-    if (!id && data.kols.some(x => x.redId === redId)) { toast('此小红书 ID 已存在', 'error'); return false; }
+    // 新增 / 改 redId 时都要查重（同一个 KOL 自身不算）
+    if (data.kols.some(x => x.redId === redId && x.id !== (id||''))) { toast('此小红书 ID 已存在', 'error'); return false; }
+    const oldRedId = id ? k.redId : null;
     const updated = {
       redId, name,
       followers: Number(document.getElementById('kolFollowers').value)||0,
@@ -1507,8 +1601,17 @@ function openKolModal(id) {
       cooperationStatus: document.getElementById('kolCoop').value,
       notes: document.getElementById('kolNotes').value.trim()
     };
-    if (id) Object.assign(k, updated);
-    else data.kols.push(Object.assign({ id: uid('k'), createdAt: Date.now() }, updated));
+    if (id) {
+      Object.assign(k, updated);
+      // 占位 redId 改成真实 ID 时，把所有相关记录的引用一起改掉
+      if (oldRedId && oldRedId !== redId) {
+        data.seedings.forEach(s => { if (s.kolRedId === oldRedId) s.kolRedId = redId; });
+        data.notes.forEach(n => { if (n.kolRedId === oldRedId) n.kolRedId = redId; });
+        if (Array.isArray(data.images)) data.images.forEach(im => { if (im.kolRedId === oldRedId) im.kolRedId = redId; });
+      }
+    } else {
+      data.kols.push(Object.assign({ id: uid('k'), createdAt: Date.now() }, updated));
+    }
     saveData(); renderKols(document.getElementById('content'));
     toast('已保存', 'success');
     return true;
@@ -1562,7 +1665,7 @@ function renderSeedings(root) {
           ${list.length ? list.map(s => `
             <tr>
               <td>${escape(kolName(s.kolRedId))}</td>
-              <td><code style="font-size:12px;">${escape(s.kolRedId)}</code></td>
+              <td>${fmtRedId(s.kolRedId, kolName(s.kolRedId))}</td>
               <td>${escape(s.skuList)}</td>
               <td>${fmtDate(s.shipDate)}</td>
               <td><code style="font-size:12px;">${escape(s.trackingNo||'-')}</code></td>
@@ -1593,7 +1696,10 @@ function openSeedingModal(id) {
       <label class="form-label">归属 KOL (按小红书 ID) *</label>
       <select class="select" id="sKolRedId">
         <option value="">- 请选择 -</option>
-        ${data.kols.map(k=>`<option value="${k.redId}" ${s.kolRedId===k.redId?'selected':''}>${escape(k.name)} (${k.redId}) · ${k.tier||''} · ${formatNum(k.followers)}粉</option>`).join('')}
+        ${data.kols.map(k=>{
+          const idLabel = (k.redId && k.redId !== k.name) ? ` (${escape(k.redId)})` : ' · 待补 ID';
+          return `<option value="${k.redId}" ${s.kolRedId===k.redId?'selected':''}>${escape(k.name)}${idLabel} · ${k.tier||''} · ${formatNum(k.followers)}粉</option>`;
+        }).join('')}
       </select>
       <div class="form-hint">同名 KOL 通过小红书 ID 区分归属</div>
     </div>
@@ -1695,7 +1801,7 @@ function renderNotes(root) {
               <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                 ${n.noteUrl?`<a href="${escape(n.noteUrl)}" target="_blank" style="color:var(--info); text-decoration:none;">${escape(n.title)}</a>`:escape(n.title)}
               </td>
-              <td>${escape(kolName(n.kolRedId))}<br><code style="font-size:11px;color:var(--text-muted);">${escape(n.kolRedId)}</code></td>
+              <td>${escape(kolName(n.kolRedId))}<br>${fmtRedId(n.kolRedId, kolName(n.kolRedId))}</td>
               <td>${fmtDate(n.postDate)}</td>
               <td>${formatNum(n.exposure)}</td>
               <td>${formatNum(n.engagement)}</td>
@@ -2132,7 +2238,7 @@ function renderAnalytics(root) {
           ${kolRoi.length ? kolRoi.map(k => `
             <tr>
               <td>${escape(k.name)}</td>
-              <td><code style="font-size:12px;">${escape(k.redId)}</code></td>
+              <td>${fmtRedId(k.redId, k.name)}</td>
               <td><span class="tag blogger">${k.type||'-'}</span></td>
               <td>¥${formatNum(k.cost)}</td>
               <td>${formatNum(k.exposure)}</td>
@@ -2257,6 +2363,11 @@ function renderSettings(root) {
    工具函数
    ================================================================== */
 function kolName(redId) { const k = data.kols.find(x=>x.redId===redId); return k?k.name:'(未知)'; }
+// 把 redId 在表格里渲染成 <code>xxx</code>；若 redId 缺失或就是昵称占位（说明真实小红书 ID 还没补），显示"待补充"
+function fmtRedId(redId, name) {
+  if (!redId || redId === name) return '<span style="color:#B8550B;font-size:12px;">待补充</span>';
+  return '<code style="font-size:12px;">' + escape(redId) + '</code>';
+}
 function escape(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function formatNum(n) {
   n = Number(n)||0;
@@ -2392,13 +2503,17 @@ function importData() {
 /* ==================================================================
    启动
    ================================================================== */
-// 已登录则跳过登录页
-if (localStorage.getItem(STORAGE_KEY)) {
-  document.getElementById('loginScreen').style.display = 'none';
-  document.getElementById('app').classList.add('active');
-  refreshUserChip();
-  render();
-}
+// 与 HAY Dashboard 共用登录入口，这里不再单独登录
+// 在 HAY Dashboard 角色对接好之前，固定 admin（否则会被困在只读模式无法编辑）
+data.currentRole = 'admin';
+saveData();
+purgeDemoData_v1();  // 首次加载：清掉首版 defaultData 里的 demo 假数据
+mergeMarchSeed();    // 首次加载：把 3 月博主素材合并进来
+document.getElementById('loginScreen').style.display = 'none';
+document.getElementById('app').classList.add('active');
+refreshUserChip();
+render();
+pullRemoteKols();    // 异步：拉后端 webhook 收到的真实 KOL 数据，回来后会自动重渲
 </script>
 </body>
 </html>
