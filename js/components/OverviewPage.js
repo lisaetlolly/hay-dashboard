@@ -335,23 +335,12 @@ const OverviewPage = defineComponent({
       return v != null ? { value: v, source: 'daily' } : { value: null, source: null }
     }
 
-    // 全店任意窗口：先看是否命中真去重（cumsum_dedup 或 windows 列表），否则 fallback daily 求和
+    // 全店任意窗口：统一按日求和（跨日不去重；甲方要求不再用预定义真去重锚点）
     const pickStoreWindow = (year, startStr, endStr) => {
       const cs = addCategorySeries.value
       if (!cs || !cs.store) return { value: null, source: null }
       const tag = year === 2026 ? 'this_year' : 'last_year'
       const yr = cs.store[tag] || {}
-      // 1) 起点恰好是 5/1 → 查 cumsum_dedup
-      if (startStr.endsWith('-05-01') && yr.cumsum_dedup && yr.cumsum_dedup[endStr] != null) {
-        return { value: yr.cumsum_dedup[endStr], source: 'dedup' }
-      }
-      // 2) 任意窗口 → 查 windows 列表
-      for (const w of (cs.store.windows || [])) {
-        if (w.start === startStr && w.end === endStr) {
-          return { value: w.users, source: 'dedup' }
-        }
-      }
-      // 3) fallback：daily 求和（必须红色"未去重"标）
       const daily = yr.daily || {}
       let sum = 0, count = 0
       for (const d of datesBetween(startStr, endStr)) {
@@ -548,11 +537,9 @@ const OverviewPage = defineComponent({
           <span class="info-wrap">
             全店加购人数<span style="color:#64748b;font-weight:400;margin-left:4px">{{ addManualKpi.dateLabel }}</span>
             <span class="info-btn">?<span class="tooltip">单日：sycm 当天"商品加购人数"（单日内已去重）。
-区间：先尝试匹配预定义真去重窗口（5/1-5/5、5/1-5/6、5/1-5/12、5/6-5/10、5/11-5/12 等运营提供的）；匹配不上就按日求和（红色"未去重"，仅供参考）。</span></span>
+区间：所选区间内每天的"商品加购人数"按日求和（跨日不去重，同一买家在多天加购会被算多次）。</span></span>
           </span>
-          <span v-if="addManualKpi.sourceThis==='dedup'"
-                style="color:#16a34a;font-size:11px;margin-left:4px;background:#dcfce7;padding:1px 6px;border-radius:4px">真去重</span>
-          <span v-else-if="addManualKpi.sourceThis==='sum'"
+          <span v-if="addManualKpi.sourceThis==='sum'"
                 style="color:#dc2626;font-size:11px;margin-left:4px;background:#fee2e2;padding:1px 6px;border-radius:4px">按日求和·未去重</span>
           <span v-else-if="addManualKpi.sourceThis==='daily'"
                 style="color:#0369a1;font-size:11px;margin-left:4px;background:#e0f2fe;padding:1px 6px;border-radius:4px">单日</span>
