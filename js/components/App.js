@@ -34,7 +34,20 @@ const App = defineComponent({
           user.value = { display_name: u.display_name || u.username, role: u.role }
           const matched = (APP_STATE.value.users || []).find(x => x.display_name === u.display_name)
           if (matched) APP_STATE.value.currentUserId = matched.id
-          sessionStorage.setItem('hay_user', JSON.stringify({ display_name: user.value.display_name, role: user.value.role, userId: APP_STATE.value.currentUserId }))
+          // ⚠️ 关键：写 BOTH sessionStorage（旧 UI 用）+ localStorage（api.js 拦截器读
+          // X-Username header 用）。少了 localStorage 这份，所有写接口会 401 "未登录"。
+          sessionStorage.setItem('hay_user', JSON.stringify({
+            display_name: user.value.display_name,
+            role: user.value.role,
+            userId: APP_STATE.value.currentUserId
+          }))
+          localStorage.setItem('hay_current_user', JSON.stringify({
+            id: u.id,
+            username: u.username,
+            display_name: u.display_name,
+            role: u.role,
+            permissions: Array.isArray(u.permissions) ? u.permissions : []
+          }))
           loggedIn.value = true
         } else {
           const d = await res.json().catch(() => ({}))
@@ -46,6 +59,7 @@ const App = defineComponent({
 
     const logout = () => {
       sessionStorage.removeItem('hay_user')
+      localStorage.removeItem('hay_current_user')   // 同步清掉，避免下个登录账号串
       loggedIn.value = false
       loginUsername.value = ''; loginPassword.value = ''; loginError.value = ''
     }
@@ -135,8 +149,10 @@ const App = defineComponent({
     const applyPreset = () => setPreset(timePreset.value)
 
     onMounted(async () => {
-      const savedSession = sessionStorage.getItem('hay_user')
-      if (savedSession) { try { const u = JSON.parse(savedSession); user.value = { display_name: u.display_name, role: u.role }; if (u.userId) APP_STATE.value.currentUserId = u.userId; loggedIn.value = true } catch (_) {} }
+      // sessionStorage 是窗口/标签级的，关浏览器就丢；localStorage 跨标签持久。
+      // 优先读 localStorage（api.js 拦截器也读它，保证一致），fallback 到 sessionStorage 兼容老会话。
+      let savedSession = localStorage.getItem('hay_current_user') || sessionStorage.getItem('hay_user')
+      if (savedSession) { try { const u = JSON.parse(savedSession); user.value = { display_name: u.display_name || u.username, role: u.role }; if (u.userId || u.id) APP_STATE.value.currentUserId = u.userId || u.id; loggedIn.value = true } catch (_) {} }
       applyPreset()
       const h = await api('/api/health')
       if (h) lastUpdated.value = h.loaded_at || h.latest_date || '—'
