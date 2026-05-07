@@ -359,12 +359,55 @@ def load_dim_product(conn):
 # ─────────────────────────────────────────────
 # 生意参谋商品报表
 # ─────────────────────────────────────────────
-def read_xls(path):
-    try:
-        return read_xls_stdlib(path)
-    except Exception as e:
-        print(f"  [WARN] Failed to read {os.path.basename(path)}: {e}")
+def _read_xls_xlrd(path):
+    """
+    用 xlrd 解析 .xls，返回 (headers, list_of_dicts)，与 read_xls_stdlib 同 schema。
+    BIFF8 自实现 (read_xls_stdlib) 在淘系 xls 的某些 record 边界会提前截断（实测
+    300+ 行只读出 29 行），导致大量 PID 永久没入库 → fact_syzt_product 缺数据。
+    xlrd 是经过验证的 BIFF 库，正确解析全部行。
+    """
+    import xlrd
+    wb = xlrd.open_workbook(path)
+    sh = wb.sheet_by_index(0)
+    if sh.nrows == 0:
         return [], []
+    # 找表头行（第一行非空列数 ≥ 5 的行）
+    hdr_row = 0
+    for i in range(min(15, sh.nrows)):
+        cells = [str(sh.cell_value(i, c)).strip() for c in range(sh.ncols)]
+        non_empty = [v for v in cells if v and v not in ('0', '0.0')]
+        if len(non_empty) >= 5:
+            hdr_row = i
+            break
+    headers = [str(sh.cell_value(hdr_row, c)).strip() for c in range(sh.ncols)]
+    out = []
+    for r in range(hdr_row + 1, sh.nrows):
+        row_vals = []
+        for c in range(sh.ncols):
+            v = sh.cell_value(r, c)
+            # xlrd 数字是 float；商品ID 等需要纯字符串，避免 "564552361178.0"
+            if isinstance(v, float) and v.is_integer():
+                v = str(int(v))
+            else:
+                v = str(v)
+            row_vals.append(v.strip())
+        if not any(v for v in row_vals):
+            continue
+        d = {h: (row_vals[i] if i < len(row_vals) else '') for i, h in enumerate(headers)}
+        out.append(d)
+    return headers, out
+
+
+def read_xls(path):
+    """xlrd 优先（行数完整），失败 fallback 到 stdlib（无第三方依赖兜底）"""
+    try:
+        return _read_xls_xlrd(path)
+    except Exception as e_xlrd:
+        try:
+            return read_xls_stdlib(path)
+        except Exception as e_std:
+            print(f"  [WARN] Failed to read {os.path.basename(path)}: xlrd={e_xlrd}; stdlib={e_std}")
+            return [], []
 
 # 去 NULL 字节：PostgreSQL 不允许字符串里有 \x00，xls 解析出来偶尔会带，全局清一遍
 def _strip_nul(v):
@@ -1526,6 +1569,12 @@ def main():
 
     print("[8] 无限店铺流量")
     load_traffic(conn)
+
+    # ⚠️ 修 bug：之前忘了在 main() 里调用 load_shop_overview()，导致店铺数据概览/
+    # 的 sycm 核心指标 xls 一直没入 fact_shop_overview 表 → KPI 永远 fallback
+    # 到商品级日表 SUM（UV/cart/collect 偏低 10-30%）。加一行解决。
+    print("[9] 店铺数据概览（sycm 核心指标 → fact_shop_overview）")
+    load_shop_overview(conn)
 
     conn.close()
     print("[ETL] Done -> Neon PostgreSQL")
