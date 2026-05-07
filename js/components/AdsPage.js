@@ -1538,7 +1538,51 @@ const AdsPage = defineComponent({
     const latestMeeting = computed(() => meetings.value[0] || null)
     const toggleChannel = key => { openChannel.value[key] = !openChannel.value[key] }
 
-    const channelCatData = computed(() => computeChannelCatTable(periodStart.value, periodEnd.value))
+    // 人群/关键词品类占比 — 跟 OverviewPage 同一套：调真后端 endpoint，
+    // 数据来自 fact_wxst_rq_product / fact_wxst_kw_product，跟 sycm 「人群推广商品报表」对齐
+    const channelCatData = ref({ audienceRows:[], keywordRows:[], audienceTotal:0, keywordTotal:0, grandTotal:0 })
+    const _loadChannelCatFromBackend = async () => {
+      const s = periodStart.value, e = periodEnd.value
+      if (!s || !e) return
+      try {
+        const [aud, kw] = await Promise.all([
+          fetch('/api/ads/audience-by-category?start=' + s + '&end=' + e).then(r => r.json()),
+          fetch('/api/ads/keyword-by-category?start='  + s + '&end=' + e).then(r => r.json()),
+        ])
+        const planPctOf = (cat) => (typeof window !== 'undefined' && window.LIVE_AUDIENCE_PLAN?.[cat] != null)
+          ? window.LIVE_AUDIENCE_PLAN[cat]
+          : (RAW.plan_pct?.[cat] || 0)
+        const audienceRows = (aud.rows || []).map(r => {
+          const plan_pct = planPctOf(r.category)
+          const actual_pct = r.pct
+          const diff = +(actual_pct - plan_pct).toFixed(1)
+          return Vue.reactive({
+            category: r.category, plan_pct, actual_pct, actual_spend: r.spend, diff,
+            status: Math.abs(diff) >= 10 ? 'danger' : Math.abs(diff) >= 5 ? 'warning' : 'normal',
+            products: (r.products || []).map(p => ({
+              pid: p.pid, name: p.name, spend: p.spend,
+              plan_pct: (typeof PLAN_LOOKUP !== 'undefined' ? PLAN_LOOKUP[p.pid] : 0) || 0,
+            })),
+            _open: false,
+          })
+        })
+        const keywordRows = (kw.rows || []).map(r => Vue.reactive({
+          category: r.category, actual_pct: r.pct, actual_spend: r.spend,
+          products: (r.products || []).map(p => ({ pid: p.pid, name: p.name, kw_spend: p.spend })),
+          _open: false,
+        }))
+        channelCatData.value = {
+          audienceRows, keywordRows,
+          audienceTotal: aud.total || 0,
+          keywordTotal:  kw.total  || 0,
+          grandTotal:    (aud.total || 0) + (kw.total || 0),
+        }
+      } catch (e) {
+        console.warn('[AdsPage channel-by-cat] fetch 失败，fallback computeChannelCatTable:', e)
+        channelCatData.value = computeChannelCatTable(s, e)
+      }
+    }
+    Vue.watch([periodStart, periodEnd], _loadChannelCatFromBackend, { immediate: true })
 
     const adsCtr = computed(() => {
       // 加权 CTR = SUM(clicks) / SUM(impressions)，和万象台后台口径一致。
