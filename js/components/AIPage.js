@@ -77,18 +77,22 @@ const AIPage = defineComponent({
 
       const rows = Object.values(RAW.products || {}).map(p => {
         let gmv = 0, spend = 0, ctrS = 0, ctrN = 0, collect = 0, vis = 0, cart = 0
+        let ad_gmv = 0  // 推广 GMV = sum(roi[i] * spend[i])，求真 ROI 用
         for (let i = 0; i < p.dates.length; i++) {
           const d = p.dates[i]
           if (d >= s && d <= e) {
+            const sp = p.spend?.[i] || 0
             gmv += p.pay?.[i] || 0
-            spend += p.spend?.[i] || 0
+            spend += sp
+            // 推广 GMV = 当日 roi × spend（roi 是真 ROI = ad_gmv/spend）
+            ad_gmv += (p.roi?.[i] || 0) * sp
             collect += (p.collect?.[i] || 0)
             cart += p.cart?.[i] || 0
             vis += p.vis?.[i] || 0
             if ((p.ctr?.[i] || 0) > 0) { ctrS += p.ctr[i] * 100; ctrN++ }
           }
         }
-        const roi = spend > 0 ? gmv / spend : null
+        const roi = spend > 0 ? ad_gmv / spend : null
         const ctr = ctrN ? ctrS / ctrN : null
         const cartRate = vis > 0 ? cart / vis * 100 : null
         return { name: p.name, pid: p.pid, cat: p.cat, gmv, spend, roi, ctr, cartRate, collect, cart, vis }
@@ -185,15 +189,19 @@ const AIPage = defineComponent({
       const s = props.start, e = props.end
       const rows = Object.values(RAW.products || {}).map(p => {
         let gmv = 0, spend = 0, vis = 0, cart = 0, ctrS = 0, ctrN = 0
+        let ad_gmv = 0
         for (let i = 0; i < p.dates.length; i++) {
           const d = p.dates[i]
           if (d >= s && d <= e) {
-            gmv += p.pay?.[i] || 0; spend += p.spend?.[i] || 0
+            const sp = p.spend?.[i] || 0
+            gmv += p.pay?.[i] || 0; spend += sp
             vis += p.vis?.[i] || 0; cart += p.cart?.[i] || 0
+            // 真 ROI 用 sum(roi*spend)/sum(spend)，不要 全店GMV/spend（那是销售杠杆）
+            ad_gmv += (p.roi?.[i] || 0) * sp
             if ((p.ctr?.[i] || 0) > 0) { ctrS += p.ctr[i] * 100; ctrN++ }
           }
         }
-        const roi = spend > 0 ? +(gmv / spend).toFixed(2) : null
+        const roi = spend > 0 ? +(ad_gmv / spend).toFixed(2) : null
         const ctr = ctrN > 0 ? +(ctrS / ctrN).toFixed(2) : null
         const cartRate = vis > 0 ? +(cart / vis * 100).toFixed(2) : null
         return { name: p.name, cat: p.cat, gmv: +gmv.toFixed(0), spend: +spend.toFixed(0), vis, cart, roi, ctr, cartRate }

@@ -36,6 +36,8 @@ const ActionEffectPage = defineComponent({
         const vis = idx>=0?(p.vis?.[idx]||0):null, cart = idx>=0?(p.cart?.[idx]||0):null
         const pay = idx>=0?(p.pay?.[idx]||0):null
         const spend = idx>=0?(p.spend?.[idx]||0):null
+        // 真 ROI = 推广带来的 GMV ÷ 推广花费（不是 全店GMV/spend，那是 PSR 销售杠杆）
+        const adGmv = idx>=0?((p.roi?.[idx]||0)*(spend||0)):null
         // 转化率分子 = 支付买家数(优先 pay_buyers,缺则 new+old);避免和加购率混
         const payBuyers = idx>=0
           ? (p.pay_buyers?.[idx] ?? ((p.new_buyers?.[idx]||0)+(p.old_buyers?.[idx]||0)))
@@ -46,7 +48,8 @@ const ActionEffectPage = defineComponent({
           collect: idx>=0?((p.collect?.[idx]||0)+(p.cart?.[idx]||0)):null,
           cart_rate: vis!=null&&vis>0?(cart/vis*100):null,
           conv_rate: vis!=null&&vis>0&&payBuyers!=null?(payBuyers/vis*100):null,
-          ad_roi: spend!=null&&spend>0&&pay!=null?(pay/spend):null,
+          ad_roi: spend!=null&&spend>0&&adGmv!=null?(adGmv/spend):null,
+          psr:    spend!=null&&spend>0&&pay!=null?(pay/spend):null,  // 销售杠杆：全店GMV/花费
           new_buyers: idx>=0?(p.new_buyers?.[idx]||0):null,
           pv: idx>=0?(p.pv?.[idx]??null):null,
           dwell_time: idx>=0?(p.dwell_time?.[idx]??null):null,

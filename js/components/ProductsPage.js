@@ -75,6 +75,9 @@ const ProductsPage = defineComponent({
       const prev = s === e ? { s: subDays(s,1), e: subDays(e,1) } : prevRange(s, e)
       let pay=0,vis=0,cart=0,cart_qty_total=0,collect=0,refund=0,spend=0,ctr_s=0,ctr_n=0,ppay=0,pvis=0
       let newBuyers=0, payBuyers=0
+      // ad_gmv = 推广带来的 GMV（直接+间接），由 daily roi[i] * spend[i] 反算
+      // 之前 ad_roi 用 pay/spend 实际算的是 PSR（销售杠杆），不是真 ROI
+      let ad_gmv_total = 0
       const daily=[]
       for (let i=0;i<p.dates.length;i++) {
         const d = p.dates[i]
@@ -89,8 +92,11 @@ const ProductsPage = defineComponent({
           const spFromProduct = p.spend?.[i]||0
           const spFromDaily = RAW.pid_daily_spend?.[p.pid]?.[d]?.spend || 0
           const sp = spFromProduct > 0 ? spFromProduct : spFromDaily
+          // 当日推广 GMV = roi * spend（roi 来自 fact_wxst_product，已经是推广 GMV/花费）
+          const adGmv = (p.roi?.[i] || 0) * sp
           pay += gmv; vis += uv; cart += cartN; collect += colN; refund += rf; spend += sp; cart_qty_total += cartQtyN
           newBuyers += nb; payBuyers += pb
+          ad_gmv_total += adGmv
           if ((p.ctr?.[i]||0)>0) { ctr_s += p.ctr[i]*100; ctr_n++ }
           const xhsInter = (RAW.xhs_notes||[]).filter(n => n.pid===p.pid && n.date===d).reduce((a,n)=>a+(n.inter||0),0)
           const pv_v          = p.pv?.[i]            ?? null
@@ -104,7 +110,10 @@ const ProductsPage = defineComponent({
             cart_rate: uv>0 ? cartN/uv*100 : null,
             // 转化率 = 支付买家 / UV (不再等同于加购率)
             conv_rate: uv>0 ? pb/uv*100 : null,
-            ad_roi: sp>0 ? gmv/sp : null,
+            // 当日 ad_roi = 推广 GMV ÷ 推广花费（不是 全店GMV/spend，那是销售杠杆）
+            ad_roi: sp>0 ? +(adGmv/sp).toFixed(2) : null,
+            // 销售杠杆 PSR = 全店 GMV / 推广花费（以前误叫 ROI 的那个）
+            psr: sp>0 ? +(gmv/sp).toFixed(2) : null,
             ad_ctr: (p.ctr?.[i]||0)>0 ? p.ctr[i]*100 : null,
             xhs_inter: xhsInter,
             pv: pv_v,
@@ -134,7 +143,10 @@ const ProductsPage = defineComponent({
         pay_buyers: payBuyers,
         refund:+refund.toFixed(2), ad_spend:+spend.toFixed(2),
         ad_ctr: ctr_n>0 ? +(ctr_s/ctr_n).toFixed(2) : null,
-        ad_roi: spend>0 ? +(pay/spend).toFixed(2) : null,
+        // 真 ROI = 推广带来的 GMV ÷ 推广花费（业界标准；万象台后台口径）
+        ad_roi: spend>0 ? +(ad_gmv_total/spend).toFixed(2) : null,
+        // 销售杠杆 PSR = 全店 GMV ÷ 推广花费（含自然流量功劳，sycm 主页那个 30.28x）
+        psr: spend>0 ? +(pay/spend).toFixed(2) : null,
         pv: p.pv ? p.pv.filter((_,i)=>p.dates[i]>=s&&p.dates[i]<=e).reduce((a,v)=>a+(v||0),0) : null,
         dwell_time: (() => { const vs=p.dwell_time?.filter?.((_,i)=>p.dates[i]>=s&&p.dates[i]<=e).filter(v=>v>0)||[]; return vs.length?+(vs.reduce((a,v)=>a+v,0)/vs.length).toFixed(1):null })(),
         bounce_rate: (() => { const vs=p.bounce_rate?.filter?.((_,i)=>p.dates[i]>=s&&p.dates[i]<=e).filter(v=>v>0)||[]; return vs.length?+(vs.reduce((a,v)=>a+v,0)/vs.length).toFixed(2):null })(),

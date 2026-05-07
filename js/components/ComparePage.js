@@ -46,6 +46,8 @@ const ComparePage = defineComponent({
       const cart = p.cart[i] || 0
       const gmv = p.pay[i] || 0
       const spend = p.spend?.[i] || 0
+      // 真 ROI = 推广 GMV ÷ 推广花费（roi[i] 是日级真 ROI，反算 ad_gmv）
+      const adGmv = (p.roi?.[i] || 0) * spend
       const d = p.dates[i]
       // 支付买家 = pay_buyers 字段；缺则回退到 new + old
       const payBuyers = (p.pay_buyers?.[i] != null) ? p.pay_buyers[i]
@@ -57,7 +59,8 @@ const ComparePage = defineComponent({
         cart_rate: vis > 0 ? cart / vis * 100 : null,
         // 转化率 = 支付买家 / UV，不是加购率
         conv_rate: vis > 0 ? payBuyers / vis * 100 : null,
-        ad_roi: spend > 0 ? gmv / spend : null,
+        ad_roi: spend > 0 ? adGmv / spend : null,
+        psr:    spend > 0 ? gmv / spend : null,  // 销售杠杆 = 全店GMV/花费（对齐 sycm 30.28x）
         fav_cart: (p.collect?.[i] || 0) + cart,
         new_buyers: p.new_buyers?.[i] || 0,
         refund: p.refund?.[i] || 0,
