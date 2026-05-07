@@ -28,3 +28,9 @@ venv/
 
 # OS
 .DS_Store
+
+# Excel/Office 临时锁文件
+.~lock.*
+~$*
+.DS_Store
+
