@@ -1519,6 +1519,94 @@ def load_traffic(conn):
     print(f"  fact_traffic: {total} rows ({len(files)} files)")
 
 
+# ── 人群推广商品报表 → fact_wxst_rq_product（PID 维度的人群花费）──
+# ── 关键词商品报表    → fact_wxst_kw_product（PID 维度的关键词花费）──
+# 这两份是 dashboard 算"人群品类占比 / 关键词品类占比"的真值源（前者把
+# 全场景合并版当成"人群"，跟 sycm 对不上，靠这两张表分开）。
+def _load_channel_product(conn, table, dir_path, channel_label):
+    """通用：扫某个子文件夹的 csv，按 (date, pid) UPSERT 进 fact_wxst_*_product"""
+    files = sorted(glob.glob(os.path.join(dir_path, '*.csv')))
+    if not files:
+        print(f"  [SKIP] {channel_label} dir 空")
+        return
+    cur = conn.cursor()
+    loaded = _loaded_files(conn, table)
+    sql = f"""
+        INSERT INTO {table} (
+            stat_date, product_id, spend, impressions, ctr, roi, total_gmv, source_file
+        ) VALUES %s
+        ON CONFLICT(stat_date, product_id) DO UPDATE SET
+            spend       = EXCLUDED.spend,
+            impressions = EXCLUDED.impressions,
+            ctr         = EXCLUDED.ctr,
+            roi         = EXCLUDED.roi,
+            total_gmv   = EXCLUDED.total_gmv,
+            source_file = EXCLUDED.source_file
+    """
+    import re as _re
+    _PID_RE = _re.compile(r'^[0-9]{8,13}$')
+    print(f"  {channel_label}：{len(files)} 个 CSV")
+    skipped_files = 0
+    total = 0
+    for fi, fpath in enumerate(files, 1):
+        fname = os.path.basename(fpath)
+        if fname in loaded:
+            skipped_files += 1
+            continue
+        try:
+            _, rs = read_csv_gbk(fpath)
+        except Exception as e:
+            print(f"  [WARN] {fname}: {e}")
+            continue
+        # 同 (date, pid) 内存合并（csv 有时按 SKU 多行）
+        agg = {}  # (date, pid) → dict
+        for r in rs:
+            pid = str(r.get('主体ID', '') or r.get('商品ID', '')).strip().replace(',', '')
+            if not _PID_RE.match(pid):
+                continue
+            d = str(r.get('日期', '')).strip()[:10]
+            if not d:
+                continue
+            key = (d, pid)
+            agg.setdefault(key, {'spend': 0, 'impressions': 0, 'gmv': 0, 'clicks': 0})
+            agg[key]['spend']       += safe_float(r.get('花费'))
+            agg[key]['impressions'] += safe_float(r.get('展现量'))
+            agg[key]['clicks']      += safe_float(r.get('点击量'))
+            agg[key]['gmv']         += safe_float(r.get('总成交金额'))
+        batch = []
+        for (d, pid), v in agg.items():
+            ctr = (v['clicks'] / v['impressions']) if v['impressions'] > 0 else 0
+            roi = (v['gmv']    / v['spend'])       if v['spend']       > 0 else 0
+            batch.append(_clean_row((
+                d, pid, v['spend'], v['impressions'], ctr, roi, v['gmv'], fname
+            )))
+        if batch:
+            psycopg2.extras.execute_values(cur, sql, batch, page_size=500)
+            conn.commit()
+            total += len(batch)
+        if fi % 3 == 0 or fi == len(files):
+            print(f"    [{fi}/{len(files)}] {fname}: +{len(batch)}（累计 {total}）")
+    print(f"  {table}: {total} rows ({len(files)} files, {skipped_files} 跳过)")
+
+
+def load_wxst_rq_product(conn):
+    """人群推广商品报表 → fact_wxst_rq_product"""
+    _load_channel_product(
+        conn, 'fact_wxst_rq_product',
+        os.path.join(DATA_DIR, '推广报表', '商品报表', '人群推广商品报表'),
+        '人群推广商品报表',
+    )
+
+
+def load_wxst_kw_product(conn):
+    """关键词商品报表 → fact_wxst_kw_product"""
+    _load_channel_product(
+        conn, 'fact_wxst_kw_product',
+        os.path.join(DATA_DIR, '推广报表', '商品报表', '关键词商品报表'),
+        '关键词商品报表',
+    )
+
+
 def main():
     ap = argparse.ArgumentParser(description='HAY ETL loader -> Neon PostgreSQL')
     ap.add_argument('--reset', action='store_true', help='Drop and recreate all tables')
@@ -1554,6 +1642,12 @@ def main():
 
     print("[4] 万象台商品报表")
     load_wxst_product(conn)
+
+    print("[4a] 人群推广商品报表 → fact_wxst_rq_product (PID×日期 人群花费)")
+    load_wxst_rq_product(conn)
+
+    print("[4b] 关键词商品报表 → fact_wxst_kw_product (PID×日期 关键词花费)")
+    load_wxst_kw_product(conn)
 
     print("[5] 万象台人群报表")
     load_wxst_audience(conn)

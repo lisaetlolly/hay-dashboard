@@ -208,7 +208,55 @@ const OverviewPage = defineComponent({
       }
       planData.value = all.plan
       meetings.value = all.meetings.slice(0, 6)
-      channelCatData.value = computeChannelCatTable(s, e)
+      // ── 人群/关键词品类占比（真后端 endpoint，分别取自 fact_wxst_rq_product /
+      // fact_wxst_kw_product，跟 sycm 后台「人群推广商品报表」「关键词商品报表」对齐）──
+      // 之前用 computeChannelCatTable 拿全场景合并的 spend，导致 dashboard 数字
+      // 跟 sycm 单看人群/关键词的口径对不上（5/6 sycm 配饰 34.28%，dashboard 算 60+%）
+      try {
+        const [aud, kw] = await Promise.all([
+          fetch('/api/ads/audience-by-category?start=' + s + '&end=' + e).then(r => r.json()),
+          fetch('/api/ads/keyword-by-category?start='  + s + '&end=' + e).then(r => r.json()),
+        ])
+        const planPctOf = (cat) => (typeof window !== 'undefined' && window.LIVE_AUDIENCE_PLAN?.[cat] != null)
+          ? window.LIVE_AUDIENCE_PLAN[cat]
+          : (RAW.plan_pct?.[cat] || 0)
+        const audienceRows = (aud.rows || []).map(r => {
+          const plan_pct = planPctOf(r.category)
+          const actual_pct = r.pct
+          const diff = +(actual_pct - plan_pct).toFixed(1)
+          return Vue.reactive({
+            category: r.category,
+            plan_pct,
+            actual_pct,
+            actual_spend: r.spend,
+            diff,
+            status: Math.abs(diff) >= 10 ? 'danger' : Math.abs(diff) >= 5 ? 'warning' : 'normal',
+            products: (r.products || []).map(p => ({
+              pid: p.pid, name: p.name, spend: p.spend,
+              plan_pct: (typeof PLAN_LOOKUP !== 'undefined' ? PLAN_LOOKUP[p.pid] : 0) || 0,
+            })),
+            _open: false,
+          })
+        })
+        const keywordRows = (kw.rows || []).map(r => Vue.reactive({
+          category: r.category,
+          actual_pct: r.pct,
+          actual_spend: r.spend,
+          products: (r.products || []).map(p => ({
+            pid: p.pid, name: p.name, kw_spend: p.spend,
+          })),
+          _open: false,
+        }))
+        channelCatData.value = {
+          audienceRows, keywordRows,
+          audienceTotal: aud.total || 0,
+          keywordTotal:  kw.total  || 0,
+          grandTotal:    (aud.total || 0) + (kw.total || 0),
+        }
+      } catch (e) {
+        console.warn('[channel-by-cat] fetch 失败，fallback computeChannelCatTable:', e)
+        channelCatData.value = computeChannelCatTable(s, e)
+      }
       loadRank()
     }
 
