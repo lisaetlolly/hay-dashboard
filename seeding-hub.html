@@ -627,6 +627,450 @@ async function pullRemoteKols() {
   }
 }
 
+/* === 3月 KOL 真实资料补全（用户提供，2026-05-07） === */
+const MARCH_KOL_ENRICHMENT = [{"localName": "Akyko", "redId": "101880604", "internalUserId": "550b828c4fac63157e29f027", "name": "Akyko", "bio": "住在郊区的森林小屋\n下一个人生目标，是拥有看得见云朵的阁楼", "contact": "103050991@qq.com", "ipLocation": "广东", "followers": 54103, "likes": 645101, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/550b828c4fac63157e29f027", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/550b828c4fac63157e29f027", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31bblv78kmo104082e418ps17bi4lrso?imageView2/2/w/360/format/webp"}, {"localName": "AveryP", "redId": "103946380", "internalUserId": "57bc0cab50c4b4270faf1dec", "name": "Avery-P", "bio": "家居｜生活｜摄影\n用自己的方式记录～", "contact": "100860830@qq.com", "ipLocation": "江苏", "followers": 29512, "likes": 286940, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/57bc0cab50c4b4270faf1dec", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/57bc0cab50c4b4270faf1dec", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/64675c0f0019cbd12cc12876.jpg?imageView2/2/w/360/format/webp"}, {"localName": "Oldseven", "redId": "4944316884", "internalUserId": "6023cac0000000000101c893", "name": "OOLDSEVEN", "bio": "做咖啡的\n@SlabTownCoffee\n@富民自由市场", "contact": "seven.zhang@slabtown.work", "ipLocation": "上海", "followers": 25391, "likes": 120014, "gender": "男", "profileUrl": "https://www.xiaohongshu.com/user/profile/6023cac0000000000101c893", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/6023cac0000000000101c893", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/6023cb0ad648a5d0b114b615.jpg?imageView2/2/w/360/format/webp"}, {"localName": "Ptao", "redId": "819153790", "internalUserId": "5dbe2ec90000000001009608", "name": "PTao", "bio": "家居VIBE｜生活方式｜INFJ", "contact": "502787919@qq.com", "ipLocation": "上海", "followers": 23284, "likes": 204595, "gender": "", "profileUrl": "https://www.xiaohongshu.com/user/profile/5dbe2ec90000000001009608", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5dbe2ec90000000001009608", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo30ra3jaobha005ndu5r4g95g8p63pdio?imageView2/2/w/360/format/webp"}, {"localName": "Saladbob", "redId": "558668023", "internalUserId": "5c77ad11000000001202a17c", "name": "Saladbob", "bio": "179.5/68", "contact": "saladbao@gmail.com", "ipLocation": "中国香港", "followers": 87860, "likes": 291691, "gender": "男", "profileUrl": "https://www.xiaohongshu.com/user/profile/5c77ad11000000001202a17c", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5c77ad11000000001202a17c", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/5e368e8d6a36ba0001bd4c3c.jpg?imageView2/2/w/360/format/webp"}, {"localName": "lyumay", "redId": "635083679", "internalUserId": "5a5eaa3011be105d993b4942", "name": "lyumay", "bio": "分享喜欢的生活。\n售后联系@小助手@阿梅小助理", "contact": "", "ipLocation": "广东", "followers": 323513, "likes": 2117560, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/5a5eaa3011be105d993b4942", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5a5eaa3011be105d993b4942", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo30ntkk65b1c004a0su9l30ia2bdfod6o?imageView2/2/w/360/format/webp"}, {"localName": "unaccc", "redId": "Unasa811720", "internalUserId": "5ebf678700000000010079f9", "name": "unaccc", "bio": "爱狗人士🦮\n比较随意👽", "contact": "", "ipLocation": "上海", "followers": 90746, "likes": 449049, "gender": "", "profileUrl": "https://www.xiaohongshu.com/user/profile/5ebf678700000000010079f9", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5ebf678700000000010079f9", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31vjl8v7kii105nlvcu3g8ufpegrdhp0?imageView2/2/w/360/format/webp"}, {"localName": "zaza吼", "redId": "100502525", "internalUserId": "57106a8c84edcd7a9c5ca89b", "name": "Zaza吼", "bio": "📁Now @Poke&Co. @Maison Poke\n📁Prev NOWRE\n💻FL Creative / Producer", "contact": "349051545@qq.com", "ipLocation": "上海", "followers": 42923, "likes": 284698, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/57106a8c84edcd7a9c5ca89b", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/57106a8c84edcd7a9c5ca89b", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo30nq47aqv0o0047v5k8l8pa4r26luev8?imageView2/2/w/360/format/webp"}, {"localName": "一原", "redId": "562754460", "internalUserId": "5bae133f64ba160001e912d5", "name": "一原", "bio": "🎞️野生博主｜真诚地｜热爱地｜分享生活\n🔍感谢有品的你关注我", "contact": "iiiiyuan@qq.com", "ipLocation": "浙江", "followers": 48923, "likes": 545412, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/5bae133f64ba160001e912d5", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5bae133f64ba160001e912d5", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31erg6e0m6g004b725f9ju4ml1i9hmqg?imageView2/2/w/360/format/webp"}, {"localName": "一颗大枣", "redId": "600121272", "internalUserId": "598e78c65e87e73e00b89a07", "name": "一颗大枣_", "bio": "随意点就好🧘‍♀️\nig:Wyyyyyyyi_", "contact": "1634331229@qq.com", "ipLocation": "上海", "followers": 73928, "likes": 430721, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/598e78c65e87e73e00b89a07", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/598e78c65e87e73e00b89a07", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31bbt3nc7mu0g49nrfkscd6g7ol1i4jg?imageView2/2/w/360/format/webp"}, {"localName": "三聿三聿", "redId": "111951208", "internalUserId": "58a07f196a6a693f27b1b5e2", "name": "三聿三聿", "bio": "要尽兴～！", "contact": "sanyu310@qq.com", "ipLocation": "浙江", "followers": 105270, "likes": 810014, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/58a07f196a6a693f27b1b5e2", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/58a07f196a6a693f27b1b5e2", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1000g2jo2l2k8asuio010494r18vhjdf2qm9d1g8?imageView2/2/w/360/format/webp"}, {"localName": "徐拉蒂", "redId": "633626591", "internalUserId": "5b29b27a11be101b277c785b", "name": "徐拉蒂", "bio": "穿搭｜生活｜瑜伽｜户外\n认真生活 想到什么发什么", "contact": "850427838@qq.com", "ipLocation": "泰国", "followers": 34233, "likes": 268583, "gender": "", "profileUrl": "https://www.xiaohongshu.com/user/profile/5b29b27a11be101b277c785b", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5b29b27a11be101b277c785b", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31tfukg6t5s104a6dh5p7ku2rt5b83l0?imageView2/2/w/360/format/webp"}, {"localName": "杜可疯", "redId": "dukefeng1", "internalUserId": "5a9fbfd211be1051b5b74e90", "name": "杜可疯", "bio": "不要想，先做，先行动", "contact": "1029982123@qq.com", "ipLocation": "四川", "followers": 83590, "likes": 535122, "gender": "男", "profileUrl": "https://www.xiaohongshu.com/user/profile/5a9fbfd211be1051b5b74e90", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5a9fbfd211be1051b5b74e90", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/603a08c8a2ca87bb68710be3.jpg?imageView2/2/w/360/format/webp"}, {"localName": "董洁", "redId": "6712870393", "internalUserId": "600982ae0000000001000ee4", "name": "董洁", "bio": "", "contact": "", "ipLocation": "北京", "followers": 4706150, "likes": 8544932, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/600982ae0000000001000ee4", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/600982ae0000000001000ee4", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/600983eaa0917d166241a510.jpg?imageView2/2/w/360/format/webp"}, {"localName": "郝眉毛", "redId": "263644278", "internalUserId": "57901f995e87e71270783e17", "name": "郝眉毛", "bio": "我与我周旋", "contact": "", "ipLocation": "北京", "followers": 21602, "likes": 198007, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/57901f995e87e71270783e17", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/57901f995e87e71270783e17", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/637b9c36c6f33706866ec257.jpg?imageView2/2/w/360/format/webp"}, {"localName": "露露子", "redId": "101071962", "internalUserId": "556e9af1e58d1307f2e75dd7", "name": "露露子🏠", "bio": "⚪️125㎡折衷主义老钱风质感之家\n⚪️学艺术的天秤⚖️女\n⚪️家居美学/装修好物/生活方式\n⚪️历久弥新才是我的终极浪漫", "contact": "2726868@qq.com", "ipLocation": "广东", "followers": 22842, "likes": 311083, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/556e9af1e58d1307f2e75dd7", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/556e9af1e58d1307f2e75dd7", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31ssgni1tm20040np1ddf2nent2avh40?imageView2/2/w/360/format/webp"}, {"localName": "青年女动物", "redId": "yvonne_gao", "internalUserId": "5553250de4b1cf5036a14d00", "name": "青年女动物", "bio": "射手｜属猴｜情侣大号@Jin小菌\n爱记录美好 写点小文字", "contact": "252515108@qq.com", "ipLocation": "广东", "followers": 25754, "likes": 122887, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/5553250de4b1cf5036a14d00", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5553250de4b1cf5036a14d00", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo30nfhpj6r6e0040k8hiigqj801j6sju8?imageView2/2/w/360/format/webp"}, {"localName": "马肥丝", "redId": "116312345", "internalUserId": "54995c5f2e1d93617fb088be", "name": "马肥丝Mavis", "bio": "早起有福气\n@offmenu shop", "contact": "mavismakeup90@163.com", "ipLocation": "上海", "followers": 206741, "likes": 654444, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/54995c5f2e1d93617fb088be", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/54995c5f2e1d93617fb088be", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/5efda2d2a9a79200017b1743.jpg?imageView2/2/w/360/format/webp"}];
+
+
+/* === 3月复盘底表笔记数据 + 新增占位 KOL（2026-05-07 导入） === */
+const MARCH_NOTES_BUNDLE = {"notes": [{"id": "n_mar_1", "kolName": "高脚蟹子", "title": "一切都刚刚好", "noteUrl": "https://www.xiaohongshu.com/explore/69c8fb72000000002101300d?source=webshare&xhsshare=pc_web&xsec_token=ABUlz3hntzdWzOplQie27u5qBNenPGk1ztvHFytVwHljY=&xsec_source=pc_share", "noteType": "视频", "products": "la pittura，concical", "postDate": 1773532800000, "exposure": 12400, "reads": 2058, "likes": 154, "saves": 84, "comments": 63, "engagement": 301, "conversion": 0, "ctr": 0.165967741935484, "cpc": null, "cpe": null, "performanceTags": ["高互动"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_2", "kolName": "高脚蟹子", "title": "家是流动的", "noteUrl": "https://www.xiaohongshu.com/explore/69b98b5e000000002102d8a4?source=webshare&xhsshare=pc_web&xsec_token=ABWnnctVfXdMIE5A2MNLInt1vHgS5fEkJoxAjHkscHY0g=&xsec_source=pc_share", "noteType": "图文", "products": "apex, knit", "postDate": 1773532800000, "exposure": 27674, "reads": 4878, "likes": 200, "saves": 120, "comments": 67, "engagement": 387, "conversion": 0, "ctr": 0.176266531762665, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_ptao3", "kolName": "PTao", "title": "宅色 春色 蓝色", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c28383000000002200fb22?source=webshare&xhsshare=pc_web&xsec_token=ABeiqdQ29g9xcTEYiS7Gi_e0Z7A4Y6tiZRxXrxHOyeGLE=&xsec_source=pc_share", "noteType": "图文", "products": "knit, apex, conical", "postDate": 1773532800000, "exposure": 22026, "reads": 3081, "likes": 217, "saves": 100, "comments": 67, "engagement": 384, "conversion": 0, "ctr": 0.139880141650776, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_4", "kolName": "準點回家!", "title": "：120秒布置空房间｜13㎡船景电竞房打造全过程", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c0aa0400000000230056b0?source=webshare&xhsshare=pc_web&xsec_token=ABA98P-v4oBqxDga40IlNZAlwASnr4VfMSmezee-YDBN8=&xsec_source=pc_share", "noteType": "视频", "products": "apex", "postDate": 1773532800000, "exposure": 405462, "reads": 50231, "likes": 1695, "saves": 1007, "comments": 151, "engagement": 2853, "conversion": 0, "ctr": 0.123885838870227, "cpc": null, "cpe": null, "performanceTags": ["高曝光"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_5", "kolName": "蒯仔", "title": "unboxing📦充满春天气息的好物", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c0b10b0000000023023303?source=webshare&xhsshare=pc_web&xsec_token=CBH1MSEZp7U4kdyakCp1HjQGoy8p9aJEuiwuNURoW3quM=&xsec_source=pc_share", "noteType": "视频", "products": "grid", "postDate": 1773532800000, "exposure": 106125, "reads": 10309, "likes": 194, "saves": 37, "comments": 32, "engagement": 263, "conversion": 0, "ctr": 0.0971401648998822, "cpc": null, "cpe": null, "performanceTags": ["高曝光"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_6", "kolName": "杰西卡是卡卡鸭", "title": "住进春天里🌷🌿", "noteUrl": "http://xhslink.com/o/4kReXiHBkYw ", "noteType": "图文", "products": "conical, board", "postDate": 1773532800000, "exposure": 20653, "reads": 1492, "likes": 166, "saves": 98, "comments": 66, "engagement": 330, "conversion": 0, "ctr": 0.0722413208734809, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_7", "kolName": "三聿三聿", "title": "路边不起眼的野花，插在花瓶里这样好看～", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c915c5000000001a024007?source=webshare&xhsshare=pc_web&xsec_token=ABYzJe5wKXlKJpiAmrYLR4WOabXkQ16OeVWy6wgKy9oIQ=&xsec_source=pc_share", "noteType": "图文", "products": "la pittura, conical, board", "postDate": 1773532800000, "exposure": 38309, "reads": 4192, "likes": 197, "saves": 34, "comments": 44, "engagement": 275, "conversion": 0, "ctr": 0.109425983450364, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_8", "kolName": "露露子🏠", "title": "开放式厨房的理想模样|餐厨一体 + 独立岛台", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69cb73fd0000000023017faf?source=webshare&xhsshare=pc_web&xsec_token=CB0Os11FV4_W-6tALP4dRnpWbGJdo7iND5mJuj3BA6GD0=&xsec_source=pc_share", "noteType": "图文", "products": "taburte", "postDate": 1773532800000, "exposure": 47511, "reads": 8499, "likes": 209, "saves": 189, "comments": 59, "engagement": 457, "conversion": 0, "ctr": 0.17888488981499, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_akyko9", "kolName": "Akyko", "title": "30多岁，终于拥有了一间像样的卧室", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c259de0000000023026e48?source=webshare&xhsshare=pc_web&xsec_token=CB9PbSwSqkbYj1qGQixdt9ocad-peirgmVh_l245oSMeQ=&xsec_source=pc_share", "noteType": "图文", "products": "knit", "postDate": 1773532800000, "exposure": 56051, "reads": 8413, "likes": 191, "saves": 93, "comments": 25, "engagement": 309, "conversion": 0, "ctr": 0.150095448787711, "cpc": null, "cpe": null, "performanceTags": ["高曝光"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_ruini10", "kolName": "ruini", "title": "阴雨天i人充电站", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c493c2000000001a03590e?source=webshare&xhsshare=pc_web&xsec_token=CBtQ5iZCDtgUFFx0WFrs8842LpZi2Dt_T3D2fPsp4zBHY=&xsec_source=pc_share", "noteType": "图文", "products": "grid", "postDate": 1773532800000, "exposure": 20986, "reads": 3159, "likes": 221, "saves": 23, "comments": 6, "engagement": 250, "conversion": 0, "ctr": 0.150528924044601, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_11", "kolName": "猴田", "title": "机场翻包｜What‘s in my bag？", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69b9371000000000230271ee?source=webshare&xhsshare=pc_web&xsec_token=CB4Wjo0fNs93oU5Usstj0C6N85tMuC9D0JAOmSisNXHC4=&xsec_source=pc_share", "noteType": "视频", "products": "grid", "postDate": 1773532800000, "exposure": 21239, "reads": 2890, "likes": 161, "saves": 20, "comments": 14, "engagement": 195, "conversion": 0, "ctr": 0.136070436461227, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_12", "kolName": "一颗大枣_", "title": "Gray-milky white🩶", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69afeba3000000002602d96a?source=webshare&xhsshare=pc_web&xsec_token=AB-WY45FceJEDntuTxk0PjTPJOcRYBbdfZnVXxprQezeA=&xsec_source=pc_share", "noteType": "图文", "products": "grid", "postDate": 1773532800000, "exposure": 21013, "reads": 2080, "likes": 119, "saves": 10, "comments": 15, "engagement": 144, "conversion": 0, "ctr": 0.0989863417884167, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_13", "kolName": "叫我小丁", "title": "vlog｜记录大厂职男7:00起高能量的上午🏃🏻", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69d4a2f2000000001d019bf6?source=webshare&xhsshare=pc_web&xsec_token=CBuzjkEk8PMH2pZadfcRMb7I7GTGGEhu6aW4-5SmJUhU4=&xsec_source=pc_share", "noteType": "视频", "products": "grid, canopy", "postDate": 1773532800000, "exposure": 42051, "reads": 4587, "likes": 310, "saves": 45, "comments": 12, "engagement": 367, "conversion": 0, "ctr": 0.109081829207391, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_14", "kolName": "正版坎迪斯", "title": "长假结束💐回到有猫有花的家，把心神归位", "noteUrl": "https://www.xiaohongshu.com/explore/69cd0a1b000000001a020d12?xsec_token=ABLToZbKOt9hE1N8B9U0wLDeC8Jinj04ZPFXqwlx7l5IU=&xsec_source=pc_user", "noteType": "图文", "products": "la pittura，concical", "postDate": 1773532800000, "exposure": 12901, "reads": 2186, "likes": 146, "saves": 38, "comments": 25, "engagement": 209, "conversion": 0, "ctr": 0.169444229129525, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_15", "kolName": "正版坎迪斯", "title": "vlog.沉浸式开箱🎨给生活加点多巴胺滤镜", "noteUrl": "https://www.xiaohongshu.com/explore/69cf44aa000000002003977a?xsec_token=ABLi8pNQm0pQ4kCM4MhG6R25xDhpHE9_fGgKR_FQ8sp4I=&xsec_source=pc_user", "noteType": "视频", "products": "la pittura，concical", "postDate": 1773532800000, "exposure": 9686, "reads": 1529, "likes": 113, "saves": 42, "comments": 21, "engagement": 176, "conversion": 0, "ctr": 0.157856700392319, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_16", "kolName": "无敌阿晶", "title": "28岁的我偏爱这样的家～", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69ca1e41000000001a0284c4?source=webshare&xhsshare=pc_web&xsec_token=ABP1UteQdusG58DfDXxrofXmVhUmDjZWF54wOXCLflS68=&xsec_source=pc_share", "noteType": "图文", "products": "apex", "postDate": 1773532800000, "exposure": 405219, "reads": 77167, "likes": 446, "saves": 225, "comments": 39, "engagement": 710, "conversion": 0, "ctr": 0.190432827680834, "cpc": null, "cpe": null, "performanceTags": ["高曝光", "高点击"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_17", "kolName": "卷卷🌀", "title": "🏠淡人会爱的氛围感卧室", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69d4cbce000000001a025845?source=webshare&xhsshare=pc_web&xsec_token=CB_zkqX0UpjDUVASJWhlYhlDajaGnTEGZiGBCEyjoyEds=&xsec_source=pc_share", "noteType": "视频", "products": "apex", "postDate": 1773532800000, "exposure": 5726, "reads": 978, "likes": 135, "saves": 88, "comments": 33, "engagement": 256, "conversion": 0, "ctr": 0.170799860286413, "cpc": null, "cpe": null, "performanceTags": ["高互动"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_18", "kolName": "杜可疯", "title": "在成都街头走一走🚶🏻‍♂️", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c3b148000000001d019889?source=webshare&xhsshare=pc_web&xsec_token=CBNQG8CEi49D2xqu89wita0dWRQaG8C4qCqTo4cZVD3EI=&xsec_source=pc_share", "noteType": "图文", "products": "grid, canopy", "postDate": 1773532800000, "exposure": 21191, "reads": 3766, "likes": 310, "saves": 41, "comments": 13, "engagement": 364, "conversion": 0, "ctr": 0.177716955311217, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_holabearxiong19", "kolName": "HolaBearXiong", "title": "电子榨菜：红色的那种", "noteUrl": "https://www.xiaohongshu.com/explore/69c00548000000001a02fdb4?xsec_token=ABMqMyN-s581DmUUieqdsfT4yMxPwCsxo2U8_e1K1uPUU=&xsec_source=pc_user", "noteType": "视频", "products": "grid", "postDate": 1773532800000, "exposure": 3262, "reads": 707, "likes": 163, "saves": 136, "comments": 33, "engagement": 332, "conversion": 0, "ctr": 0.216738197424893, "cpc": null, "cpe": null, "performanceTags": ["高互动", "高点击"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_20", "kolName": "醒醒的星期八", "title": "看书、买花、听歌，做生活的主导者", "noteUrl": "http://xhslink.com/o/1hG8pIH1VVq ", "noteType": "图文", "products": "conical, board", "postDate": 1773532800000, "exposure": 19843, "reads": 2276, "likes": 219, "saves": 118, "comments": 54, "engagement": 391, "conversion": 0, "ctr": 0.114700398125283, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_21", "kolName": "小汪狗", "title": "像28岁的梭罗一样过一天", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69b38456000000000b03744b?source=webshare&xhsshare=pc_web&xsec_token=CBBp1ZoWParRShzS9Lff5r13pI0_EBYOnB7bhP_s-GbWU=&xsec_source=pc_share", "noteType": "图文", "products": "grid", "postDate": 1773532800000, "exposure": 34240, "reads": 6324, "likes": 668, "saves": 451, "comments": 29, "engagement": 1148, "conversion": 0, "ctr": 0.184696261682243, "cpc": null, "cpe": null, "performanceTags": ["高互动", "高点击"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_22", "kolName": "下大雨了", "title": "独居人的出租屋/精装房改造", "noteUrl": "https://www.xiaohongshu.com/explore/69b7c1e1000000001b020d53?source=webshare&xhsshare=pc_web&xsec_token=CBGWcxNNdg5vVyTrcERq3JkJJyzjStBb_0cUJjFvC0Y84=&xsec_source=pc_share", "noteType": "图文", "products": "apex", "postDate": 1773532800000, "exposure": 12438, "reads": 2010, "likes": 105, "saves": 83, "comments": 19, "engagement": 207, "conversion": 0, "ctr": 0.161601543656536, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_averyp23", "kolName": "Avery-P", "title": "home｜相信一些能量守恒定律～💫", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69bfd64700000000220012b7?source=webshare&xhsshare=pc_web&xsec_token=CBFR3ZAjdVolxtm6PTLFSgrx7UW2P9GE7RqXP-lL4MlVM=&xsec_source=pc_share", "noteType": "图文", "products": "grid", "postDate": 1773532800000, "exposure": 65925, "reads": 8132, "likes": 566, "saves": 393, "comments": 56, "engagement": 1015, "conversion": 0, "ctr": 0.123352294273796, "cpc": null, "cpe": null, "performanceTags": ["高曝光"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_unaccc24", "kolName": "unaccc", "title": "雨天躲进一个小小的展厅", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69b9460e0000000023007389?source=webshare&xhsshare=pc_web&xsec_token=ABWnnctVfXdMIE5A2MNLInt8VS72rfFpWCjmS7MNoMh9Y=&xsec_source=pc_share", "noteType": "图文", "products": "grid", "postDate": 1773532800000, "exposure": 22161, "reads": 2417, "likes": 163, "saves": 14, "comments": 23, "engagement": 200, "conversion": 0, "ctr": 0.109065475384685, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_unaccc25", "kolName": "unaccc", "title": "不太喜欢穿裙子", "noteUrl": "https://www.xiaohongshu.com/explore/69ca653d0000000023005f24?xsec_token=MBZNFZMmsgXEX7QSEQeH1c2bSXpgIfz0ggVvvvovW5Evk=&xsec_source=pc_pgy", "noteType": "图文", "products": "grid", "postDate": 1773532800000, "exposure": 21663, "reads": 3104, "likes": 239, "saves": 11, "comments": 21, "engagement": 271, "conversion": 0, "ctr": 0.143285786825463, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_zaza26", "kolName": "Zaza吼", "title": "有刘海还是没刘海？", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69cd20dc000000001b0004b1?source=webshare&xhsshare=pc_web&xsec_token=CBomjVs_QQ_Il3qjtIlExouqxKVlRz1OBqLcuYpa4oxEc=&xsec_source=pc_share", "noteType": "图文", "products": "grid", "postDate": 1773532800000, "exposure": 22948, "reads": 5094, "likes": 234, "saves": 9, "comments": 24, "engagement": 267, "conversion": 0, "ctr": 0.221980128987276, "cpc": null, "cpe": null, "performanceTags": ["高点击"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_27", "kolName": "青年女动物", "title": "《如果你来我家》", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69ca707f000000001b022ad2?source=webshare&xhsshare=pc_web&xsec_token=CB1q2qZJQhV6XiqLSmWl47b02RbjdTu37cl1NCRegzQZM=&xsec_source=pc_share", "noteType": "图文", "products": "apex", "postDate": 1773532800000, "exposure": 17137, "reads": 2521, "likes": 220, "saves": 15, "comments": 36, "engagement": 271, "conversion": 0, "ctr": 0.147108595436774, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_ooldseven28", "kolName": "OOLDSEVEN", "title": "📗好物分享 VOL.17", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69cfa66b000000001a033255?source=webshare&xhsshare=pc_web&xsec_token=CBjIaJccGqfOzdtg5okOFA82OkI4tE9e6aIq-vcn8TQYQ=&xsec_source=pc_share", "noteType": "视频", "products": "grid", "postDate": 1773532800000, "exposure": 41879, "reads": 6525, "likes": 396, "saves": 112, "comments": 143, "engagement": 651, "conversion": 0, "ctr": 0.155806012559994, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_saladbob29", "kolName": "Saladbob", "title": "2折就能买到Brain Dead？！｜3月购物分享", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69d3ca80000000001a024c99?source=webshare&xhsshare=pc_web&xsec_token=AB4wGVqD8qMOMOGjIeTr2FO3_u3Ud396JNYqGkr45Ysww=&xsec_source=pc_share", "noteType": "视频", "products": "grid", "postDate": 1773532800000, "exposure": 70193, "reads": 14457, "likes": 670, "saves": 107, "comments": 109, "engagement": 886, "conversion": 0, "ctr": 0.20596070833274, "cpc": null, "cpe": null, "performanceTags": ["高曝光", "高点击"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_lin030", "kolName": "Lin_0", "title": "很难不爱上我的新书桌📚", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c3ab29000000001a037002?source=webshare&xhsshare=pc_web&xsec_token=CBHV9MXCMb8r8oVeG_fN-lSBZaEoQ_pfvSfOFdoHlMTio=&xsec_source=pc_share", "noteType": "图文", "products": "apex", "postDate": 1773532800000, "exposure": 25365, "reads": 3295, "likes": 203, "saves": 179, "comments": 44, "engagement": 426, "conversion": 0, "ctr": 0.129903410210921, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_31", "kolName": "养生酒鬼忌廉", "title": "酸种黑麦“板砖”面包，真正的北欧神话🫅", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69c28a8b000000001b02015d?source=webshare&xhsshare=pc_web&xsec_token=ABeiqdQ29g9xcTEYiS7Gi_e9x1Kz_zxWQr7MAjlrtZCJM=&xsec_source=pc_share", "noteType": "视频", "products": "la pittura", "postDate": 1773532800000, "exposure": 12075, "reads": 1932, "likes": 90, "saves": 77, "comments": 12, "engagement": 179, "conversion": 0, "ctr": 0.16, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_cherchen32", "kolName": "cher_chen", "title": "我家潮出片｜自然本就与家共生", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69d4ea1b00000000220007fd?source=webshare&xhsshare=pc_web&xsec_token=ABfqQgycSYmCjFbvJmr5uXMnlEqwJ9RvCk8vzkD0V25DA=&xsec_source=pc_share", "noteType": "视频", "products": "la pittura，concical", "postDate": 1773532800000, "exposure": 16849, "reads": 2867, "likes": 213, "saves": 133, "comments": 29, "engagement": 375, "conversion": 0, "ctr": 0.170158466377827, "cpc": null, "cpe": null, "performanceTags": ["高互动"], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_33", "kolName": "郝眉毛", "title": "逛花市的人先享受春天💐", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69d39aed000000001a0223cd?source=webshare&xhsshare=pc_web&xsec_token=CBdDja4kduEtruAbYDEaAJhsLB6Q0SxWKRsOwYm30f120=&xsec_source=pc_share", "noteType": "图文", "products": "grid", "postDate": 1773532800000, "exposure": 25289, "reads": 4384, "likes": 189, "saves": 25, "comments": 17, "engagement": 231, "conversion": 0, "ctr": 0.173356004586975, "cpc": null, "cpe": null, "performanceTags": [], "imageIds": [], "source": "3月复盘底表"}, {"id": "n_mar_mavis34", "kolName": "马肥丝Mavis", "title": "精彩继续的三月购物分享下篇", "noteUrl": "https://www.xiaohongshu.com/discovery/item/69d1d6e0000000001a034d32?source=webshare&xhsshare=pc_web&xsec_token=CBKqBwKujUD7zJwkvWyy2sGsjYtLGVat_YahEZ9OdW6ZE=&xsec_source=pc_share", "noteType": "视频", "products": "grid", "postDate": 1773532800000, "exposure": 106993, "reads": 20685, "likes": 952, "saves": 328, "comments": 67, "engagement": 1347, "conversion": 0, "ctr": 0.193330404792837, "cpc": null, "cpe": null, "performanceTags": ["高曝光", "高点击"], "imageIds": [], "source": "3月复盘底表"}], "newKols": [{"id": "k_excel_53421", "redId": "高脚蟹子", "name": "高脚蟹子", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_56222", "redId": "準點回家!", "name": "準點回家!", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_43211", "redId": "蒯仔", "name": "蒯仔", "type": "时尚", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_94792", "redId": "杰西卡是卡卡鸭", "name": "杰西卡是卡卡鸭", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_45228", "redId": "ruini", "name": "ruini", "type": "时尚", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_5590", "redId": "猴田", "name": "猴田", "type": "时尚", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_15798", "redId": "叫我小丁", "name": "叫我小丁", "type": "生活", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_43543", "redId": "正版坎迪斯", "name": "正版坎迪斯", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_38131", "redId": "无敌阿晶", "name": "无敌阿晶", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_37956", "redId": "卷卷🌀", "name": "卷卷🌀", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_71033", "redId": "HolaBearXiong", "name": "HolaBearXiong", "type": "时尚", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_18614", "redId": "醒醒的星期八", "name": "醒醒的星期八", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_15476", "redId": "小汪狗", "name": "小汪狗", "type": "生活", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_27108", "redId": "下大雨了", "name": "下大雨了", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_27106", "redId": "Lin_0", "name": "Lin_0", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_24736", "redId": "养生酒鬼忌廉", "name": "养生酒鬼忌廉", "type": "生活", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}, {"id": "k_excel_13780", "redId": "cher_chen", "name": "cher_chen", "type": "家居", "tier": "", "followers": 0, "contact": "", "wechat": "", "city": "", "cooperationStatus": "已合作", "notes": "3月复盘表新增（待补蒲公英资料）", "createdAt": 1741872000000}]};
+
+
+/* === 第二批 KOL 真实资料补全（2026-05-07，13 位 - 蒯仔=12 位） === */
+const MARCH_KOL_BATCH2 = [{"localName": "高脚蟹子", "redId": "600983421", "internalUserId": "5927a4c55e87e708d4bd21f6", "name": "高脚蟹子", "bio": "奇思妙想｜艺术女孩｜家居日常\n重要的是👉🏽你应该是你自己，而不是像谁", "contact": "qianya1462@163.com", "ipLocation": "浙江", "followers": 24181, "likes": 170284, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/5927a4c55e87e708d4bd21f6", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5927a4c55e87e708d4bd21f6", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo310trd34j6k0049he4cica8fmiqn9ujo?imageView2/2/w/360/format/webp"}, {"localName": "小汪狗", "redId": "ltdoggie", "internalUserId": "60fbbf510000000001002cc4", "name": "小汪狗", "bio": "🐚hi叫我小汪\n环球旅行｜户外｜露营｜防晒\n🌍行走40➕国\n旅游出版编辑｜携程签约旅行家｜图虫签约摄影师", "contact": "923723557@qq.com", "ipLocation": "浙江", "followers": 33260, "likes": 417187, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/60fbbf510000000001002cc4", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/60fbbf510000000001002cc4", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31ds9upq6gu005o7rnt8g8b644730boo?imageView2/2/w/360/format/webp"}, {"localName": "猴田", "redId": "227075809", "internalUserId": "55ecd76662a60c2d82975189", "name": "猴田", "bio": "你好呀，我是猴田！\n📍北京女孩儿，155/41kg，穿搭、户外和日常分享。", "contact": "1070306056@qq.com", "ipLocation": "北京", "followers": 51903, "likes": 857611, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/55ecd76662a60c2d82975189", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/55ecd76662a60c2d82975189", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/5c872a2aac05f8000189e816.jpg?imageView2/2/w/360/format/webp"}, {"localName": "叫我小丁", "redId": "746534891", "internalUserId": "5c96334100000000120179ec", "name": "叫我小丁", "bio": "🎓浙大建筑学跨行互联网\n日常@DearNelson  其他账号为盗图，注意识别", "contact": "1016315207@qq.com", "ipLocation": "浙江", "followers": 69793, "likes": 609703, "gender": "男", "profileUrl": "https://www.xiaohongshu.com/user/profile/5c96334100000000120179ec", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5c96334100000000120179ec", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo30ti85587ki005n4m6d0kiufc49oelj8?imageView2/2/w/360/format/webp"}, {"localName": "cher_chen", "redId": "187905359", "internalUserId": "5acb21cd11be107309162b78", "name": "cher_chen", "bio": "北京197 ㎡复式\n分享家居日常 软装好物 生活美学\n感谢关注~", "contact": "308815310@qq.com", "ipLocation": "北京", "followers": 32760, "likes": 226942, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/5acb21cd11be107309162b78", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5acb21cd11be107309162b78", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/64cf5e77b4b004fa95d2f210.jpg?imageView2/2/w/360/format/webp"}, {"localName": "正版坎迪斯", "redId": "278644650", "internalUserId": "5777caaa50c4b4395e8c578f", "name": "正版坎迪斯", "bio": "🪄INFP. 前媒体人 自由职业第10年\n🧺lifestyle｜home\n▪️认真过好每一天，发发思考种种草", "contact": "candicewy@foxmail.com", "ipLocation": "上海", "followers": 27627, "likes": 191822, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/5777caaa50c4b4395e8c578f", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5777caaa50c4b4395e8c578f", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/6467799c6a7aa244f7d81740.jpg?imageView2/2/w/360/format/webp"}, {"localName": "卷卷🌀", "redId": "106772398", "internalUserId": "55731b0f22cfcd0770167526", "name": "卷卷🌀", "bio": "🌈INTJ 氛围感爱好者\n🏠家居 生活 好物分享\n🐱一人四猫的日常记录", "contact": "juanjuanzzz@outlook.com", "ipLocation": "浙江", "followers": 19267, "likes": 173076, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/55731b0f22cfcd0770167526", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/55731b0f22cfcd0770167526", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo30q67bbbjne0040ovradgut96irnpqj8?imageView2/2/w/360/format/webp"}, {"localName": "HolaBearXiong", "redId": "HolaBearXiong", "internalUserId": "55c8582be4b1cf44f82a7898", "name": "HolaBearXiong", "bio": "🖤A dream maker💫\nMy heart @BEARBOOM PR", "contact": "bearxiongqian@gmail.com", "ipLocation": "上海", "followers": 57396, "likes": 149675, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/55c8582be4b1cf44f82a7898", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/55c8582be4b1cf44f82a7898", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/6198fa811837d58ee53fd86b.jpg?imageView2/2/w/360/format/webp"}, {"localName": "醒醒的星期八", "redId": "4948874506", "internalUserId": "6028d3150000000001003983", "name": "醒醒的星期八", "bio": "INFJ 不想赶时间的人\n98㎡ 自然系的家", "contact": "244670194@qq.com", "ipLocation": "北京", "followers": 13687, "likes": 171957, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/6028d3150000000001003983", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/6028d3150000000001003983", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31icecqa57i005o18qcag8ec3bvc53cg?imageView2/2/w/360/format/webp"}, {"localName": "下大雨了", "redId": "liuliu818", "internalUserId": "598a82c150c4b44607221fa0", "name": "下大雨了", "bio": "🧍🏿穿搭\n🟦家居这块\n🚗G38 992", "contact": "11922253@qq.com", "ipLocation": "山东", "followers": 13136, "likes": 138638, "gender": "", "profileUrl": "https://www.xiaohongshu.com/user/profile/598a82c150c4b44607221fa0", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/598a82c150c4b44607221fa0", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31vg2n88g2a0049nlsp1c27t084njq0g?imageView2/2/w/360/format/webp"}, {"localName": "养生酒鬼忌廉", "redId": "Rudolfsmum", "internalUserId": "5c948fb9000000001000015b", "name": "养生酒鬼忌廉", "bio": "在@BRUTO WINES 当质检员\n立志活到120，喝到120", "contact": "", "ipLocation": "上海", "followers": 7254, "likes": 53226, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/5c948fb9000000001000015b", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5c948fb9000000001000015b", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/6393071587dda681f28cf177.jpg?imageView2/2/w/360/format/webp"}, {"localName": "Lin_0", "redId": "186083283", "internalUserId": "5a5205b811be107b96cf3c98", "name": "Lin_0", "bio": "记录家居日常｜好好生活\n毫无代价唱最幸福的歌～", "contact": "491512930@qq.com", "ipLocation": "重庆", "followers": 27472, "likes": 484448, "gender": "女", "profileUrl": "https://www.xiaohongshu.com/user/profile/5a5205b811be107b96cf3c98", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5a5205b811be107b96cf3c98", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/637067ec412459a29bc799ba.jpg?imageView2/2/w/360/format/webp"}];
+
+
+function enrichMarchKolsBatch2_v1() {
+  if (data.marchKolBatch2_v1) return;
+  let updated = 0, missed = [];
+  MARCH_KOL_BATCH2.forEach(rec => {
+    const local = data.kols.find(k => k.redId === rec.localName)
+                || data.kols.find(k => k.name === rec.localName);
+    if (!local) { missed.push(rec.localName); return; }
+    const oldRedId = local.redId;
+    const newRedId = rec.redId || oldRedId;
+    Object.assign(local, {
+      redId: newRedId,
+      internalUserId: rec.internalUserId,
+      name: rec.name,
+      followers: rec.followers,
+      likes: rec.likes,
+      gender: rec.gender,
+      ipLocation: rec.ipLocation,
+      city: rec.ipLocation,
+      contact: rec.contact,
+      bio: rec.bio,
+      notes: rec.bio || local.notes,
+      profileUrl: rec.profileUrl,
+      pgyUrl: rec.pgyUrl,
+      avatarUrl: rec.avatarUrl,
+    });
+    if (oldRedId !== newRedId) {
+      data.seedings.forEach(s => { if (s.kolRedId === oldRedId) s.kolRedId = newRedId; });
+      data.notes.forEach(n    => { if (n.kolRedId === oldRedId) n.kolRedId = newRedId; });
+      if (Array.isArray(data.images)) data.images.forEach(im => { if (im.kolRedId === oldRedId) im.kolRedId = newRedId; });
+    }
+    updated++;
+  });
+  data.marchKolBatch2_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 第二批 KOL 资料补全：成功 ' + updated + (missed.length?' / 未匹配 '+missed.join(','):''));
+}
+
+/* === 一次性：把每条笔记关联到对应博主的 Seeding 记录（找不到就新建一条占位 seeding）=== */
+function linkNotesToSeedings_v1() {
+  if (data.notesLinkedToSeedings_v1) return;
+  let linked = 0, created = 0;
+  (data.notes||[]).forEach(n => {
+    if (n.seedingId) return;
+    const exist = data.seedings.filter(s => s.kolRedId === n.kolRedId)
+                                .sort((a,b) => (b.shipDate||0) - (a.shipDate||0));
+    let s;
+    if (exist.length) {
+      s = exist[0];
+    } else {
+      s = {
+        id: 's_mar_n_' + Math.random().toString(36).slice(2, 9),
+        kolRedId: n.kolRedId,
+        skuList: n.products || '3月种草',
+        shipDate: n.postDate || 1741334400000,
+        trackingNo: '',
+        deliveryStatus: '已签收',
+        shippingAddress: '',
+        cost: 0,
+        notes: '3月种草（按笔记回填）',
+        createdAt: n.postDate || 1741334400000,
+      };
+      data.seedings.push(s);
+      created++;
+    }
+    n.seedingId = s.id;
+    linked++;
+  });
+  data.notesLinkedToSeedings_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 笔记 → Seeding 关联：' + linked + ' 条笔记，新建 ' + created + ' 条 seeding 占位');
+}
+
+/* === 第三批 KOL 真实资料补全（最后 2 位，2026-05-07） === */
+const MARCH_KOL_BATCH3 = [
+  {"localName": "準點回家!", "redId": "ShuShinYou", "internalUserId": "60061dd10000000001007f48", "name": "準點回家!", "bio": "回家解膩！\n💿·🫙·📹·🥀·🎱", "contact": "shushinyou@outlook.com", "ipLocation": "江苏", "followers": 49046, "likes": 338886, "gender": "男", "profileUrl": "https://www.xiaohongshu.com/user/profile/60061dd10000000001007f48", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/60061dd10000000001007f48", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31m4kmjilm8105o063n8g8vq81gnsn90?imageView2/2/w/360/format/webp"},
+  {"localName": "无敌阿晶",  "redId": "AikLj122",   "internalUserId": "5c852a680000000012011df5", "name": "无敌阿晶",  "bio": "谢谢来看我 点点关注经常见🫶\n家居软装 🛋️| 好物分享 🧺| 潮玩盲盒🧸\n私信不回复 欢迎评论区畅聊\n阿晶的蓝房子@大力小企鹅", "contact": "893638605@qq.com", "ipLocation": "河北", "followers": 20385, "likes": 237883, "gender": "", "profileUrl": "https://www.xiaohongshu.com/user/profile/5c852a680000000012011df5", "pgyUrl": "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5c852a680000000012011df5", "avatarUrl": "https://sns-avatar-qc.xhscdn.com/avatar/6564b98f6079f73bce2900c4.jpg?imageView2/2/w/360/format/webp"}
+];
+
+function enrichMarchKolsBatch3_v1() {
+  if (data.marchKolBatch3_v1) return;
+  let updated = 0, missed = [];
+  MARCH_KOL_BATCH3.forEach(rec => {
+    const local = data.kols.find(k => k.redId === rec.localName)
+                || data.kols.find(k => k.name === rec.localName);
+    if (!local) { missed.push(rec.localName); return; }
+    const oldRedId = local.redId;
+    const newRedId = rec.redId || oldRedId;
+    Object.assign(local, {
+      redId: newRedId,
+      internalUserId: rec.internalUserId,
+      name: rec.name,
+      followers: rec.followers,
+      likes: rec.likes,
+      gender: rec.gender,
+      ipLocation: rec.ipLocation,
+      city: rec.ipLocation,
+      contact: rec.contact,
+      bio: rec.bio,
+      notes: rec.bio || local.notes,
+      profileUrl: rec.profileUrl,
+      pgyUrl: rec.pgyUrl,
+      avatarUrl: rec.avatarUrl,
+    });
+    if (oldRedId !== newRedId) {
+      data.seedings.forEach(s => { if (s.kolRedId === oldRedId) s.kolRedId = newRedId; });
+      data.notes.forEach(n    => { if (n.kolRedId === oldRedId) n.kolRedId = newRedId; });
+      if (Array.isArray(data.images)) data.images.forEach(im => { if (im.kolRedId === oldRedId) im.kolRedId = newRedId; });
+    }
+    updated++;
+  });
+  data.marchKolBatch3_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 第三批 KOL 资料补全（最后 2 位）：成功 ' + updated + (missed.length?' / 未匹配 '+missed.join(','):''));
+}
+
+/* === 一次性：蒯仔 占位补全（来自复盘表）=== */
+const KUAI_REAL = {
+  redId: "953399928",
+  internalUserId: "554030cab203d90677c382b9",
+  name: "蒯仔",
+  bio: "蹦蹦精品购物指南\n蹦蹦商店售后保安：@一个爱礼貌问问的人",
+  contact: "",
+  ipLocation: "上海",
+  city: "上海",
+  followers: 115071,
+  likes: 457900,
+  gender: "女",
+  profileUrl: "https://www.xiaohongshu.com/user/profile/554030cab203d90677c382b9",
+  pgyUrl: "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/554030cab203d90677c382b9",
+  avatarUrl: "https://sns-avatar-qc.xhscdn.com/avatar/5e6ba5b9d1b51d0001babf27.jpg?imageView2/2/w/360/format/webp",
+};
+
+function enrichKuai_v1() {
+  if (data.kuaiEnriched_v1) return;
+  const k = data.kols.find(x => x.redId === '蒯仔' || x.name === '蒯仔');
+  if (!k) { data.kuaiEnriched_v1 = true; saveData(); return; }
+  const oldRedId = k.redId;
+  Object.assign(k, KUAI_REAL, { cooperationStatus: k.cooperationStatus || '已合作' });
+  if (oldRedId !== KUAI_REAL.redId) {
+    data.seedings.forEach(s => { if (s.kolRedId === oldRedId) s.kolRedId = KUAI_REAL.redId; });
+    data.notes.forEach(n    => { if (n.kolRedId === oldRedId) n.kolRedId = KUAI_REAL.redId; });
+    if (Array.isArray(data.images)) data.images.forEach(im => { if (im.kolRedId === oldRedId) im.kolRedId = KUAI_REAL.redId; });
+  }
+  data.kuaiEnriched_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 蒯仔 资料补全 → 953399928');
+}
+
+/* === 一次性：把同博主的 3月素材自动挂到笔记 imageIds 上 === */
+function linkImagesToNotes_v1() {
+  if (data.imagesLinkedToNotes_v1) return;
+  let linkedCnt = 0;
+  data.notes = data.notes || [];
+  data.notes.forEach(n => {
+    if (Array.isArray(n.imageIds) && n.imageIds.length) return; // 已经手动关联过就不覆盖
+    const imgs = (data.images || []).filter(im => im.kolRedId === n.kolRedId).map(im => im.id);
+    if (imgs.length) {
+      n.imageIds = imgs;
+      linkedCnt++;
+    }
+  });
+  data.imagesLinkedToNotes_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 已自动给 ' + linkedCnt + ' 条笔记挂上同博主的 3月素材');
+}
+
+/* === Console-callable：撤销 杰西卡 ↔ 杰西卡是卡卡鸭 的合并（如果用户后来确认不是同人）=== */
+window.undoJessicaMerge = function() {
+  // 把所有以 "@杰西卡-" 开头的 fileName 的素材的 kolRedId 改回旧 redId='杰西卡'，并重建一条占位 KOL
+  const realRedId = '605031221';
+  const oldRedId  = '杰西卡';
+  // 1) 重建 杰西卡 占位 KOL（如果不在了）
+  if (!data.kols.find(k => k.redId === oldRedId)) {
+    data.kols.push({
+      id: 'k_jessica_placeholder',
+      redId: oldRedId, name: oldRedId, type: '居家',
+      tier: '', followers: 0, contact: '', wechat: '', city: '',
+      cooperationStatus: '已合作',
+      notes: '3月素材已交付：Grid、花瓶、餐盘（待补真实资料）',
+      createdAt: 1741334400000,
+    });
+  }
+  // 2) 把素材 kolRedId 按 fileName 还原
+  let movedImgs = 0;
+  (data.images || []).forEach(im => {
+    if (im.kolRedId === realRedId && (im.fileName||'').startsWith('@杰西卡-')) {
+      im.kolRedId = oldRedId; movedImgs++;
+    }
+  });
+  // 3) 把"3月种草·N个素材"那条 seeding 拆出来给 杰西卡
+  if (!data.seedings.find(s => s.id === 's_mar_98380')) {
+    data.seedings.push({
+      id: 's_mar_98380', kolRedId: oldRedId, skuList: 'Grid、花瓶、餐盘',
+      shipDate: 1740960000000, trackingNo: '', deliveryStatus: '已签收',
+      shippingAddress: '', cost: 0, notes: '3月种草·12个素材',
+      createdAt: 1741334400000,
+    });
+  }
+  // 4) 笔记保留在 杰西卡是卡卡鸭 名下（kolRedId=605031221 不变），它本来就是复盘表里的
+  data.jessicaMerged_v1 = false;  // 重置 flag，以便用户改主意可重做
+  saveData();
+  if (typeof render === 'function') render();
+  console.log(`[undoJessicaMerge] 已还原：${movedImgs} 张素材回到"杰西卡"，杰西卡是卡卡鸭 保留其复盘表笔记`);
+  return { movedImgs };
+};
+
+/* === 一次性：把 杰西卡（占位）和 杰西卡是卡卡鸭（复盘表占位）合并 + 补全真实资料 === */
+const JESSICA_REAL = {
+  redId: "605031221",
+  internalUserId: "5b7002887979810001594e63",
+  name: "杰西卡是卡卡鸭",
+  bio: "✨保持对生活的感知力\n🎐家居｜生活美学｜infp的精神角落",
+  contact: "isjessica@126.com",
+  ipLocation: "广东",
+  city: "广东",
+  followers: 12006,
+  likes: 208856,
+  gender: "女",
+  profileUrl: "https://www.xiaohongshu.com/user/profile/5b7002887979810001594e63",
+  pgyUrl: "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/5b7002887979810001594e63",
+  avatarUrl: "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31vkjr1j0ii004ad4il18gjj3o13asuo?imageView2/2/w/360/format/webp",
+};
+
+function mergeJessicaAndEnrich_v1() {
+  if (data.jessicaMerged_v1) return;
+  const aliases = ['杰西卡', '杰西卡是卡卡鸭'];
+  const matches = data.kols.filter(k => aliases.includes(k.redId) || aliases.includes(k.name));
+  if (!matches.length) { data.jessicaMerged_v1 = true; saveData(); return; }
+
+  matches.sort((a,b) => (a.createdAt||0) - (b.createdAt||0));
+  const primary = matches[0];
+  const dupes = matches.slice(1);
+  const oldRedIds = matches.map(k => k.redId);
+  const newRedId = JESSICA_REAL.redId;
+
+  Object.assign(primary, JESSICA_REAL, {
+    notes: JESSICA_REAL.bio || primary.notes,
+    cooperationStatus: primary.cooperationStatus || '已合作',
+  });
+
+  const dupeIds = new Set(dupes.map(k => k.id));
+  data.kols = data.kols.filter(k => !dupeIds.has(k.id));
+
+  data.seedings.forEach(s => { if (oldRedIds.includes(s.kolRedId)) s.kolRedId = newRedId; });
+  data.notes.forEach(n    => { if (oldRedIds.includes(n.kolRedId)) n.kolRedId = newRedId; });
+  if (Array.isArray(data.images)) data.images.forEach(im => { if (oldRedIds.includes(im.kolRedId)) im.kolRedId = newRedId; });
+
+  // 同 redId 重复的 seeding 记录合并为一条
+  const seenSeedingsForKol = new Set();
+  data.seedings = data.seedings.filter(s => {
+    if (s.kolRedId !== newRedId) return true;
+    if (seenSeedingsForKol.has(newRedId)) return false;
+    seenSeedingsForKol.add(newRedId);
+    return true;
+  });
+
+  data.jessicaMerged_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 杰西卡 + 杰西卡是卡卡鸭 合并完成 → 605031221（真实）');
+}
+
+/* === 一次性：把 Rreneeni（占位）和 ruini（复盘表占位）合并 + 补全真实资料 === */
+const RUINI_REAL = {
+  redId: "ruini1115",
+  internalUserId: "58689fbd5e87e75c7849be44",
+  name: "ruini",
+  bio: "𝙧𝙧𝙢𝙤𝙣𝙖@163.𝙘𝙤𝙢",
+  contact: "rrmona@163.com",
+  ipLocation: "浙江",
+  city: "浙江",
+  followers: 37325,
+  likes: 212287,
+  gender: "女",
+  profileUrl: "https://www.xiaohongshu.com/user/profile/58689fbd5e87e75c7849be44",
+  pgyUrl: "https://pgy.xiaohongshu.com/solar/pre-trade/blogger-detail/58689fbd5e87e75c7849be44",
+  avatarUrl: "https://sns-avatar-qc.xhscdn.com/avatar/1040g2jo31td6e5pc5k00490khhfrrfi4245e7mg?imageView2/2/w/360/format/webp",
+};
+
+function mergeRuiniAndEnrich_v1() {
+  if (data.ruiniMerged_v1) return;
+  // 候选：占位 redId 或 name 等于这两个的所有 KOL
+  const aliases = ['Rreneeni', 'ruini'];
+  const matches = data.kols.filter(k => aliases.includes(k.redId) || aliases.includes(k.name));
+  if (!matches.length) { data.ruiniMerged_v1 = true; saveData(); return; }
+
+  // 选一个作为 primary（保留 createdAt 最早那条），其余 merge 进去
+  matches.sort((a,b) => (a.createdAt||0) - (b.createdAt||0));
+  const primary = matches[0];
+  const dupes = matches.slice(1);
+
+  const oldRedIds = matches.map(k => k.redId);
+  const newRedId = RUINI_REAL.redId;
+
+  // 把 primary 升级成真实数据
+  Object.assign(primary, RUINI_REAL, {
+    notes: RUINI_REAL.bio || primary.notes,
+    cooperationStatus: primary.cooperationStatus || '已合作',
+  });
+
+  // 删掉重复的 KOL
+  const dupeIds = new Set(dupes.map(k => k.id));
+  data.kols = data.kols.filter(k => !dupeIds.has(k.id));
+
+  // 把所有引用旧 redId 的 seedings/notes/images 改成新 redId
+  data.seedings.forEach(s => { if (oldRedIds.includes(s.kolRedId)) s.kolRedId = newRedId; });
+  data.notes.forEach(n    => { if (oldRedIds.includes(n.kolRedId)) n.kolRedId = newRedId; });
+  if (Array.isArray(data.images)) data.images.forEach(im => { if (oldRedIds.includes(im.kolRedId)) im.kolRedId = newRedId; });
+
+  // 同昵称的两个 seeding/笔记记录如果都来自不同 alias，合并 seeding
+  const seedingKols = {};
+  data.seedings = data.seedings.filter(s => {
+    if (s.kolRedId !== newRedId) return true;
+    if (seedingKols[newRedId]) {
+      // 把素材数追加到已存在的那条 notes
+      const existing = seedingKols[newRedId];
+      existing.notes = (existing.notes || '') + (s.notes ? ' / ' + s.notes : '');
+      return false;
+    }
+    seedingKols[newRedId] = s;
+    return true;
+  });
+
+  data.ruiniMerged_v1 = true;
+  saveData();
+  console.log('[seeding-hub] Rreneeni + ruini 合并完成 → ruini1115（真实）');
+}
+
+function importMarchNotes_v1() {
+  if (data.marchNotesImported_v1) return;
+
+  // 1) 把"复盘表新增"的占位 KOL 加进来（去重：name 已存在就不加）
+  const existingNames = new Set((data.kols||[]).map(k => k.name));
+  let newKolCnt = 0;
+  MARCH_NOTES_BUNDLE.newKols.forEach(k => {
+    if (!existingNames.has(k.name)) {
+      data.kols.push(k);
+      existingNames.add(k.name);
+      newKolCnt++;
+    }
+  });
+
+  // 2) 把 34 条笔记加进来；kolName → 找现有 KOL 的 redId 作为 kolRedId
+  data.notes = data.notes || [];
+  const existingNoteIds = new Set(data.notes.map(n => n.id));
+  let addedNotes = 0;
+  MARCH_NOTES_BUNDLE.notes.forEach(rec => {
+    if (existingNoteIds.has(rec.id)) return;
+    const k = data.kols.find(x => x.name === rec.kolName);
+    const note = {
+      id: rec.id,
+      seedingId: '',
+      kolRedId: k ? k.redId : rec.kolName,  // 找不到 KOL 退回用 kolName 占位
+      title: rec.title,
+      noteUrl: rec.noteUrl,
+      noteType: rec.noteType,
+      products: rec.products,
+      postDate: rec.postDate,
+      exposure: rec.exposure,
+      reads: rec.reads,
+      likes: rec.likes,
+      saves: rec.saves,
+      comments: rec.comments,
+      engagement: rec.engagement,
+      conversion: rec.conversion,
+      ctr: rec.ctr,
+      cpc: rec.cpc,
+      cpe: rec.cpe,
+      performanceTags: rec.performanceTags,
+      imageIds: rec.imageIds || [],
+      source: rec.source,
+    };
+    data.notes.push(note);
+    addedNotes++;
+  });
+
+  data.marchNotesImported_v1 = true;
+  saveData();
+  console.log('[seeding-hub] 复盘底表导入完成：新增 ' + newKolCnt + ' 位占位 KOL，' + addedNotes + ' 条笔记');
+}
+
+function enrichMarchKols_v2() {
+  if (data.marchKolEnriched_v2) return;
+
+  // 1) 先把 unacc 合并进 unaccc：把 unacc 的 seedings/notes/images 引用全部改成 unaccc
+  const unaccKol  = data.kols.find(k => k.redId === 'unacc');
+  const unacccKol = data.kols.find(k => k.redId === 'unaccc');
+  if (unaccKol && unacccKol) {
+    data.seedings.forEach(s => { if (s.kolRedId === 'unacc') s.kolRedId = 'unaccc'; });
+    data.notes.forEach(n    => { if (n.kolRedId === 'unacc') n.kolRedId = 'unaccc'; });
+    if (Array.isArray(data.images)) data.images.forEach(im => { if (im.kolRedId === 'unacc') im.kolRedId = 'unaccc'; });
+    // 把多余 unacc seeding 合并到 unaccc seeding：直接删掉 unacc 那条 seeding（同昵称已合并就只保留一条）
+    data.seedings = data.seedings.filter(s => s.id !== 's_mar_unacc');
+    data.kols     = data.kols.filter(k => k.id !== unaccKol.id);
+  }
+
+  // 2) 按 localName（= 占位 redId == 昵称）精确匹配并补全
+  let updated = 0;
+  MARCH_KOL_ENRICHMENT.forEach(rec => {
+    const local = data.kols.find(k => k.redId === rec.localName) || data.kols.find(k => k.name === rec.localName);
+    if (!local) { console.warn('[enrich] 未找到本地 KOL:', rec.localName); return; }
+    const oldRedId = local.redId;
+    const newRedId = rec.redId || oldRedId;
+    Object.assign(local, {
+      redId: newRedId,
+      internalUserId: rec.internalUserId,
+      name: rec.name,
+      followers: rec.followers,
+      likes: rec.likes,
+      gender: rec.gender,
+      ipLocation: rec.ipLocation,
+      city: rec.ipLocation,        // 复用 city 字段在表格里展示
+      contact: rec.contact,
+      bio: rec.bio,
+      notes: rec.bio || local.notes,  // 备注栏放简介更直观
+      profileUrl: rec.profileUrl,
+      pgyUrl: rec.pgyUrl,
+      avatarUrl: rec.avatarUrl,
+    });
+    // 占位 redId 改成真号，级联更新 seedings/notes/images
+    if (oldRedId !== newRedId) {
+      data.seedings.forEach(s => { if (s.kolRedId === oldRedId) s.kolRedId = newRedId; });
+      data.notes.forEach(n    => { if (n.kolRedId === oldRedId) n.kolRedId = newRedId; });
+      if (Array.isArray(data.images)) data.images.forEach(im => { if (im.kolRedId === oldRedId) im.kolRedId = newRedId; });
+    }
+    updated++;
+  });
+
+  data.marchKolEnriched_v2 = true;
+  saveData();
+  console.log('[seeding-hub] 已补全 ' + updated + ' 位博主真实资料');
+}
+
 function mergeMarchSeed() {
   if (data.marchSeedImported_v1) return;
   data.kols     = data.kols     || [];
@@ -1441,8 +1885,17 @@ function openImageDetail(id) {
 /* ==================================================================
    KOL 库
    ================================================================== */
-let kolFilter = { search: '', type: '', tier: '', cooperationStatus: '' };
+let kolFilter = { search: '', type: '', tier: '', cooperationStatus: '', view: 'list', detailId: null };
+function setKolView(v, id) {
+  kolFilter.view = v;
+  if (id !== undefined) kolFilter.detailId = id;
+  renderKols(document.getElementById('content'));
+}
 function renderKols(root) {
+  if (kolFilter.view === 'detail' && kolFilter.detailId) {
+    return renderKolDetail(root, kolFilter.detailId);
+  }
+
   let list = data.kols.filter(k => {
     if (kolFilter.search) {
       const q = kolFilter.search.toLowerCase();
@@ -1457,6 +1910,11 @@ function renderKols(root) {
   // 同名提示
   const nameMap = {};
   data.kols.forEach(k => { nameMap[k.name] = (nameMap[k.name]||0)+1; });
+
+  const viewToggleBtn = (label, key) => `
+    <button class="btn btn-sm" onclick="setKolView('${key}')"
+      style="border-radius:0;${kolFilter.view===key?'background:var(--primary);color:white;border-color:var(--primary);':'background:white;color:var(--text-secondary);'}">${label}</button>
+  `;
 
   root.innerHTML = `
     <div class="filter-bar">
@@ -1479,45 +1937,237 @@ function renderKols(root) {
         <option ${kolFilter.cooperationStatus==='未联系'?'selected':''}>未联系</option>
         <option ${kolFilter.cooperationStatus==='已拒绝'?'selected':''}>已拒绝</option>
       </select>
+      <div style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+        ${viewToggleBtn('列表', 'list')}${viewToggleBtn('卡片', 'cards')}
+      </div>
       <div style="margin-left: auto;">
         <button class="btn btn-primary btn-sm" onclick="openKolModal()">+ 录入 KOL</button>
       </div>
     </div>
 
-    <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">共 ${list.length} 位 KOL · 同名（不去重）按小红书 ID 区分</div>
+    <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">共 ${list.length} 位 KOL · 点博主名进详情页 · 同名（不去重）按小红书 ID 区分</div>
 
-    ${list.length ? `
-      <div class="card" style="padding: 0;">
-        <table class="table">
-          <thead>
+    ${list.length ? (kolFilter.view === 'cards' ? renderKolCards(list, nameMap) : renderKolTable(list, nameMap))
+                  : '<div class="empty-state"><div class="icon">◐</div>没有匹配的 KOL</div>'}
+  `;
+}
+
+function renderKolTable(list, nameMap) {
+  return `
+    <div class="card" style="padding: 0;">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>昵称</th><th>小红书 ID</th><th>粉丝</th><th>体量</th><th>类型</th><th>城市</th><th>合作状态</th><th>合作次数</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list.map(k => `
             <tr>
-              <th>昵称</th><th>小红书 ID</th><th>粉丝</th><th>体量</th><th>类型</th><th>城市</th><th>合作状态</th><th>合作次数</th><th>操作</th>
+              <td>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  ${k.avatarUrl
+                    ? `<img src="${escape(k.avatarUrl)}" referrerpolicy="no-referrer" style="width:32px;height:32px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--border);" onerror="this.style.display='none'">`
+                    : `<div style="width:32px;height:32px;border-radius:50%;background:var(--primary-light);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">${escape((k.name||'?').slice(0,1))}</div>`}
+                  <div style="min-width:0;">
+                    <strong style="cursor:pointer;color:var(--info);" onclick="setKolView('detail','${k.id}')">${escape(k.name)}</strong>
+                    ${nameMap[k.name]>1?`<span class="tag" style="background:#FFF3E0;color:#B8550B;font-size:10px;margin-left:4px;">同名 ×${nameMap[k.name]}</span>`:''}
+                    ${(k.profileUrl||k.pgyUrl) ? `<div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+                      ${k.profileUrl?`<a href="${escape(k.profileUrl)}" target="_blank" rel="noopener" style="color:var(--info);text-decoration:none;margin-right:8px;">小红书 ↗</a>`:''}
+                      ${k.pgyUrl?`<a href="${escape(k.pgyUrl)}" target="_blank" rel="noopener" style="color:var(--info);text-decoration:none;">蒲公英 ↗</a>`:''}
+                    </div>`:''}
+                  </div>
+                </div>
+              </td>
+              <td>${fmtRedId(k.redId, k.name)}</td>
+              <td>${formatNum(k.followers)}${k.likes?`<div style="font-size:11px;color:var(--text-muted);">赞藏 ${formatNum(k.likes)}</div>`:''}</td>
+              <td><span class="tag">${k.tier||'-'}</span></td>
+              <td><span class="tag blogger">${k.type||'-'}</span></td>
+              <td>${escape(k.city||'-')}</td>
+              <td>${escape(k.cooperationStatus||'-')}</td>
+              <td>${data.seedings.filter(s=>s.kolRedId===k.redId).length}</td>
+              <td class="actions">
+                <button class="btn btn-sm btn-secondary" onclick="setKolView('detail','${k.id}')">详情</button>
+                <button class="btn btn-sm btn-secondary btn-edit" onclick="openKolModal('${k.id}')">编辑</button>
+                <button class="btn btn-sm btn-danger btn-delete" onclick="deleteKol('${k.id}')">删除</button>
+              </td>
             </tr>
-          </thead>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderKolCards(list, nameMap) {
+  return `
+    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:16px;">
+      ${list.map(k => {
+        const seedings = data.seedings.filter(s => s.kolRedId === k.redId);
+        const notes = data.notes.filter(n => n.kolRedId === k.redId).sort((a,b)=>(b.postDate||0)-(a.postDate||0));
+        const imgs = (data.images||[]).filter(im => im.kolRedId === k.redId);
+        const totalExposure = notes.reduce((s,n)=>s+(n.exposure||0),0);
+        const totalEng = notes.reduce((s,n)=>s+(n.engagement||0),0);
+        return `
+          <div class="card" style="padding:0;cursor:pointer;transition:box-shadow 0.15s, transform 0.15s;"
+               onmouseover="this.style.boxShadow='var(--shadow-md)';this.style.transform='translateY(-2px)';"
+               onmouseout="this.style.boxShadow='';this.style.transform='';"
+               onclick="setKolView('detail','${k.id}')">
+            <div style="padding:16px;display:flex;gap:12px;align-items:flex-start;">
+              ${k.avatarUrl
+                ? `<img src="${escape(k.avatarUrl)}" referrerpolicy="no-referrer" style="width:56px;height:56px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--border);" onerror="this.style.display='none'">`
+                : `<div style="width:56px;height:56px;border-radius:50%;background:var(--primary-light);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;font-weight:600;">${escape((k.name||'?').slice(0,1))}</div>`}
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:600;font-size:15px;margin-bottom:2px;">${escape(k.name)}${nameMap[k.name]>1?` <span class="tag" style="background:#FFF3E0;color:#B8550B;font-size:10px;">×${nameMap[k.name]}</span>`:''}</div>
+                <div style="font-size:11px;color:var(--text-muted);">${fmtRedId(k.redId, k.name)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">
+                  ${k.ipLocation || k.city ? `📍 ${escape(k.ipLocation || k.city)}` : ''}
+                  ${k.gender ? ` · ${escape(k.gender)}` : ''}
+                </div>
+              </div>
+            </div>
+            ${k.bio ? `<div style="padding:0 16px 12px;font-size:12px;color:var(--text-secondary);line-height:1.5;max-height:48px;overflow:hidden;">${escape(k.bio.split('\\n')[0])}</div>` : ''}
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);border-top:1px solid var(--border);">
+              <div style="padding:8px;background:white;text-align:center;">
+                <div style="font-weight:600;font-size:14px;">${formatNum(k.followers)}</div>
+                <div style="font-size:11px;color:var(--text-muted);">粉丝</div>
+              </div>
+              <div style="padding:8px;background:white;text-align:center;">
+                <div style="font-weight:600;font-size:14px;">${imgs.length}</div>
+                <div style="font-size:11px;color:var(--text-muted);">素材</div>
+              </div>
+              <div style="padding:8px;background:white;text-align:center;">
+                <div style="font-weight:600;font-size:14px;">${notes.length}</div>
+                <div style="font-size:11px;color:var(--text-muted);">笔记</div>
+              </div>
+            </div>
+            ${notes.length ? `
+              <div style="border-top:1px solid var(--border);padding:10px 16px;background:#FAFBFC;">
+                <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;">最近笔记 · 总曝光 ${formatNum(totalExposure)}</div>
+                ${notes.slice(0,2).map(n => `
+                  <div style="font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;gap:8px;">
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escape(n.title)}">${n.noteType?`<span style="color:${n.noteType==='视频'?'#B8550B':'#1565C0'};font-size:10px;margin-right:4px;">[${escape(n.noteType)}]</span>`:''}${escape(n.title)}</span>
+                    <span style="color:var(--text-muted);flex-shrink:0;">${formatNum(n.exposure)}曝</span>
+                  </div>
+                `).join('')}
+              </div>` : ''}
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderKolDetail(root, kolId) {
+  const k = data.kols.find(x => x.id === kolId);
+  if (!k) {
+    root.innerHTML = `<button class="btn btn-secondary btn-sm" onclick="setKolView('list')">← 返回 KOL 库</button>
+      <div class="empty-state"><div class="icon">○</div>KOL 不存在或已被删除</div>`;
+    return;
+  }
+  const seedings = data.seedings.filter(s => s.kolRedId === k.redId).sort((a,b)=>(b.shipDate||0)-(a.shipDate||0));
+  const notes = data.notes.filter(n => n.kolRedId === k.redId).sort((a,b)=>(b.postDate||0)-(a.postDate||0));
+  const imgs = (data.images||[]).filter(im => im.kolRedId === k.redId);
+  const totalExposure = notes.reduce((s,n)=>s+(n.exposure||0),0);
+  const totalEng      = notes.reduce((s,n)=>s+(n.engagement||0),0);
+  const avgCtr        = notes.filter(n=>n.ctr!=null).reduce((a,n,_,arr)=>a+n.ctr/arr.length,0);
+
+  root.innerHTML = `
+    <div style="margin-bottom:12px;display:flex;align-items:center;gap:8px;">
+      <button class="btn btn-secondary btn-sm" onclick="setKolView('list')">← 返回 KOL 库</button>
+      <button class="btn btn-secondary btn-sm" onclick="openKolModal('${k.id}')">编辑资料</button>
+    </div>
+
+    <div class="card" style="display:flex;gap:20px;align-items:flex-start;">
+      ${k.avatarUrl
+        ? `<img src="${escape(k.avatarUrl)}" referrerpolicy="no-referrer" style="width:96px;height:96px;border-radius:50%;object-fit:cover;flex-shrink:0;border:1px solid var(--border);" onerror="this.style.display='none'">`
+        : `<div style="width:96px;height:96px;border-radius:50%;background:var(--primary-light);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:36px;flex-shrink:0;font-weight:600;">${escape((k.name||'?').slice(0,1))}</div>`}
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:22px;font-weight:600;margin-bottom:4px;">${escape(k.name)}</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:8px;">
+          小红书号 ${fmtRedId(k.redId, k.name)}
+          ${k.gender ? ` · ${escape(k.gender)}` : ''}
+          ${k.ipLocation || k.city ? ` · 📍 ${escape(k.ipLocation || k.city)}` : ''}
+        </div>
+        ${k.bio ? `<div style="font-size:13px;line-height:1.6;color:var(--text-secondary);margin-bottom:8px;white-space:pre-wrap;">${escape(k.bio)}</div>` : ''}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;">
+          ${k.profileUrl?`<a href="${escape(k.profileUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">小红书主页 ↗</a>`:''}
+          ${k.pgyUrl?`<a href="${escape(k.pgyUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary">蒲公英 ↗</a>`:''}
+          ${k.contact?`<span style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);">📧 ${escape(k.contact)}</span>`:''}
+          ${k.wechat?`<span style="padding:6px 10px;border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);">微信 ${escape(k.wechat)}</span>`:''}
+        </div>
+      </div>
+    </div>
+
+    <div class="stat-grid" style="margin-top:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;">
+      <div class="stat-card"><div class="stat-label">粉丝数</div><div class="stat-value">${formatNum(k.followers)}</div>${k.likes?`<div class="stat-trend">赞藏 ${formatNum(k.likes)}</div>`:''}</div>
+      <div class="stat-card"><div class="stat-label">Seeding 场次</div><div class="stat-value">${seedings.length}</div></div>
+      <div class="stat-card"><div class="stat-label">已发笔记</div><div class="stat-value">${notes.length}</div><div class="stat-trend">${notes.filter(n=>n.noteType==='视频').length}视频/${notes.filter(n=>n.noteType==='图文').length}图文</div></div>
+      <div class="stat-card"><div class="stat-label">3月素材</div><div class="stat-value">${imgs.length}</div></div>
+      <div class="stat-card"><div class="stat-label">总曝光</div><div class="stat-value">${formatNum(totalExposure)}</div><div class="stat-trend">总互动 ${formatNum(totalEng)}</div></div>
+      ${avgCtr ? `<div class="stat-card"><div class="stat-label">平均点击率</div><div class="stat-value">${(avgCtr*100).toFixed(1)}%</div></div>` : ''}
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title">Seeding 记录（${seedings.length}）</div>
+      ${seedings.length ? `
+        <table class="table" style="font-size:13px;">
+          <thead><tr><th>SKU 列表</th><th>寄送日期</th><th>寄送状态</th><th>工作流</th><th>笔记</th><th>成本</th><th>备注</th></tr></thead>
           <tbody>
-            ${list.map(k => `
+            ${seedings.map(s => `
               <tr>
-                <td>
-                  <strong>${escape(k.name)}</strong>
-                  ${nameMap[k.name]>1?`<span class="tag" style="background:#FFF3E0;color:#B8550B;font-size:10px;margin-left:4px;">同名 ×${nameMap[k.name]}</span>`:''}
-                </td>
-                <td>${fmtRedId(k.redId, k.name)}</td>
-                <td>${formatNum(k.followers)}</td>
-                <td><span class="tag">${k.tier||'-'}</span></td>
-                <td><span class="tag blogger">${k.type||'-'}</span></td>
-                <td>${escape(k.city||'-')}</td>
-                <td>${escape(k.cooperationStatus||'-')}</td>
-                <td>${data.seedings.filter(s=>s.kolRedId===k.redId).length}</td>
-                <td class="actions">
-                  <button class="btn btn-sm btn-secondary btn-edit" onclick="openKolModal('${k.id}')">编辑</button>
-                  <button class="btn btn-sm btn-danger btn-delete" onclick="deleteKol('${k.id}')">删除</button>
-                </td>
+                <td>${escape(s.skuList||'-')}</td>
+                <td>${fmtDate(s.shipDate)}</td>
+                <td>${renderShipStatusSelect(s)}</td>
+                <td>${renderWorkflowCell(s)}</td>
+                <td>${data.notes.filter(n=>n.seedingId===s.id).length}</td>
+                <td>¥${formatNum(s.cost||0)}</td>
+                <td style="color:var(--text-muted);font-size:12px;">${escape(s.notes||'-')}</td>
               </tr>
             `).join('')}
           </tbody>
-        </table>
-      </div>
-    ` : '<div class="empty-state"><div class="icon">◐</div>没有匹配的 KOL</div>'}
+        </table>` : '<div style="color:var(--text-muted);text-align:center;padding:24px;">暂无 Seeding 记录</div>'}
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title">已发笔记（${notes.length}）</div>
+      ${notes.length ? `
+        <table class="table" style="font-size:13px;">
+          <thead><tr><th>标题</th><th>类型</th><th>产品</th><th>发布日</th><th>曝光</th><th>互动</th><th>CTR</th><th>表现</th></tr></thead>
+          <tbody>
+            ${notes.map(n => `
+              <tr>
+                <td style="max-width:280px;">
+                  ${n.noteUrl?`<a href="${escape(n.noteUrl)}" target="_blank" style="color:var(--info);text-decoration:none;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escape(n.title)}">${escape(n.title)}</a>`:`<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escape(n.title)}">${escape(n.title)}</div>`}
+                </td>
+                <td>${n.noteType?`<span class="tag" style="background:${n.noteType==='视频'?'#FFF3E0':'#E3F2FD'};color:${n.noteType==='视频'?'#B8550B':'#1565C0'};">${escape(n.noteType)}</span>`:'-'}</td>
+                <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary);" title="${escape(n.products||'')}">${escape(n.products||'-')}</td>
+                <td>${fmtDate(n.postDate)}</td>
+                <td>${formatNum(n.exposure)}</td>
+                <td>${formatNum(n.engagement)}</td>
+                <td>${n.ctr!=null?(n.ctr*100).toFixed(1)+'%':'-'}</td>
+                <td>${(n.performanceTags||[]).map(t=>renderNoteTag(t)).join(' ')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>` : '<div style="color:var(--text-muted);text-align:center;padding:24px;">暂无笔记</div>'}
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <div class="card-title">3月素材（${imgs.length}）</div>
+      ${imgs.length ? `
+        <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));gap:8px;">
+          ${imgs.map(im => `
+            <div style="aspect-ratio:1;background:#f5f5f5;border-radius:6px;overflow:hidden;position:relative;">
+              ${im.isVideo
+                ? `<video src="${escape(im.dataUrl)}" style="width:100%;height:100%;object-fit:cover;" preload="metadata"></video>
+                   <div style="position:absolute;bottom:4px;right:4px;background:rgba(0,0,0,0.6);color:white;padding:2px 6px;border-radius:3px;font-size:11px;">▶ 视频</div>`
+                : `<img src="${escape(im.dataUrl)}" loading="lazy" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.parentNode.innerHTML='<div style=\\'display:flex;align-items:center;justify-content:center;height:100%;font-size:24px;color:#999;\\'>${escape(im.emoji||'📷')}</div>'">`}
+              <div style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:white;padding:2px 6px;border-radius:3px;font-size:10px;max-width:calc(100% - 8px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escape((im.title||'').replace(/^@.+? · /,''))}</div>
+            </div>
+          `).join('')}
+        </div>` : '<div style="color:var(--text-muted);text-align:center;padding:24px;">暂无素材</div>'}
+    </div>
   `;
 }
 function openKolModal(id) {
@@ -1658,26 +2308,33 @@ function renderSeedings(root) {
       <table class="table">
         <thead>
           <tr>
-            <th>博主</th><th>小红书 ID</th><th>SKU 列表</th><th>寄送日期</th><th>快递单号</th><th>状态</th><th>笔记数</th><th>成本</th><th>操作</th>
+            <th>博主</th><th>小红书 ID</th><th>SKU 列表</th><th>寄送日期</th><th>寄送状态</th><th>工作流</th><th>笔记</th><th>成本</th><th>操作</th>
           </tr>
         </thead>
         <tbody>
-          ${list.length ? list.map(s => `
+          ${list.length ? list.map(s => {
+            const kolObj = data.kols.find(x => x.redId === s.kolRedId);
+            const noteCount = data.notes.filter(n=>n.seedingId===s.id).length;
+            return `
             <tr>
-              <td>${escape(kolName(s.kolRedId))}</td>
+              <td>${kolObj
+                ? `<a href="javascript:void(0)" onclick="setNavView('kols');setKolView('detail','${kolObj.id}');" style="color:var(--info);text-decoration:none;font-weight:500;">${escape(kolObj.name)} ↗</a>`
+                : escape(kolName(s.kolRedId))}</td>
               <td>${fmtRedId(s.kolRedId, kolName(s.kolRedId))}</td>
-              <td>${escape(s.skuList)}</td>
+              <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escape(s.skuList||'')}">${escape(s.skuList)}</td>
               <td>${fmtDate(s.shipDate)}</td>
-              <td><code style="font-size:12px;">${escape(s.trackingNo||'-')}</code></td>
-              <td>${renderShipStatus(s.deliveryStatus)}</td>
-              <td>${data.notes.filter(n=>n.seedingId===s.id).length}</td>
+              <td>${renderShipStatusSelect(s)}</td>
+              <td>${renderWorkflowCell(s)}</td>
+              <td>${noteCount
+                ? `<a href="javascript:void(0)" onclick="jumpToNotesBySeeding('${s.id}')" style="color:var(--info);text-decoration:none;">${noteCount} 篇 ↗</a>`
+                : '<span style="color:var(--text-muted);">0</span>'}</td>
               <td>¥${formatNum(s.cost||0)}</td>
               <td class="actions">
                 <button class="btn btn-sm btn-secondary btn-edit" onclick="openSeedingModal('${s.id}')">编辑</button>
                 <button class="btn btn-sm btn-danger btn-delete" onclick="deleteSeeding('${s.id}')">删除</button>
               </td>
-            </tr>
-          `).join('') : '<tr><td colspan="9" class="empty-state"><div class="icon">▶</div>暂无记录</td></tr>'}
+            </tr>`;
+          }).join('') : '<tr><td colspan="9" class="empty-state"><div class="icon">▶</div>暂无记录</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -1686,6 +2343,219 @@ function renderSeedings(root) {
 function renderShipStatus(s) {
   const cls = s==='已签收'?'shipped':(s==='待寄送'?'pending':'delivered');
   return `<span class="tag ${cls}">${s||'-'}</span>`;
+}
+
+/* ======================================================================
+   Seeding 工作流：8 阶段 + 反馈记录
+   ====================================================================== */
+const WORKFLOW_STAGES = [
+  {key: '沟通中',     color: '#646A73', progress: 5,   desc: '与博主谈合作'},
+  {key: '创作中',     color: '#6840C7', progress: 40,  desc: '博主已收到，正在创作'},
+  {key: '文案审核',   color: '#FF8800', progress: 55,  desc: '审核博主文案'},
+  {key: '图片审核',   color: '#FF8800', progress: 70,  desc: '审核博主图片'},
+  {key: '视频审核',   color: '#FF8800', progress: 80,  desc: '审核博主视频'},
+  {key: '待发布',     color: '#7AC74F', progress: 90,  desc: '审核通过待发布'},
+  {key: '已发布',     color: '#34C724', progress: 100, desc: '笔记已上线'},
+  {key: '已结束',     color: '#999999', progress: 100, desc: '终止/不发布'},
+];
+const FEEDBACK_TYPES = [
+  {key: '需修改', color: '#FF8800'},
+  {key: '已通过', color: '#34C724'},
+  {key: '建议',   color: '#3370FF'},
+  {key: '其他',   color: '#646A73'},
+];
+
+/* 一次性：根据现有 deliveryStatus / 笔记 推断初始 workflowStage */
+function migrateWorkflowStage_v1() {
+  if (data.workflowStageMigrated_v1) return;
+  data.seedings = data.seedings || [];
+  data.seedings.forEach(s => {
+    if (s.workflowStage) return;
+    const hasNote = (data.notes||[]).some(n => n.seedingId === s.id);
+    if (hasNote)                              s.workflowStage = '已发布';
+    else if (s.deliveryStatus === '已签收')   s.workflowStage = '创作中';
+    else if (s.deliveryStatus === '退回')     s.workflowStage = '已结束';
+    else                                      s.workflowStage = '沟通中';
+    s.feedback = s.feedback || [];
+  });
+  data.workflowStageMigrated_v1 = true;
+  saveData();
+}
+
+/* Seeding 表的工作流单元格：阶段 tag + 进度条 + 反馈数 */
+function renderWorkflowCell(s) {
+  const stage = s.workflowStage || '沟通中';
+  const info = WORKFLOW_STAGES.find(x => x.key === stage) || WORKFLOW_STAGES[0];
+  const fbCount = (s.feedback||[]).length;
+  return `
+    <div style="cursor:pointer;min-width:120px;" onclick="openWorkflowModal('${s.id}')" title="点击查看 / 修改工作流">
+      <div style="display:flex;align-items:center;gap:4px;margin-bottom:3px;">
+        <span class="tag" style="background:${info.color}15;color:${info.color};border:1px solid ${info.color}40;font-size:11px;padding:2px 8px;">${stage}</span>
+        ${fbCount?`<span style="font-size:11px;color:var(--text-muted);">💬${fbCount}</span>`:''}
+      </div>
+      <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden;">
+        <div style="width:${info.progress}%;height:100%;background:${info.color};transition:width 0.3s;"></div>
+      </div>
+    </div>
+  `;
+}
+
+function updateWorkflowStage(seedingId, newStage) {
+  if (!requireEdit()) return;
+  const s = data.seedings.find(x => x.id === seedingId);
+  if (!s) return;
+  s.workflowStage = newStage;
+  saveData();
+  toast(`工作流：→ ${newStage}`, 'success');
+  openWorkflowModal(seedingId);  // 重渲 modal
+  // 同时刷新背景列表
+  if (currentView === 'seedings') renderSeedings(document.getElementById('content'));
+  if (currentView === 'kols' && kolFilter.view === 'detail') renderKols(document.getElementById('content'));
+}
+
+function addWorkflowFeedback(seedingId) {
+  if (!requireEdit()) return;
+  const type = document.getElementById('fbType').value;
+  const content = document.getElementById('fbContent').value.trim();
+  if (!content) { toast('反馈内容不能为空', 'error'); return; }
+  const s = data.seedings.find(x => x.id === seedingId);
+  if (!s) return;
+  s.feedback = s.feedback || [];
+  s.feedback.push({
+    id: uid('fb'),
+    ts: Date.now(),
+    author: role().name,
+    type, content,
+  });
+  saveData();
+  toast('已记录反馈', 'success');
+  openWorkflowModal(seedingId);
+  if (currentView === 'seedings') renderSeedings(document.getElementById('content'));
+  if (currentView === 'kols' && kolFilter.view === 'detail') renderKols(document.getElementById('content'));
+}
+
+function deleteWorkflowFeedback(seedingId, fbId) {
+  if (!requireDelete()) return;
+  if (!confirm('确认删除这条反馈？')) return;
+  const s = data.seedings.find(x => x.id === seedingId);
+  if (!s || !Array.isArray(s.feedback)) return;
+  s.feedback = s.feedback.filter(f => f.id !== fbId);
+  saveData();
+  openWorkflowModal(seedingId);
+}
+
+function openWorkflowModal(seedingId) {
+  const s = data.seedings.find(x => x.id === seedingId);
+  if (!s) return;
+  const k = data.kols.find(x => x.redId === s.kolRedId);
+  const stage = s.workflowStage || '沟通中';
+  const info = WORKFLOW_STAGES.find(x => x.key === stage) || WORKFLOW_STAGES[0];
+  const fb = (s.feedback||[]).slice().sort((a,b) => b.ts - a.ts);
+
+  const body = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-size:13px;">
+      <div>
+        ${k ? `<a href="javascript:void(0)" onclick="closeModal();setNavView('kols');setKolView('detail','${k.id}');" style="color:var(--info);text-decoration:none;font-weight:500;">${escape(k.name)} ↗</a>` : escape(s.kolRedId)}
+        <span style="color:var(--text-muted);margin-left:8px;">${escape(s.skuList||'-')}</span>
+      </div>
+      <span style="color:var(--text-muted);">寄送日 ${fmtDate(s.shipDate)}</span>
+    </div>
+    <div style="height:6px;background:var(--border);border-radius:3px;margin-bottom:6px;overflow:hidden;">
+      <div style="width:${info.progress}%;height:100%;background:${info.color};transition:width 0.3s;"></div>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:16px;">当前阶段：<strong style="color:${info.color}">${stage}</strong> · ${escape(info.desc)}</div>
+
+    <div style="margin-bottom:8px;font-size:12px;color:var(--text-muted);">点击切换阶段：</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:20px;">
+      ${WORKFLOW_STAGES.map(st => {
+        const active = st.key === stage;
+        return `<button class="btn btn-sm" onclick="updateWorkflowStage('${seedingId}','${st.key}')"
+          style="border-radius:14px;padding:4px 12px;font-size:12px;cursor:pointer;
+                 ${active?`background:${st.color};color:white;border:1px solid ${st.color};font-weight:500;`:`background:white;color:var(--text-secondary);border:1px solid var(--border);`}">${st.key}</button>`;
+      }).join('')}
+    </div>
+
+    <div style="border-top:1px solid var(--border);padding-top:16px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <strong style="font-size:14px;">📝 反馈意见</strong>
+        <span style="font-size:11px;color:var(--text-muted);">共 ${fb.length} 条</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-start;">
+        <select class="select" id="fbType" style="flex-shrink:0;width:100px;">
+          ${FEEDBACK_TYPES.map(t => `<option value="${t.key}">${t.key}</option>`).join('')}
+        </select>
+        <textarea class="textarea" id="fbContent" rows="2" placeholder="记录沟通要点 / 修改要求 / 审核意见…" style="flex:1;resize:vertical;"></textarea>
+        <button class="btn btn-primary btn-sm" onclick="addWorkflowFeedback('${seedingId}')" style="flex-shrink:0;">提交</button>
+      </div>
+    </div>
+
+    <div style="max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;">
+      ${fb.length ? fb.map(f => {
+        const tInfo = FEEDBACK_TYPES.find(x => x.key === f.type) || FEEDBACK_TYPES[3];
+        return `
+          <div style="padding:10px 12px;border-bottom:1px solid var(--border);">
+            <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text-muted);margin-bottom:4px;">
+              <div>
+                <span class="tag" style="background:${tInfo.color}15;color:${tInfo.color};font-size:10px;padding:2px 6px;">${f.type}</span>
+                <span style="margin-left:6px;">${escape(f.author||'-')}</span>
+                <span style="margin-left:6px;">${new Date(f.ts).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
+              </div>
+              <button class="btn-delete" style="background:transparent;color:var(--danger);font-size:11px;padding:2px 6px;border:none;cursor:pointer;" onclick="deleteWorkflowFeedback('${seedingId}','${f.id}')">删</button>
+            </div>
+            <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;">${escape(f.content)}</div>
+          </div>
+        `;
+      }).join('') : '<div style="padding:24px;color:var(--text-muted);text-align:center;font-size:13px;">还没有反馈记录</div>'}
+    </div>
+  `;
+  showModal('Seeding 工作流', body, null, []);
+}
+
+/* 跳转辅助：从 Seeding 笔记数列点击 → 跳到笔记表，按博主名搜索 */
+function jumpToNotesBySeeding(seedingId) {
+  const s = data.seedings.find(x => x.id === seedingId);
+  if (!s) return;
+  const k = data.kols.find(x => x.redId === s.kolRedId);
+  noteFilter.search = k ? k.name : s.kolRedId;
+  setNavView('notes');
+}
+
+/* 跳转辅助：从 modal 切换主导航视图 */
+function setNavView(view) {
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.classList.toggle('active', n.dataset.view === view);
+  });
+  currentView = view;
+  render();
+}
+// 行内可改的下拉版（onchange 直接落库）
+function renderShipStatusSelect(s) {
+  const cur = s.deliveryStatus || '待寄送';
+  const colorMap = {
+    '待寄送': '#FF8800',
+    '运输中': '#3370FF',
+    '已签收': '#34C724',
+    '退回':   '#F54A45',
+  };
+  const color = colorMap[cur] || '#646A73';
+  const opts = ['待寄送','运输中','已签收','退回'];
+  return `<select class="seeding-status-select" onchange="updateSeedingStatus('${s.id}', this.value)"
+    style="border:1px solid ${color}55; background:${color}15; color:${color}; font-size:12px; font-weight:500;
+           padding:3px 22px 3px 8px; border-radius:4px; cursor:pointer; appearance:none; -webkit-appearance:none;
+           background-image:url(&quot;data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='${encodeURIComponent(color)}' stroke-width='1.5'/></svg>&quot;);
+           background-repeat:no-repeat; background-position:right 6px center;">
+    ${opts.map(o => `<option value="${o}" ${o===cur?'selected':''}>${o}</option>`).join('')}
+  </select>`;
+}
+function updateSeedingStatus(id, status) {
+  if (!requireEdit()) return;
+  const s = data.seedings.find(x => x.id === id);
+  if (!s) return;
+  const old = s.deliveryStatus;
+  s.deliveryStatus = status;
+  saveData();
+  toast(`寄送状态：${old||'-'} → ${status}`, 'success');
+  renderSeedings(document.getElementById('content'));
 }
 function openSeedingModal(id) {
   if (!requireEdit()) return;
@@ -1794,26 +2664,28 @@ function renderNotes(root) {
 
     <div class="card" style="padding:0;">
       <table class="table">
-        <thead><tr><th>笔记标题</th><th>博主</th><th>发布日期</th><th>曝光</th><th>互动</th><th>转化</th><th>表现标签</th><th>关联图片</th><th>操作</th></tr></thead>
+        <thead><tr><th>笔记标题</th><th>博主</th><th>类型</th><th>产品</th><th>发布日期</th><th>曝光</th><th>互动</th><th>CTR</th><th>CPE</th><th>表现标签</th><th>操作</th></tr></thead>
         <tbody>
           ${list.length ? list.map(n => `
             <tr>
-              <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                ${n.noteUrl?`<a href="${escape(n.noteUrl)}" target="_blank" style="color:var(--info); text-decoration:none;">${escape(n.title)}</a>`:escape(n.title)}
+              <td style="max-width:240px;">
+                ${n.noteUrl?`<a href="${escape(n.noteUrl)}" target="_blank" style="color:var(--info); text-decoration:none; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escape(n.title)}">${escape(n.title)}</a>`:`<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escape(n.title)}">${escape(n.title)}</div>`}
               </td>
               <td>${escape(kolName(n.kolRedId))}<br>${fmtRedId(n.kolRedId, kolName(n.kolRedId))}</td>
+              <td>${n.noteType?`<span class="tag" style="background:${n.noteType==='视频'?'#FFF3E0':'#E3F2FD'};color:${n.noteType==='视频'?'#B8550B':'#1565C0'};">${escape(n.noteType)}</span>`:'-'}</td>
+              <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary);" title="${escape(n.products||'')}">${escape(n.products||'-')}</td>
               <td>${fmtDate(n.postDate)}</td>
               <td>${formatNum(n.exposure)}</td>
               <td>${formatNum(n.engagement)}</td>
-              <td>${formatNum(n.conversion)}</td>
+              <td>${n.ctr!=null?(n.ctr*100).toFixed(1)+'%':'-'}</td>
+              <td>${n.cpe!=null?'¥'+n.cpe.toFixed(2):(n.conversion?'-':'<span style="color:var(--text-muted)">-</span>')}</td>
               <td>${(n.performanceTags||[]).map(t=>renderNoteTag(t)).join(' ')}</td>
-              <td>${(n.imageIds||[]).length} 张</td>
               <td class="actions">
                 <button class="btn btn-sm btn-secondary btn-edit" onclick="openNoteModal('${n.id}')">编辑</button>
                 <button class="btn btn-sm btn-danger btn-delete" onclick="deleteNote('${n.id}')">删除</button>
               </td>
             </tr>
-          `).join('') : '<tr><td colspan="9" class="empty-state"><div class="icon">▤</div>暂无笔记</td></tr>'}
+          `).join('') : '<tr><td colspan="11" class="empty-state"><div class="icon">▤</div>暂无笔记</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -2364,8 +3236,13 @@ function renderSettings(root) {
    ================================================================== */
 function kolName(redId) { const k = data.kols.find(x=>x.redId===redId); return k?k.name:'(未知)'; }
 // 把 redId 在表格里渲染成 <code>xxx</code>；若 redId 缺失或就是昵称占位（说明真实小红书 ID 还没补），显示"待补充"
+// 例外：博主真实小红书号刚好跟昵称相同（如 HolaBearXiong / Unasa811720），靠 internalUserId 判定是否真实
 function fmtRedId(redId, name) {
-  if (!redId || redId === name) return '<span style="color:#B8550B;font-size:12px;">待补充</span>';
+  if (!redId) return '<span style="color:#B8550B;font-size:12px;">待补充</span>';
+  if (redId === name) {
+    const k = (data && data.kols) ? data.kols.find(x => x.redId === redId) : null;
+    if (!k || !k.internalUserId) return '<span style="color:#B8550B;font-size:12px;">待补充</span>';
+  }
   return '<code style="font-size:12px;">' + escape(redId) + '</code>';
 }
 function escape(s) { return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -2509,6 +3386,16 @@ data.currentRole = 'admin';
 saveData();
 purgeDemoData_v1();  // 首次加载：清掉首版 defaultData 里的 demo 假数据
 mergeMarchSeed();    // 首次加载：把 3 月博主素材合并进来
+enrichMarchKols_v2();// 一次性：用用户提供的 18 位博主真实资料补全占位 KOL
+importMarchNotes_v1();// 一次性：导入 3月复盘底表 34 条笔记 + 17 位新博主占位
+mergeRuiniAndEnrich_v1();// 一次性：Rreneeni + ruini 合并并补全真实资料
+mergeJessicaAndEnrich_v1();// 一次性：杰西卡 + 杰西卡是卡卡鸭 合并并补全真实资料
+enrichKuai_v1();          // 一次性：蒯仔 资料补全
+enrichMarchKolsBatch2_v1();// 一次性：第二批 12 位 KOL 真实资料补全
+enrichMarchKolsBatch3_v1();// 一次性：第三批 2 位 KOL（準點回家! / 无敌阿晶）
+linkImagesToNotes_v1();   // 一次性：3月素材按博主挂到笔记 imageIds
+linkNotesToSeedings_v1(); // 一次性：每条笔记 → 对应 Seeding 记录
+migrateWorkflowStage_v1();// 一次性：给旧 seeding 推断 workflowStage（已发布/创作中/沟通中）
 document.getElementById('loginScreen').style.display = 'none';
 document.getElementById('app').classList.add('active');
 refreshUserChip();

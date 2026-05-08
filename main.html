@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>xxhs · 应用中心</title>
+<style>
+  :root {
+    --primary: #FF2E4D;
+    --primary-light: #FFE9ED;
+    --primary-dark: #D81B3F;
+    --bg: #F7F8FA;
+    --card: #FFFFFF;
+    --border: #EAECEF;
+    --text: #1F2329;
+    --text-secondary: #646A73;
+    --text-muted: #8F959E;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+    --shadow-lg: 0 12px 32px rgba(0,0,0,0.08);
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px; color: var(--text);
+    background: linear-gradient(135deg, #FFE9ED 0%, #F7F8FA 50%, #E3F2FD 100%);
+    min-height: 100vh;
+  }
+  button { font-family: inherit; cursor: pointer; }
+
+  /* 顶栏 */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 32px; background: rgba(255,255,255,0.6);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid rgba(255,255,255,0.5);
+    position: sticky; top: 0; z-index: 10;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .brand-logo {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--primary), #FF6B8A);
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: 700; font-size: 16px;
+  }
+  .brand-name { font-weight: 600; font-size: 16px; }
+
+  .user-chip {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 12px; background: white; border-radius: 100px;
+    border: 1px solid var(--border); font-size: 13px;
+  }
+  .user-avatar {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--primary-light); color: var(--primary);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 600; font-size: 12px;
+  }
+  .btn-logout {
+    margin-left: 4px; background: transparent; border: none;
+    color: var(--text-muted); font-size: 12px; cursor: pointer;
+    padding: 2px 6px; border-radius: 4px;
+  }
+  .btn-logout:hover { background: var(--bg); color: var(--text); }
+
+  /* 主体 */
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px; }
+  .hero { text-align: center; margin-bottom: 48px; }
+  .hero h1 { font-size: 36px; font-weight: 600; margin-bottom: 8px; letter-spacing: -0.5px; }
+  .hero p { font-size: 15px; color: var(--text-secondary); }
+
+  /* 应用网格 */
+  .apps-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 20px;
+  }
+  .app-card {
+    background: white; border-radius: var(--radius);
+    padding: 24px; box-shadow: var(--shadow-sm);
+    border: 1px solid var(--border);
+    transition: all 0.2s ease; cursor: pointer;
+    display: flex; flex-direction: column; gap: 12px;
+    position: relative; text-decoration: none; color: inherit;
+  }
+  .app-card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-3px);
+    border-color: var(--primary-light);
+  }
+  .app-icon {
+    width: 56px; height: 56px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 28px; color: white; font-weight: 600;
+  }
+  .app-name { font-size: 17px; font-weight: 600; }
+  .app-desc { font-size: 13px; color: var(--text-secondary); line-height: 1.5; min-height: 38px; }
+  .app-meta {
+    margin-top: 4px; padding-top: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--text-muted);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .app-status {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #34C724; margin-right: 4px; display: inline-block;
+  }
+  .app-status.disabled { background: #ccc; }
+
+  .app-card.disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+
+  /* 登录页 */
+  .login-screen {
+    position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: rgba(247,248,250,0.92);
+    backdrop-filter: blur(20px);
+    z-index: 100;
+  }
+  .login-screen.active { display: flex; }
+  .login-card {
+    background: white; border-radius: 16px;
+    padding: 40px; width: 380px;
+    box-shadow: var(--shadow-lg);
+  }
+  .login-card .brand-logo { width: 48px; height: 48px; margin: 0 auto 16px; font-size: 22px; }
+  .login-card h1 { font-size: 22px; text-align: center; margin-bottom: 6px; }
+  .login-card .sub { color: var(--text-secondary); text-align: center; font-size: 13px; margin-bottom: 28px; }
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+  .input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; outline: none;
+    transition: border-color 0.15s;
+  }
+  .input:focus { border-color: var(--primary); }
+  .btn-primary {
+    width: 100%; padding: 12px; border: none; border-radius: 8px;
+    background: var(--primary); color: white; font-size: 14px;
+    font-weight: 500; cursor: pointer; margin-top: 8px;
+    transition: background 0.15s;
+  }
+  .btn-primary:hover { background: var(--primary-dark); }
+  .btn-primary:disabled { background: #ccc; cursor: not-allowed; }
+  .login-error {
+    color: var(--primary); font-size: 12px; margin-top: 8px;
+    min-height: 16px; text-align: center;
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    padding: 10px 20px; border-radius: 8px; background: white;
+    box-shadow: var(--shadow-md); font-size: 13px; z-index: 1000;
+    border: 1px solid var(--border);
+  }
+  .toast.error { color: var(--primary); border-color: var(--primary); }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="brand-logo">x</div>
+    <div class="brand-name">xxhs · 应用中心</div>
+  </div>
+  <div id="userChip" class="user-chip" style="display:none;">
+    <div id="userAvatar" class="user-avatar">U</div>
+    <span id="userName">—</span>
+    <button class="btn-logout" onclick="logout()">登出</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="hero">
+    <h1 id="greeting">欢迎回来</h1>
+    <p>选择一个应用进入。所有应用已打通登录，跨子域无需重复登录。</p>
+  </div>
+
+  <div class="apps-grid" id="appsGrid"></div>
+</div>
+
+<!-- 登录卡 -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="brand-logo">x</div>
+    <h1>登录 xxhs</h1>
+    <div class="sub">用同一套账号访问所有应用</div>
+    <div class="form-group">
+      <label>用户名</label>
+      <input class="input" id="loginUsername" placeholder="例如 jiayi" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input class="input" id="loginPassword" type="password" placeholder="" autocomplete="current-password">
+    </div>
+    <button class="btn-primary" onclick="doLogin()">登录</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   应用列表配置（要加新应用直接往这里加一行）
+   ================================================================ */
+const APPS = [
+  {
+    name: 'HAY Dashboard',
+    desc: 'HAY 品牌投放数据看板：商品 ROI、投放分析、人群品类、618 复盘等',
+    icon: '◈',
+    color: 'linear-gradient(135deg, #3370FF, #5C8DFF)',
+    url: 'https://hay-dashboard.xxhs.cloud/',
+    enabled: true,
+  },
+  {
+    name: 'Seeding Hub',
+    desc: '小红书种草内容管理：博主库、Seeding 工作流、笔记表现追踪、3月素材',
+    icon: '✿',
+    color: 'linear-gradient(135deg, #FF2E4D, #FF6B8A)',
+    url: 'https://seedinghub.xxhs.cloud/',
+    enabled: true,
+  },
+  {
+    name: '更多应用',
+    desc: '占位 · 后续会接入更多内部工具',
+    icon: '+',
+    color: 'linear-gradient(135deg, #8F959E, #B7BCC4)',
+    url: '#',
+    enabled: false,
+  },
+];
+
+/* ================================================================
+   Cookie 工具
+   ================================================================ */
+function getCookie(name) {
+  const m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+function setCookie(name, value, days = 30) {
+  const expires = new Date(Date.now() + days * 86400000).toUTCString();
+  // 注意 domain：上线时由后端 Set-Cookie 处理 .xxhs.cloud；前端兜底只设当前域名
+  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
+}
+function clearCookie(name) {
+  document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+}
+
+/* ================================================================
+   登录态
+   ================================================================ */
+function getCurrentUser() {
+  // 优先 cookie（跨子域共享）→ localStorage（兜底）
+  const cookieUser = getCookie('xxhs_user');
+  if (cookieUser) {
+    try { return JSON.parse(cookieUser); } catch { return { username: cookieUser }; }
+  }
+  try { return JSON.parse(localStorage.getItem('hay_current_user') || 'null'); }
+  catch { return null; }
+}
+
+async function doLogin() {
+  const username = document.getElementById('loginUsername').value.trim();
+  const password = document.getElementById('loginPassword').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  if (!username) { errEl.textContent = '请输入用户名'; return; }
+  try {
+    const resp = await fetch('/api/users/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+      credentials: 'include',
+    });
+    if (!resp.ok) {
+      errEl.textContent = '用户名或密码错误';
+      return;
+    }
+    const user = await resp.json();
+    // 双写：cookie（跨子域）+ localStorage（兼容老 dashboard 代码）
+    setCookie('xxhs_user', JSON.stringify(user));
+    localStorage.setItem('hay_current_user', JSON.stringify(user));
+    showApps(user);
+  } catch (e) {
+    errEl.textContent = '登录失败：' + e.message;
+  }
+}
+
+function logout() {
+  // 后端清 cookie
+  fetch('/api/users/logout', { method: 'POST', credentials: 'include' }).catch(()=>{});
+  // 前端清 localStorage + cookie
+  localStorage.removeItem('hay_current_user');
+  clearCookie('xxhs_user');
+  location.reload();
+}
+
+/* ================================================================
+   渲染
+   ================================================================ */
+function showLogin() {
+  document.getElementById('loginScreen').classList.add('active');
+  document.getElementById('userChip').style.display = 'none';
+}
+function showApps(user) {
+  document.getElementById('loginScreen').classList.remove('active');
+  document.getElementById('userChip').style.display = 'flex';
+  document.getElementById('userName').textContent = user.display_name || user.username;
+  document.getElementById('userAvatar').textContent = (user.display_name || user.username || 'U').slice(0, 1).toUpperCase();
+  document.getElementById('greeting').textContent = `${user.display_name || user.username}，欢迎回来`;
+  renderApps();
+}
+
+function renderApps() {
+  const grid = document.getElementById('appsGrid');
+  grid.innerHTML = APPS.map(app => `
+    <a class="app-card${app.enabled ? '' : ' disabled'}" ${app.enabled ? `href="${app.url}"` : ''}>
+      <div class="app-icon" style="background:${app.color};">${app.icon}</div>
+      <div class="app-name">${app.name}</div>
+      <div class="app-desc">${app.desc}</div>
+      <div class="app-meta">
+        <span><span class="app-status ${app.enabled ? '' : 'disabled'}"></span>${app.enabled ? '在线' : '即将上线'}</span>
+        <span>${app.enabled ? '点击进入 →' : ''}</span>
+      </div>
+    </a>
+  `).join('');
+}
+
+/* ================================================================
+   启动
+   ================================================================ */
+const u = getCurrentUser();
+if (u && u.username) {
+  showApps(u);
+} else {
+  showLogin();
+  document.getElementById('loginUsername').focus();
+}
+// 回车提交
+document.getElementById('loginPassword').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+document.getElementById('loginUsername').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('loginPassword').focus();
+});
+</script>
+
+</body>
+</html>

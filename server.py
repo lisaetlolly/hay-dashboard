@@ -11,7 +11,7 @@ from datetime import date
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, HTTPException, Query, Header, Depends
+from fastapi import FastAPI, HTTPException, Query, Header, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -4817,10 +4817,38 @@ def seeding_kol_list():
         """)
 
 
-# ── 静态文件：直接访问 http://localhost:766 打开看板 ──
+# ── 静态文件：3月博主素材文件夹（仅 seeding-hub 用到，按 Host 鉴别也安全）──
+_seeding_assets_dir = os.path.join(DASHBOARD_DIR, "3月博主素材")
+if os.path.isdir(_seeding_assets_dir):
+    app.mount("/3月博主素材", StaticFiles(directory=_seeding_assets_dir), name="seeding_assets")
+
+
+# ── 入口路由：根据 Host header 返回不同首页 ──
+# seedinghub.xxhs.cloud → seeding-hub.html
+# main.xxhs.cloud       → main.html（应用门户，可选）
+# 其他（dashboard.xxhs.cloud / 默认）→ dashboard.html
 @app.get("/")
-def serve_dashboard():
+def serve_dashboard(request: Request):
+    host = (request.headers.get("host") or "").lower().split(":")[0]
+    if host.startswith("seedinghub."):
+        path = os.path.join(DASHBOARD_DIR, "seeding-hub.html")
+        if os.path.exists(path):
+            return FileResponse(path, media_type="text/html")
+    if host.startswith("main."):
+        path = os.path.join(DASHBOARD_DIR, "main.html")
+        if os.path.exists(path):
+            return FileResponse(path, media_type="text/html")
+    # 默认 / dashboard.* → HAY Dashboard
     path = os.path.join(DASHBOARD_DIR, "dashboard.html")
+    return FileResponse(path, media_type="text/html")
+
+
+# 旧路径兜底：如果有人直接访问 /seeding-hub.html 也能打开
+@app.get("/seeding-hub.html")
+def serve_seeding_hub_explicit():
+    path = os.path.join(DASHBOARD_DIR, "seeding-hub.html")
+    if not os.path.exists(path):
+        raise HTTPException(404, "seeding-hub.html not found")
     return FileResponse(path, media_type="text/html")
 
 @app.get("/favicon.ico")
