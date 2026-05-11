@@ -153,6 +153,22 @@ const App = defineComponent({
       // 优先读 localStorage（api.js 拦截器也读它，保证一致），fallback 到 sessionStorage 兼容老会话。
       let savedSession = localStorage.getItem('hay_current_user') || sessionStorage.getItem('hay_user')
       if (savedSession) { try { const u = JSON.parse(savedSession); user.value = { display_name: u.display_name || u.username, role: u.role }; if (u.userId || u.id) APP_STATE.value.currentUserId = u.userId || u.id; loggedIn.value = true } catch (_) {} }
+      // 跨子域 cookie 兜底：本地 localStorage 没有但 .xxhs.cloud cookie 有 → 调 /api/users/me 拿完整 user
+      if (!loggedIn.value) {
+        const ck = document.cookie.match(/(?:^|; )xxhs_user=([^;]*)/)
+        if (ck) {
+          try {
+            const r = await fetch('/api/users/me', { credentials: 'include' })
+            if (r.ok) {
+              const u = await r.json()
+              localStorage.setItem('hay_current_user', JSON.stringify(u))
+              user.value = { display_name: u.display_name || u.username, role: u.role }
+              if (u.id) APP_STATE.value.currentUserId = u.id
+              loggedIn.value = true
+            }
+          } catch (_) {}
+        }
+      }
       applyPreset()
       const h = await api('/api/health')
       if (h) lastUpdated.value = h.loaded_at || h.latest_date || '—'
@@ -168,7 +184,12 @@ const App = defineComponent({
       if (pv) pageViewCount.value = pv.count || 0
     })
 
+    // 返回应用中心 URL：生产 → main.xxhs.cloud；本地 → 同源 /main.html
+    const mainUrl = (location.hostname || '').endsWith('.xxhs.cloud')
+      ? 'https://main.xxhs.cloud/' : '/main.html'
+
     return {
+      mainUrl,
       page, timePreset, startDate, endDate, lastUpdated, pageViewCount,
       user, navItems, currentPageLabel, presets, setPreset, shiftPeriod, periodDays,
       loggedIn, loginUsername, loginPassword, loginError, loginLoading, doLogin, logout,
@@ -202,7 +223,11 @@ const App = defineComponent({
   </div>
   <div v-else style="display:flex;height:100%;width:100%">
   <div id="sidebar">
-    <div class="brand">HAY</div>
+    <div class="brand" style="display:flex;align-items:center;justify-content:space-between">
+      <span>HAY</span>
+      <a :href="mainUrl" title="返回应用中心"
+         style="font-size:10px;color:var(--muted);text-decoration:none;font-weight:400;letter-spacing:0;border:1px solid var(--border);border-radius:4px;padding:2px 6px">← 中心</a>
+    </div>
     <div class="nav">
       <div v-for="item in navItems" :key="item.id"
            class="nav-item" :class="{active: page===item.id}"
@@ -259,7 +284,10 @@ const App = defineComponent({
         </span>
       </div>
       <div style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0">更新 {{ lastUpdated || '—' }}</div>
-      <div style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0">访问 {{ pageViewCount }}</div>
+      <div :title="'本浏览器累计页面访问次数：' + pageViewCount + '（本地统计，非线上活跃用户数）'"
+           style="font-size:11px;color:var(--muted);white-space:nowrap;flex-shrink:0;cursor:help;opacity:.6">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#a1a1aa;margin-right:4px;vertical-align:middle"></span>{{ pageViewCount }}
+      </div>
     </div>
     <div id="content">
       <div v-if="!dataHealth.ok"
