@@ -34,3 +34,7 @@ venv/
 ~$*
 .DS_Store
 
+
+# 本地归档目录（不推到远端）
+_archive/
+
