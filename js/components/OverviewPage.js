@@ -459,16 +459,27 @@ const OverviewPage = defineComponent({
 
     // SVG 折线图数据：3 品类 × 2 年 = 6 条折线
     // 单日模式：画 daily 值（单日值）；区间模式：画 cumsum 累计
+    // 26 年只画到「数据已落库」的最后一天，避免视觉上 26 年线短、25 年线长被误读为"未来日"。
     const addChartLines = computed(() => {
       const cs = addCategorySeries.value
       if (!cs) return []
       const useCumsum = addMode.value === 'range'
+      // 26 年实际有数据的最后一天（按 daily 字典找）
+      const t26 = cs?.this_year?.daily || {}
+      let maxDay26 = 0
+      for (const ds of Object.keys(t26)) {
+        const dnum = parseInt(ds.slice(8, 10), 10)
+        if (!isNaN(dnum) && t26[ds] && Object.values(t26[ds]).some(v => v != null && v > 0)) {
+          if (dnum > maxDay26) maxDay26 = dnum
+        }
+      }
       const lines = []
       for (const yr of [2026, 2025]) {
         const tag = yr === 2026 ? 'this_year' : 'last_year'
         const series = (useCumsum ? cs?.[tag]?.cumsum : cs?.[tag]?.daily) || {}
+        const dayCap = yr === 2026 && maxDay26 > 0 ? maxDay26 : 12
         for (const cat of ADD_CATS) {
-          const points = ADD_DAYS.map(d => {
+          const points = ADD_DAYS.filter(d => d <= dayCap).map(d => {
             const ds = `${yr}-05-${String(d).padStart(2,'0')}`
             const v = series[ds]?.[cat]
             return v == null ? null : { d, v }
@@ -540,7 +551,7 @@ const OverviewPage = defineComponent({
       <div class="kpi-value">{{ kpiVal(k.key) }}</div>
       <div class="kpi-footer">
         <span :class="['chg', chgCls(kpiChg(k.key))]">{{ chgTxt(kpiChg(k.key)) }}</span>
-        <span>vs 上期等长周期</span>
+        <span :title="prevPeriod.s && prevPeriod.e ? '上期：' + prevPeriod.s + ' ~ ' + prevPeriod.e : 'vs 上期等长周期'">vs 上期 {{ prevPeriod.s && prevPeriod.e ? '(' + prevPeriod.s.slice(5) + '~' + prevPeriod.e.slice(5) + ')' : '等长周期' }}</span>
       </div>
     </div>
   </div>
@@ -551,6 +562,8 @@ const OverviewPage = defineComponent({
       <div>
         <span class="card-title">618 加购看板</span>
         <span class="card-sub" style="margin-left:8px">默认 T-1 单日 · YoY vs 25 年</span>
+        <span style="display:inline-block;margin-left:8px;padding:1px 8px;border-radius:99px;border:1px dashed #d4d4d8;font-size:10px;color:#71717a;background:#fafafa"
+              title="本看板使用独立的时间维度（限定 5/1-5/12），不受顶部 7天/30天/自定义筛选影响">📍 独立时间维度</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#64748b;flex-wrap:wrap">
         <!-- 模式切换 -->
@@ -588,9 +601,9 @@ const OverviewPage = defineComponent({
 区间：所选区间内每天的"商品加购人数"按日求和（跨日不去重，同一买家在多天加购会被算多次）。</span></span>
           </span>
           <span v-if="addManualKpi.sourceThis==='sum'"
-                style="color:#dc2626;font-size:11px;margin-left:4px;background:#fee2e2;padding:1px 6px;border-radius:4px">按日求和·未去重</span>
+                style="color:#b91c1c;font-size:11px;margin-left:6px;background:#fee2e2;padding:2px 8px;border-radius:4px;font-weight:600;border:1px solid #fca5a5">⚠ 按日求和·未去重</span>
           <span v-else-if="addManualKpi.sourceThis==='daily'"
-                style="color:#0369a1;font-size:11px;margin-left:4px;background:#e0f2fe;padding:1px 6px;border-radius:4px">单日</span>
+                style="color:#075985;font-size:11px;margin-left:6px;background:#e0f2fe;padding:2px 8px;border-radius:4px;font-weight:600;border:1px solid #7dd3fc">单日去重</span>
         </div>
         <div class="kpi-value" style="color:#0f172a">
           {{ fmtNum(addManualKpi.thisYr) }}
@@ -604,11 +617,11 @@ const OverviewPage = defineComponent({
       </div>
       <div class="kpi-card" style="background:#f8fafc">
         <div class="kpi-label">
-          <span class="info-wrap">三大品类合计加购<span class="info-btn">?<span class="tooltip">家具+配饰+灯具，xls 单品按 cat_map 分类汇总。区间模式 = 区间内日值求和（跨日不去重）。</span></span></span>
+          <span class="info-wrap">三大品类合计加购<span class="info-btn">?<span class="tooltip">家+配+灯，xls 单品按 cat_map 分类汇总。区间模式 = 区间内日值求和（跨日不去重，同一买家在多天加购会被算多次，所以可能高于"全店去重"值）。</span></span></span>
           <span v-if="addCategoryKpi.source==='sum'"
-                style="color:#dc2626;font-size:11px;margin-left:4px;background:#fee2e2;padding:1px 6px;border-radius:4px">按日求和</span>
+                style="color:#b91c1c;font-size:11px;margin-left:6px;background:#fee2e2;padding:2px 8px;border-radius:4px;font-weight:600;border:1px solid #fca5a5">⚠ 按日求和·未去重</span>
           <span v-else-if="addCategoryKpi.source==='daily'"
-                style="color:#0369a1;font-size:11px;margin-left:4px;background:#e0f2fe;padding:1px 6px;border-radius:4px">单日</span>
+                style="color:#075985;font-size:11px;margin-left:6px;background:#e0f2fe;padding:2px 8px;border-radius:4px;font-weight:600;border:1px solid #7dd3fc">单日</span>
         </div>
         <div class="kpi-value" style="color:#0f172a">
           {{ fmtNum(addCategoryKpi.thisYr) }}
@@ -623,7 +636,7 @@ const OverviewPage = defineComponent({
       <div v-for="c in addCategoryKpi.byCat" :key="c.cat" class="kpi-card" style="background:#fafafa">
         <div class="kpi-label">
           <span style="display:inline-block;width:8px;height:8px;border-radius:99px;margin-right:4px"
-                :style="{background: ADD_CAT_COLOR[c.cat]}"></span>{{ c.cat }} 累计
+                :style="{background: ADD_CAT_COLOR[c.cat]}"></span>{{ c.cat }} {{ addMode==='single' ? '当日' : '累计' }}
         </div>
         <div class="kpi-value" style="font-size:18px">{{ fmtNum(c.thisYr) }}</div>
         <div class="kpi-footer">
@@ -820,7 +833,7 @@ const OverviewPage = defineComponent({
         <!-- 分类筛选按钮组：全部 / 配饰 / 家具 / 灯具 -->
         <div style="display:flex;gap:4px;align-items:center">
           <span style="font-size:11px;color:var(--muted)">分类：</span>
-          <button v-for="c in ['全部','配饰','家具','灯具']" :key="c"
+          <button v-for="c in ['全部','家具','配饰','灯具']" :key="c"
             @click="rankCategory=c"
             :style="{padding:'4px 10px',fontSize:'11px',border:rankCategory===c?'1px solid var(--accent)':'1px solid var(--border)',
                      background:rankCategory===c?'var(--accent)':'transparent',color:rankCategory===c?'#fff':'var(--muted)',
@@ -830,7 +843,8 @@ const OverviewPage = defineComponent({
         <span class="info-btn" style="margin-left:8px">?<span class="tooltip" style="left:auto;right:0">
           GMV：生意参谋 pay_amount 字段汇总 ｜
           流量：生意参谋 visitors 字段汇总 ｜
-          分类筛选只看该一级分类下的商品排行
+          分类筛选只看该一级分类下的商品排行 ｜
+          <b>环比口径</b>：同一 SPU 在「上一等长周期」自身金额的变化 (本期 vs 上期，不是 vs 同位排名)
         </span></span>
       </div>
       <div style="border-bottom:1px solid var(--border);margin:8px 0 10px"></div>
@@ -916,7 +930,14 @@ const OverviewPage = defineComponent({
         </div>
         <div style="font-size:12px;color:var(--muted);line-height:1.6">{{ m.content }}</div>
       </div>
-      <div v-if="meetings.length===0" class="empty">暂无会议记录</div>
+      <div v-if="meetings.length===0" class="empty">
+        <div style="margin-bottom:8px">暂无本周会议记录</div>
+        <a href="javascript:void(0)" @click="$emit('go-ai-meeting')"
+           style="display:inline-block;padding:6px 14px;background:var(--accent);color:#fff;border-radius:6px;font-size:11px;text-decoration:none;cursor:pointer">
+          + 新增会议要点
+        </a>
+        <div style="margin-top:6px;font-size:10px;color:var(--muted)">或从 AI 分析页自动抽取</div>
+      </div>
     </div>
   </div>
 
