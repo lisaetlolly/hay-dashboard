@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>HAY 618 数据 → Seeding Hub 服务端上传</title>
+<style>
+body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; max-width: 980px; margin: 32px auto; padding: 0 20px; color: #2c3e50; line-height: 1.65; background: #fafbfc; }
+h1 { color: #1F3864; border-bottom: 3px solid #1F3864; padding-bottom: 10px; }
+h2 { color: #2E548A; margin-top: 32px; }
+.card { background: white; padding: 18px 22px; border-radius: 8px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid #2E548A; }
+.warn { border-left-color: #B8860B; background: #fff8e1; }
+.ok { border-left-color: #2E7D32; background: #e8f5e9; }
+.err { border-left-color: #C62828; background: #ffebee; }
+.info { border-left-color: #1976D2; background: #e3f2fd; }
+button { padding: 10px 22px; font-size: 15px; cursor: pointer; border: none; border-radius: 6px; margin: 4px 6px 4px 0; font-weight: 500; }
+.btn-primary { background: #1F3864; color: white; }
+.btn-primary:hover { background: #2E548A; }
+.btn-secondary { background: #6c757d; color: white; }
+.btn-success { background: #2E7D32; color: white; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.kv { display: grid; grid-template-columns: 200px 1fr; gap: 8px 16px; margin: 8px 0; font-size: 14px; }
+.kv > div:nth-child(odd) { color: #666; font-weight: 600; }
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; background: white; }
+th, td { border: 1px solid #e0e0e0; padding: 6px 10px; text-align: left; }
+th { background: #1F3864; color: white; }
+tr:nth-child(even) { background: #f8f9fa; }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; margin-right: 4px; font-weight: 500; }
+.t-exposure { background: #E8DCFA; color: #4D2D8A; }
+.t-click { background: #FFE6CC; color: #B8550B; }
+.t-conv { background: #D8EAD9; color: #1B7A1B; }
+.t-eng { background: #FCD1D5; color: #B91D2F; }
+#log { white-space: pre-wrap; max-height: 360px; overflow-y: auto; background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-family: Menlo, Consolas, monospace; font-size: 12px; }
+.progress { background: #e0e0e0; height: 8px; border-radius: 4px; overflow: hidden; margin: 6px 0; }
+.progress-bar { background: linear-gradient(90deg, #1F3864, #2E548A); height: 100%; transition: width 0.3s; }
+code { background: #f4f4f8; padding: 2px 6px; border-radius: 3px; font-family: Menlo, monospace; font-size: 13px; color: #c7254e; }
+.row-ok { color: #2E7D32; }
+.row-err { color: #C62828; }
+.row-skip { color: #999; }
+.bigStat { display: inline-block; padding: 12px 20px; margin: 8px 12px 8px 0; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.bigStat .num { font-size: 24px; font-weight: 700; color: #1F3864; }
+.bigStat .label { font-size: 12px; color: #666; }
+</style>
+</head>
+<body>
+
+<h1>🚀 HAY 618 服务端上传工具</h1>
+
+<div class="card info">
+  <strong>这个工具会:</strong>
+  <ol style="margin: 8px 0;">
+    <li><strong>KOLs</strong> → <code>POST /api/seeding/kol-webhook</code> (服务端 seeding_kols 表 upsert)</li>
+    <li><strong>笔记</strong> → <code>POST /api/xhs-notes</code> (服务端 fact_xhs_note + fact_xhs_note_product 表 upsert; 一条笔记按涉及产品展开多条)</li>
+    <li><strong>Campaign + Seeding 记录</strong> → 写回 localStorage(<code>seedingHub_v1</code>)，因为服务端目前没有 Campaign/Seeding 表(v2 才会上)</li>
+  </ol>
+</div>
+
+<div class="card warn">
+  <strong>请在 https://seedinghub.xxhs.cloud 内打开此页面</strong> 才能正常调 API；本地双击文件因 CORS 会失败。
+  <br>建议: 先把这个 HTML 上传到 <code>数据库数据/</code> 目录，让服务端按 static 文件服务，URL 是 <code>https://seedinghub.xxhs.cloud/618-upload.html</code>。
+</div>
+
+<h2>1. 环境检测</h2>
+<div class="card">
+  <div class="kv">
+    <div>当前域名</div><div id="env-host">-</div>
+    <div>API 端点</div><div id="env-api">-</div>
+    <div>登录用户</div><div id="env-user">-</div>
+    <div>seeding/kols 现有</div><div id="env-kols">-</div>
+    <div>kol-webhook 状态</div><div id="env-webhook">-</div>
+  </div>
+  <button class="btn-secondary" id="btn-check">重新检测</button>
+</div>
+
+<h2>2. 待上传数据预览</h2>
+<div>
+  <div class="bigStat"><div class="num" id="stat-kol">-</div><div class="label">KOL</div></div>
+  <div class="bigStat"><div class="num" id="stat-note">-</div><div class="label">笔记×PID</div></div>
+  <div class="bigStat"><div class="num" id="stat-camp">1</div><div class="label">Campaign</div></div>
+  <div class="bigStat"><div class="num" id="stat-seeding">-</div><div class="label">Seeding(localStorage)</div></div>
+  <div class="bigStat"><div class="num" id="stat-refresh">-</div><div class="label">待抓数据</div></div>
+</div>
+
+<h2>3. 执行上传</h2>
+<div class="card">
+  <button class="btn-primary" id="btn-kol">① 上传 KOL 到服务端</button>
+  <button class="btn-primary" id="btn-note">② 上传笔记到服务端</button>
+  <button class="btn-success" id="btn-local">③ 写 Campaign+Seeding 到 localStorage</button>
+  <br><br>
+  <button class="btn-primary" id="btn-all" style="background:#C62828;">🚀 一键全部上传</button>
+  <button class="btn-secondary" id="btn-dry" >只 dry-run (不真传)</button>
+</div>
+
+<h2>4. 进度</h2>
+<div class="card">
+  <div>KOL 上传: <span id="p-kol-text">0/0</span></div>
+  <div class="progress"><div class="progress-bar" id="p-kol" style="width:0%"></div></div>
+  <div>笔记上传: <span id="p-note-text">0/0</span></div>
+  <div class="progress"><div class="progress-bar" id="p-note" style="width:0%"></div></div>
+</div>
+
+<h2>5. 日志</h2>
+<div id="log"></div>
+
+<h2>📋 打标阈值(本批次实际生效)</h2>
+<table>
+<tr><th>标签</th><th>规则</th><th>命中数</th></tr>
+<tr><td><span class="tag t-exposure">高曝光</span></td><td>曝光 ≥ 20,000</td><td id="cnt-exp">-</td></tr>
+<tr><td><span class="tag t-click">高点击</span></td><td>阅读/曝光 ≥ 18.4%</td><td id="cnt-click">-</td></tr>
+<tr><td><span class="tag t-eng">高互动</span></td><td>(赞+藏+评)/曝光 ≥ 3.2% 或互动数 ≥ 406</td><td id="cnt-eng">-</td></tr>
+<tr><td><span class="tag t-conv">高转化</span></td><td>阅读 ≥ 2,900 (暂用阅读量代理)</td><td id="cnt-conv">-</td></tr>
+</table>
+
+<h2>⚠️ 待补字典</h2>
+<div id="unknown-block">-</div>
+
+<h2>📭 7条待抓数据的笔记</h2>
+<div id="missing-block">-</div>
+
+<script>
+// ===== 内嵌 patch 数据 =====
+const PKG = {"campaign": {"id": "cam_2026_05_618", "name": "618 内容种草", "type": "活动", "startDate": 1777564800000, "endDate": 1782748800000, "description": "HAY 618 内容种草批次（5-6月）", "color": "#FF2E4D", "createdAt": 1779033600000}, "kols": [{"redId": "winni加冰不加水", "name": "winni加冰不加水", "followers": 21000, "profileUrl": "https://xhslink.com/m/7j4xfsUZ7rv", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "小应废材菌", "name": "小应废材菌", "followers": 30000, "profileUrl": "https://xhslink.com/m/9DOFLLXtA1p", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "陆咸咸", "name": "陆咸咸", "followers": 28000, "profileUrl": "https://xhslink.com/m/39YHzuqLIj", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "小吴 nonewc", "name": "小吴 nonewc", "followers": 30000, "profileUrl": "https://xhslink.com/m/6dt9HpsXpV4", "bio": "618批次合作 · 生活 · 腰部"}, {"redId": "Jetlag", "name": "Jetlag", "followers": 55000, "profileUrl": "https://xhslink.com/m/5iCiqmsXBiq", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "猪猪吃老虎", "name": "猪猪吃老虎", "followers": 19000, "profileUrl": "https://xhslink.com/m/5k3Pb16TVT1", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "跳跳小喜", "name": "跳跳小喜", "followers": 42000, "profileUrl": "https://xhslink.com/m/8OUikNlE2EN", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "居里富人", "name": "居里富人", "followers": 92000, "profileUrl": "https://xhslink.com/m/70gbb7Hi0sS", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "王逅逅今天在家", "name": "王逅逅今天在家", "followers": 21000, "profileUrl": "https://xhslink.com/m/3iUsfKtFFW8", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "基毛菜", "name": "基毛菜", "followers": 45000, "profileUrl": "https://xhslink.com/m/5tXOh7U1IJI", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "小汉堡", "name": "小汉堡", "followers": 16000, "profileUrl": "https://xhslink.com/m/7uFheP4NPgM", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "OldEast", "name": "OldEast", "followers": 90000, "profileUrl": "https://xhslink.com/m/3kfoTx9Hqxu", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "是等等阿", "name": "是等等阿", "followers": 15000, "profileUrl": "https://xhslink.com/m/8sOGNGd2pJX", "bio": "618批次合作 · 时尚 · 腰部"}, {"redId": "麻小壳", "name": "麻小壳", "followers": 13000, "profileUrl": "https://xhslink.com/m/7soj1vT4Ums", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "古德猫宁", "name": "古德猫宁", "followers": 14000, "profileUrl": "https://xhslink.com/m/1OYfpxs71Kx", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "NYHXS", "name": "NYHXS", "followers": 40000, "profileUrl": "https://xhslink.com/m/7J4xJpSIt89", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "闪的家", "name": "闪的家", "followers": 23000, "profileUrl": "https://www.xiaohongshu.com/user/profile/6101681500000000010074df", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "lena的家", "name": "lena的家", "followers": 13000, "profileUrl": "https://www.xiaohongshu.com/user/profile/64d8ab5e000000000100fb17?xsec_token=ABMKoEZnOCFh6Ysp8mmTZsy64-nv-F7msA4VM-c-56Uow=&xsec_source=pc_note", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "杨哈哈", "name": "杨哈哈", "followers": 8000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5b66fbc869d6ce0001470db7?xsec_token=ABRuJORLG1ni6qk1z7HV7_FaLARslEtk-tELEGjewESKY=&xsec_source=pc_note", "bio": "618批次合作 · 居家 · 尾部"}, {"redId": "Iris艾瑞斯", "name": "Iris艾瑞斯", "followers": 18000, "profileUrl": "https://www.xiaohongshu.com/user/profile/569cb1d2e4251d6eef9703c9?xsec_token=ABktqfYvMjWbo-vKiovaRH8-tgxOLOAGU_oJOUazbYIcA=&xsec_source=pc_note", "bio": "618批次合作 · 生活 · 腰部"}, {"redId": "阿白呀", "name": "阿白呀", "followers": 41000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5b1f8fe911be101746322373?xsec_token=ABFugsx7kOnPFOdxQ21Py0yhIHYWDSrolTixXDYPz_kfI=&xsec_source=pc_note", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "KK是一家之猪", "name": "KK是一家之猪", "followers": 2000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5dfef202000000000100a722?xsec_token=ABTZxCXJqJ9v0ajYreQ98OvslT7wKVAK5KKGbCCHdd8_Y=&xsec_source=pc_note", "bio": "618批次合作 · 居家 · 尾部"}, {"redId": "miohome", "name": "miohome", "followers": 9000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5fba8d100000000001008a8d?xsec_token=ABPhLlOQHYjOGHklEOZ0WHhlHC_xmMOWx51GMc6tVu-go=&xsec_source=pc_note", "bio": "618批次合作 · 居家 · 尾部"}, {"redId": "一科辣豆", "name": "一科辣豆", "followers": 22000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5649964bb7ba223950575af9?xsec_token=AB-DGd4FJh6aZsFyePSU9x0BXuxnJnvWxbcSKblLs10mA=&xsec_source=pc_note", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "Avery-P", "name": "Avery-P", "followers": 28000, "profileUrl": "https://www.xiaohongshu.com/user/profile/57bc0cab50c4b4270faf1dec", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "蕾蕾李", "name": "蕾蕾李", "followers": 19000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5d1dfb8c0000000016024d83", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "王阿肆", "name": "王阿肆", "followers": 10000, "profileUrl": "https://www.xiaohongshu.com/user/profile/55980090484fb64c3184643b", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "Faye", "name": "Faye", "followers": 145000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5bc5fbe57af0e3000112ccf3?xsec_token=AB8DUO8X2U3jDJORm0V0mMAbFPAtyTAQsoJjsEV_1EdZI%3D&xsec_source=pc_search", "bio": "618批次合作 · 居家 · 头部"}, {"redId": "西西弗斯要逃亡", "name": "西西弗斯要逃亡", "followers": 7000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5b91ebe59276ee00017f9843?xsec_token=ABf5OAJmuZE3_Go4tzSVGagJA4uH9px7ZvB84rFtDJ0dg%3D&xsec_source=pc_search", "bio": "618批次合作 · 居家 · 尾部"}, {"redId": "肥瘦老板娘", "name": "肥瘦老板娘", "followers": 6000, "profileUrl": "https://www.xiaohongshu.com/user/profile/544f67ead6e4a93fe920ab53", "bio": "618批次合作 · 居家 · 尾部"}, {"redId": "珠里", "name": "珠里", "followers": 18000, "profileUrl": "https://www.xiaohongshu.com/user/profile/602fa609000000000101d044", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "Shotnotot", "name": "Shotnotot", "followers": 2000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5a0e56c64eacab0b20c9320d", "bio": "618批次合作 · 居家 · 尾部"}, {"redId": "RAI", "name": "RAI", "followers": 20000, "profileUrl": "https://www.xiaohongshu.com/user/profile/5a8f1274e8ac2b3ccc215a0f", "bio": "618批次合作 · 居家 · 腰部"}, {"redId": "魏可人", "name": "魏可人", "followers": 21000, "profileUrl": "https://www.xiaohongshu.com/user/profile/59983bdc5e87e70f743cf2e2?xsec_token=AB4UttlWNtcjqwZQKYcwje9ivYhP8n-oPwrnIv3t1pKZ8%3D&xsec_source=pc_search", "bio": "618批次合作 · 居家 · 腰部"}], "noteRows": [{"pid": "965048597796", "title": "winni加冰不加水 - La Pittura", "link": "http://xhslink.com/o/6moN9Cnqa27", "date": "2026-05-05", "author": "winni加冰不加水", "likes": 0, "collect": 0, "comments": 0, "views": 1041, "_kolName": "winni加冰不加水", "_engagement": 256, "_exposure": 4748, "_tags": ["高点击", "高互动"], "_needsRefresh": false}, {"pid": "717349639294", "title": "小应废材菌 - Weekday", "link": "http://xhslink.com/o/7k69IeEvZBI", "date": "2026-05-08", "author": "小应废材菌", "likes": 0, "collect": 0, "comments": 0, "views": 782, "_kolName": "小应废材菌", "_engagement": 410, "_exposure": 5915, "_tags": ["高互动"], "_needsRefresh": false}, {"pid": "824452791755", "title": "陆咸咸 - Facet Cabinet", "link": "http://xhslink.com/o/5QaS8BNyKiN", "date": "2026-04-28", "author": "陆咸咸", "likes": 0, "collect": 0, "comments": 0, "views": 3853, "_kolName": "陆咸咸", "_engagement": 402, "_exposure": 28358, "_tags": ["高曝光", "高转化"], "_needsRefresh": false}, {"pid": "717349639294", "title": "小吴 nonewc - Weekday", "link": "http://xhslink.com/o/4BAjQKw1N7Y", "date": "2026-05-06", "author": "小吴 nonewc", "likes": 0, "collect": 0, "comments": 0, "views": 724, "_kolName": "小吴 nonewc", "_engagement": 210, "_exposure": 6405, "_tags": ["高互动"], "_needsRefresh": false}, {"pid": "824452791755", "title": "Jetlag - Facet Cabinet", "link": "http://xhslink.com/o/5KiMb08RI6h", "date": "2026-05-07", "author": "Jetlag", "likes": 0, "collect": 0, "comments": 0, "views": 378, "_kolName": "Jetlag", "_engagement": 73, "_exposure": 4040, "_tags": [], "_needsRefresh": false}, {"pid": "824452791755", "title": "猪猪吃老虎 - Facet Cabinet", "link": "http://xhslink.com/o/5qrVuAT8Wnk", "date": "2026-05-08", "author": "猪猪吃老虎", "likes": 0, "collect": 0, "comments": 0, "views": 2334, "_kolName": "猪猪吃老虎", "_engagement": 3421, "_exposure": 14287, "_tags": ["高互动"], "_needsRefresh": false}, {"pid": "737675603229", "title": "跳跳小喜 - Arcs Trolly", "link": "http://xhslink.com/o/4qSeIC04jmy", "date": "2026-05-06", "author": "跳跳小喜", "likes": 0, "collect": 0, "comments": 0, "views": 2010, "_kolName": "跳跳小喜", "_engagement": 134, "_exposure": 14154, "_tags": [], "_needsRefresh": false}, {"pid": "717349639294", "title": "居里富人 - Weekday", "link": "http://xhslink.com/o/ApiM5TfCR3A", "date": "2026-05-03", "author": "居里富人", "likes": 0, "collect": 0, "comments": 0, "views": 30451, "_kolName": "居里富人", "_engagement": 1724, "_exposure": 158591, "_tags": ["高曝光", "高点击", "高互动", "高转化"], "_needsRefresh": false}, {"pid": "737675603229", "title": "王逅逅今天在家 - Arcs Trolly", "link": "http://xhslink.com/o/xM6nCgLBrE", "date": "2026-05-07", "author": "王逅逅今天在家", "likes": 0, "collect": 0, "comments": 0, "views": 2420, "_kolName": "王逅逅今天在家", "_engagement": 93, "_exposure": 11159, "_tags": ["高点击"], "_needsRefresh": false}, {"pid": "824452791755", "title": "基毛菜 - Facet Cabinet", "link": "http://xhslink.com/o/2COHLQKyBDv", "date": "2026-05-06", "author": "基毛菜", "likes": 0, "collect": 0, "comments": 0, "views": 5377, "_kolName": "基毛菜", "_engagement": 614, "_exposure": 34485, "_tags": ["高曝光", "高互动", "高转化"], "_needsRefresh": false}, {"pid": "824452791755", "title": "小汉堡 - Facet Cabinet", "link": "http://xhslink.com/o/2NEZ14OuFmF", "date": "2026-05-05", "author": "小汉堡", "likes": 0, "collect": 0, "comments": 0, "views": 2829, "_kolName": "小汉堡", "_engagement": 296, "_exposure": 21587, "_tags": ["高曝光"], "_needsRefresh": false}, {"pid": "824946188993", "title": "OldEast - Taburete 8", "link": "http://xhslink.com/o/1S9sGAdTBop", "date": "2026-05-05", "author": "OldEast", "likes": 0, "collect": 0, "comments": 0, "views": 7369, "_kolName": "OldEast", "_engagement": 364, "_exposure": 31798, "_tags": ["高曝光", "高点击", "高转化"], "_needsRefresh": false}, {"pid": "965048597796", "title": "是等等阿 - La Pittura", "link": "http://xhslink.com/o/7Ljb0ARpVPR", "date": "2026-05-06", "author": "是等等阿", "likes": 0, "collect": 0, "comments": 0, "views": 793, "_kolName": "是等等阿", "_engagement": 60, "_exposure": 5329, "_tags": [], "_needsRefresh": false}, {"pid": "965048597796", "title": "麻小壳 - La Pittura", "link": "http://xhslink.com/o/6wfaZM1Pngq", "date": "2026-05-08", "author": "麻小壳", "likes": 0, "collect": 0, "comments": 0, "views": 299, "_kolName": "麻小壳", "_engagement": 193, "_exposure": 1741, "_tags": ["高互动"], "_needsRefresh": false}, {"pid": "824946188993", "title": "古德猫宁 - Taburete 8", "link": "http://xhslink.com/o/915slDxexYh", "date": "2026-05-12", "author": "古德猫宁", "likes": 0, "collect": 0, "comments": 0, "views": 6470, "_kolName": "古德猫宁", "_engagement": 706, "_exposure": 41386, "_tags": ["高曝光", "高互动", "高转化"], "_needsRefresh": false}, {"pid": "824452791755", "title": "NYHXS - Facet Cabinet", "link": "http://xhslink.com/o/bcpVR7eP89", "date": "2026-05-13", "author": "NYHXS", "likes": 0, "collect": 0, "comments": 0, "views": 891, "_kolName": "NYHXS", "_engagement": 139, "_exposure": 8269, "_tags": [], "_needsRefresh": false}, {"pid": "690221882602", "title": "闪的家 - Bowler", "link": "https://www.xiaohongshu.com/explore/6a02f9dd000000000702a8a3?app_platform=ios&app_version=9.28&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBndWS6_2TKbsISwyfvhUzCxeS9EJf--yl8omVG4cag-g=&author_share=1&xhsshare=WeixinSession&shareRedId=ODcyMTk9NT42NzUyOTgwNjY0OTc7OUpP&apptime=1778648589&share_id=d26f4d909e084185bf0a0b53206a3730", "date": "2026-05-13", "author": "闪的家", "likes": 0, "collect": 0, "comments": 0, "views": 1550, "_kolName": "闪的家", "_engagement": 267, "_exposure": 8573, "_tags": [], "_needsRefresh": false}, {"pid": "824452791755", "title": "lena的家 - Facet Cabinet", "link": "https://www.xiaohongshu.com/discovery/item/6a03ecfc000000003501db13?source=webshare&xhsshare=pc_web&xsec_token=CB0yfEqRgMqI6_6L9VYqmgyx46jmjJByCp6Z-g6e3zjQw=&xsec_source=pc_share", "date": "2026-05-13", "author": "lena的家", "likes": 0, "collect": 0, "comments": 0, "views": 1749, "_kolName": "lena的家", "_engagement": 232, "_exposure": 9344, "_tags": ["高点击"], "_needsRefresh": false}, {"pid": "737675603229", "title": "杨哈哈 - Arcs Trolly", "link": "https://www.xiaohongshu.com/discovery/item/69fee6870000000035031b25?app_platform=ios&app_version=9.29&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CB9ojiud7RU1mp00fxVkeMAh6DuNMU-OHAqHlXHoBVwD0=&author_share=1&xhsshare=CopyLink&shareRedId=N0g4NklHR0E8QEk4TE0wNjY0PT40SUhA&apptime=1778490915&share_id=bb80b1afa5d1428d8c5fcadf854883e2", "date": "2026-05-13", "author": "杨哈哈", "likes": 0, "collect": 0, "comments": 0, "views": 5315, "_kolName": "杨哈哈", "_engagement": 478, "_exposure": 26829, "_tags": ["高曝光", "高点击", "高互动", "高转化"], "_needsRefresh": false}, {"pid": "717349639294", "title": "Iris艾瑞斯 - Weekday", "link": "https://www.xiaohongshu.com/discovery/item/6a014c570000000037034e73?source=webshare&xhsshare=pc_web&xsec_token=CBs7kGPyLXJkCmn3j0QOshR5TdHKZJSee_QMpCEDdtHNQ=&xsec_source=pc_share", "date": "2026-05-12", "author": "Iris艾瑞斯", "likes": 0, "collect": 0, "comments": 0, "views": 1875, "_kolName": "Iris艾瑞斯", "_engagement": 86, "_exposure": 11345, "_tags": [], "_needsRefresh": false}, {"pid": "717349639294", "title": "阿白呀 - Weekday", "link": "https://www.xiaohongshu.com/discovery/item/6a04435f0000000008027bc7?app_platform=ios&app_version=9.29&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBRoJjx31iRc6PQdWJmFyoxLn4j1mmMhViGw4g8NSTTO0=&author_share=1&xhsshare=WeixinSession&shareRedId=N0gzRjtLSUI3OEdHOjgxPTo5PDk2OD08&apptime=1778667395&share_id=6ee77e4b7f034fb49909d70470118fdf", "date": "2026-05-13", "author": "阿白呀", "likes": 0, "collect": 0, "comments": 0, "views": 1538, "_kolName": "阿白呀", "_engagement": 324, "_exposure": 10177, "_tags": [], "_needsRefresh": false}, {"pid": "717349639294", "title": "KK是一家之猪 - Weekday", "link": "https://www.xiaohongshu.com/explore/6a03114c0000000035029acb?xsec_token=ABEQ8zEZ3e8m3Xw2ahKb9w6evnFNAUVSoxx7R7MyQQfmU=&xsec_source=pc_user", "date": "2026-05-13", "author": "KK是一家之猪", "likes": 0, "collect": 0, "comments": 0, "views": 734, "_kolName": "KK是一家之猪", "_engagement": 83, "_exposure": 2663, "_tags": ["高点击"], "_needsRefresh": false}, {"pid": "737675603229", "title": "miohome - Arcs Trolly", "link": "https://www.xiaohongshu.com/discovery/item/69fda1d7000000001f00305b?app_platform=ios&app_version=9.28.1&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBQJQvu_YvFlo3QgzBYm2Bj0Obsr-lRzgOpO4GM8mMMYw=&author_share=1&xhsshare=WeixinSession&shareRedId=N0xEQTtJNTk2NzUyOTgwNjY0OTc8Rj5N&apptime=1778315083&share_id=49de93e12ec244fd99ddf257f4efbdd8", "date": "2026-05-10", "author": "miohome", "likes": 0, "collect": 0, "comments": 0, "views": 1656, "_kolName": "miohome", "_engagement": 156, "_exposure": 9837, "_tags": [], "_needsRefresh": false}, {"pid": "690221882602", "title": "一科辣豆 - Bowler", "link": "https://www.xiaohongshu.com/discovery/item/6a00001e000000003502e83b?app_platform=ios&app_version=9.28.1&share_from_user_hidden=true&xsec_source=app_share&type=video&xsec_token=CBfXC4UwWosFwxG3XMmAIx30bUvxB3aMAOzF_1DHM5kCI=&author_share=1&xhsshare=WeixinSession&shareRedId=Nzw2OTw7OEtIPkdDOzozPzszPj45RkxC&apptime=1778385018&share_id=4a991ce18d58410b9652ae17aef1cea6", "date": "2026-05-12", "author": "一科辣豆", "likes": 0, "collect": 0, "comments": 0, "views": 468, "_kolName": "一科辣豆", "_engagement": 156, "_exposure": 4128, "_tags": ["高互动"], "_needsRefresh": false}, {"pid": "690221882602", "title": "Avery-P - Bowler", "link": "http://xhslink.com/o/7JNo0oXgmgZ", "date": "2026-05-13", "author": "Avery-P", "likes": 0, "collect": 0, "comments": 0, "views": 2927, "_kolName": "Avery-P", "_engagement": 600, "_exposure": 18870, "_tags": ["高互动", "高转化"], "_needsRefresh": false}, {"pid": "717349639294", "title": "蕾蕾李 - Weekday", "link": "https://www.xiaohongshu.com/explore/6a059bf40000000007011490?app_platform=ios&app_version=9.29&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBd33vy6IGNkSg_LoDBB1k7f84UMGpAV3EXLd_J-AIxp0=&author_share=1&xhsshare=WeixinSession&shareRedId=N0ozRElHPEw2NzUyOTgwNjc5OTk4ST48&apptime=1778752691&share_id=56155276b3fe488db4cac67f37048c74", "date": "2026-05-14", "author": "蕾蕾李", "likes": 0, "collect": 0, "comments": 0, "views": 914, "_kolName": "蕾蕾李", "_engagement": 170, "_exposure": 6231, "_tags": [], "_needsRefresh": false}, {"pid": "824946188993", "title": "王阿肆 - Taburete", "link": "https://www.xiaohongshu.com/discovery/item/6a0501f500000000080327e1?source=webshare&xhsshare=pc_web&xsec_token=ABUXcUrTX6tOmVGIhIZc2yJEEBWN1dzUcOB7PbG9df7L0=&xsec_source=pc_share", "date": "2026-05-14", "author": "王阿肆", "likes": 0, "collect": 0, "comments": 0, "views": 290, "_kolName": "王阿肆", "_engagement": 111, "_exposure": 2438, "_tags": ["高互动"], "_needsRefresh": false}, {"pid": "737675603229", "title": "Faye - Trolley", "link": "https://www.xiaohongshu.com/discovery/item/6a0738eb0000000008032ca5?app_platform=ios&app_version=9.24&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBe8gwfR7m2Ve9q2OiQVMqoKLQTZvoaj9nfli8e44dXAY=&author_share=1&xhsshare=CopyLink&shareRedId=N0hFNUlHST49SEsyTjswNjY0OjlHSEw8&apptime=1778898666&share_id=3acddb87d13c41cb987495694c4f1cd7&code=09100Z0w3nIl4734CJ3w3NKBLl000Z0F&state=wx_oauth", "date": "2026-05-15", "author": "Faye", "likes": 0, "collect": 0, "comments": 0, "views": 0, "_kolName": "Faye", "_engagement": 0, "_exposure": 0, "_tags": [], "_needsRefresh": true}, {"pid": "717349639294", "title": "西西弗斯要逃亡 - Weekday", "link": "https://www.xiaohongshu.com/discovery/item/6a06f99600000000350328cc?app_platform=ios&app_version=9.30.1&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBZNsBPUjVTy81Gnu07wBrYLqvq6FyrmoA3qVCSunY-FE=&author_share=1&xhsshare=WeixinSession&shareRedId=N0g7MUhHST4_OTw4Tk0wNjY0QE09PTo8&apptime=1778842038&share_id=cd53f6e0997b408abeb79bbc9015698d", "date": "2026-05-15", "author": "西西弗斯要逃亡", "likes": 0, "collect": 0, "comments": 0, "views": 0, "_kolName": "西西弗斯要逃亡", "_engagement": 0, "_exposure": 0, "_tags": [], "_needsRefresh": true}, {"pid": "737675603229", "title": "肥瘦老板娘 - Trolly", "link": "https://www.xiaohongshu.com/discovery/item/6a094bb10000000008000134?app_platform=ios&app_version=9.30.1&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CB4yyNh48AfoQQO1sDfgig6xlEAVGmhT9wRU0KqaiVWnM=&author_share=1&xhsshare=WeixinSession&shareRedId=Nzo2Rjk8SUpKPUo2SkEzTEs8OzdFRzs8&apptime=1779002751&share_id=adc3096296b94192ba8a0c81848aedb9", "date": "2026-05-17", "author": "肥瘦老板娘", "likes": 0, "collect": 0, "comments": 0, "views": 0, "_kolName": "肥瘦老板娘", "_engagement": 0, "_exposure": 0, "_tags": [], "_needsRefresh": true}, {"pid": "690221882602", "title": "珠里 - bowler", "link": "https://www.xiaohongshu.com/discovery/item/6a09108800000000350249bf?app_platform=ios&app_version=9.30.1&share_from_user_hidden=true&xsec_source=app_share&type=video&xsec_token=CBafIUC_HYWQlWQmmKnU4K1v59v3jioLutkbh9867Oq2I=&author_share=1&xhsshare=WeixinSession&shareRedId=ODY0RkQ7NEI2NzUyOTgwNjY0OThINTo9&apptime=1778979250&share_id=5c1308af09c1424185bd16b9f25ec1fd", "date": "2026-05-17", "author": "珠里", "likes": 0, "collect": 0, "comments": 0, "views": 0, "_kolName": "珠里", "_engagement": 0, "_exposure": 0, "_tags": [], "_needsRefresh": true}, {"pid": "824452791755", "title": "Shotnotot - Facet Cabinet", "link": "https://www.xiaohongshu.com/discovery/item/6a0985a5000000003601e6a9?app_platform=android&ignoreEngage=true&app_version=9.30.0&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBoXxfwxKnUjNXHFyJWEsKoLIQg_-kyD0cJHC4OGlY3zA%3D&author_share=1&xhsshare=&shareRedId=N0cyRTg7Rz86TEZFSkowSDgzTEA3NzZN&apptime=1779008937&share_id=4d6f33a197874a07b74c16dc2916f055&share_channel=wechat", "date": "2026-05-17", "author": "Shotnotot", "likes": 0, "collect": 0, "comments": 0, "views": 0, "_kolName": "Shotnotot", "_engagement": 0, "_exposure": 0, "_tags": [], "_needsRefresh": true}, {"pid": "737675603229", "title": "RAI - Trolley", "link": "https://www.xiaohongshu.com/discovery/item/6a087a6800000000060220e7?app_platform=ios&app_version=9.30.1&share_from_user_hidden=true&xsec_source=app_share&type=video&xsec_token=CB73bDKjQYpY-tv9BsoOzxrmYpa0m_0XtIbjea9jpnEmM=&author_share=1&xhsshare=CopyLink&shareRedId=N0c6RjQ3Oz1LP0ZFO0ozSUlGOzg5RjZP&apptime=1778999470&share_id=e2bdd8d61d374c08bc4ea8238b11484f", "date": "2026-05-16", "author": "RAI", "likes": 0, "collect": 0, "comments": 0, "views": 0, "_kolName": "RAI", "_engagement": 0, "_exposure": 0, "_tags": [], "_needsRefresh": true}], "seedings": [{"id": "s_618_96418_winniL", "kolRedId": "winni加冰不加水", "skuList": "La Pittura", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 视频", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_61136_Weekda", "kolRedId": "小应废材菌", "skuList": "Weekday", "campaignId": "cam_2026_05_618", "shipDate": 1777593600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_66366_FacetC", "kolRedId": "陆咸咸", "skuList": "Facet Cabinet", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_12518_nonewc", "kolRedId": "小吴 nonewc", "skuList": "Weekday", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_23156_Jetlag", "kolRedId": "Jetlag", "skuList": "Facet Cabinet", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_11113_FacetC", "kolRedId": "猪猪吃老虎", "skuList": "Facet Cabinet", "campaignId": "cam_2026_05_618", "shipDate": 1777593600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_70740_ArcsTr", "kolRedId": "跳跳小喜", "skuList": "Arcs Trolly", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_6170_Weekda", "kolRedId": "居里富人", "skuList": "Weekday", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 视频", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_36131_ArcsTr", "kolRedId": "王逅逅今天在家", "skuList": "Arcs Trolly", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_95956_FacetC", "kolRedId": "基毛菜", "skuList": "Facet Cabinet", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_95993_FacetC", "kolRedId": "小汉堡", "skuList": "Facet Cabinet", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_56378_OldEas", "kolRedId": "OldEast", "skuList": "Taburete 8", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 视频", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_69390_LaPitt", "kolRedId": "是等等阿", "skuList": "La Pittura", "campaignId": "cam_2026_05_618", "shipDate": 1777564800000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 视频", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_88193_LaPitt", "kolRedId": "麻小壳", "skuList": "La Pittura", "campaignId": "cam_2026_05_618", "shipDate": 1777593600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_74443_Tabure", "kolRedId": "古德猫宁", "skuList": "Taburete 8", "campaignId": "cam_2026_05_618", "shipDate": 1777939200000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_95100_NYHXSF", "kolRedId": "NYHXS", "skuList": "Facet Cabinet", "campaignId": "cam_2026_05_618", "shipDate": 1778025600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_24897_Bowler", "kolRedId": "闪的家", "skuList": "Bowler", "campaignId": "cam_2026_05_618", "shipDate": 1778025600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_626_lenaFa", "kolRedId": "lena的家", "skuList": "Facet Cabinet", "campaignId": "cam_2026_05_618", "shipDate": 1778025600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_73507_ArcsTr", "kolRedId": "杨哈哈", "skuList": "Arcs Trolly", "campaignId": "cam_2026_05_618", "shipDate": 1778025600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_84074_IrisWe", "kolRedId": "Iris艾瑞斯", "skuList": "Weekday", "campaignId": "cam_2026_05_618", "shipDate": 1777939200000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_31354_Weekda", "kolRedId": "阿白呀", "skuList": "Weekday", "campaignId": "cam_2026_05_618", "shipDate": 1778025600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_35932_KKWeek", "kolRedId": "KK是一家之猪", "skuList": "Weekday", "campaignId": "cam_2026_05_618", "shipDate": 1778025600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 视频", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_30802_miohom", "kolRedId": "miohome", "skuList": "Arcs Trolly", "campaignId": "cam_2026_05_618", "shipDate": 1777766400000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_31917_Bowler", "kolRedId": "一科辣豆", "skuList": "Bowler", "campaignId": "cam_2026_05_618", "shipDate": 1777939200000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 视频", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_32457_AveryP", "kolRedId": "Avery-P", "skuList": "Bowler", "campaignId": "cam_2026_05_618", "shipDate": 1778025600000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_89650_Weekda", "kolRedId": "蕾蕾李", "skuList": "Weekday", "campaignId": "cam_2026_05_618", "shipDate": 1778112000000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_31320_Tabure", "kolRedId": "王阿肆", "skuList": "Taburete", "campaignId": "cam_2026_05_618", "shipDate": 1778112000000, "trackingNo": "", "deliveryStatus": "已发笔记", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_31550_FayeTr", "kolRedId": "Faye", "skuList": "Trolley", "campaignId": "cam_2026_05_618", "shipDate": 1778198400000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_86956_Weekda", "kolRedId": "西西弗斯要逃亡", "skuList": "Weekday", "campaignId": "cam_2026_05_618", "shipDate": 1778198400000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_4396_Trolly", "kolRedId": "肥瘦老板娘", "skuList": "Trolly", "campaignId": "cam_2026_05_618", "shipDate": 1778371200000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_88209_bowler", "kolRedId": "珠里", "skuList": "bowler", "campaignId": "cam_2026_05_618", "shipDate": 1778371200000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 视频", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_41171_Shotno", "kolRedId": "Shotnotot", "skuList": "Facet Cabinet", "campaignId": "cam_2026_05_618", "shipDate": 1778371200000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_22367_RAITro", "kolRedId": "RAI", "skuList": "Trolley", "campaignId": "cam_2026_05_618", "shipDate": 1778284800000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 视频", "feedback": [], "createdAt": 1779033600000}, {"id": "s_618_33666_blower", "kolRedId": "魏可人", "skuList": "blower", "campaignId": "cam_2026_05_618", "shipDate": 1778371200000, "trackingNo": "", "deliveryStatus": "已签收", "shippingAddress": "", "cost": 0, "isExchange": true, "notes": "618批次 · 置换 · 图文", "feedback": [], "createdAt": 1779033600000}], "_meta": {"name": "HAY 618 patch", "generatedAt": 1779033600000, "source": "整合版 2026 HAY618内容种草.xlsx → 笔记数据追踪", "threshold": {"exposure": 20000, "ctr": 0.184, "engagement_rate": 0.0323, "engagement_abs": 406, "reads_for_conversion": 2900}}, "_unknown": [{"raw": "blower", "row": 34, "kol": "魏可人"}]};
+
+// ===== 全局 =====
+const logEl = document.getElementById('log');
+function log(...a){
+  const time = new Date().toLocaleTimeString();
+  logEl.textContent += '[' + time + '] ' + a.join(' ') + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function getUser() {
+  try {
+    const u = JSON.parse(localStorage.getItem('hay_current_user') || 'null');
+    return u && u.username ? u : null;
+  } catch { return null; }
+}
+
+let DRY_RUN = false;
+
+async function detectEnv() {
+  document.getElementById('env-host').textContent = location.host || 'file://';
+  document.getElementById('env-api').textContent = location.origin + '/api';
+  const u = getUser();
+  document.getElementById('env-user').innerHTML = u ? '✅ ' + u.username + ' (' + (u.role||'?') + ')' : '<span style="color:#C62828;">❌ 未登录,无法上传笔记(KOL 不需要)</span>';
+
+  // 测 kol-webhook
+  try {
+    const r = await fetch('/api/seeding/kol-webhook/test');
+    if (r.ok) {
+      document.getElementById('env-webhook').innerHTML = '✅ alive';
+    } else {
+      document.getElementById('env-webhook').innerHTML = '⚠️ HTTP ' + r.status;
+    }
+  } catch (e) {
+    document.getElementById('env-webhook').innerHTML = '❌ ' + e.message;
+  }
+
+  // 测 KOL 列表
+  try {
+    const r = await fetch('/api/seeding/kols');
+    if (r.ok) {
+      const arr = await r.json();
+      document.getElementById('env-kols').textContent = '✅ ' + arr.length + ' 条';
+    } else {
+      document.getElementById('env-kols').textContent = 'HTTP ' + r.status;
+    }
+  } catch (e) {
+    document.getElementById('env-kols').textContent = '❌ ' + e.message;
+  }
+}
+
+function renderPreview() {
+  document.getElementById('stat-kol').textContent = PKG.kols.length;
+  document.getElementById('stat-note').textContent = PKG.noteRows.length;
+  document.getElementById('stat-seeding').textContent = PKG.seedings.length;
+
+  // tag count
+  const tagCount = {'高曝光':0,'高点击':0,'高互动':0,'高转化':0};
+  const seenNote = new Set();
+  let refresh = 0;
+  for (const r of PKG.noteRows) {
+    if (seenNote.has(r.link)) continue;
+    seenNote.add(r.link);
+    for (const t of (r._tags||[])) tagCount[t] = (tagCount[t]||0)+1;
+    if (r._needsRefresh) refresh++;
+  }
+  document.getElementById('cnt-exp').textContent = tagCount['高曝光'];
+  document.getElementById('cnt-click').textContent = tagCount['高点击'];
+  document.getElementById('cnt-eng').textContent = tagCount['高互动'];
+  document.getElementById('cnt-conv').textContent = tagCount['高转化'];
+  document.getElementById('stat-refresh').textContent = refresh;
+
+  // 未匹配
+  const unk = PKG._unknown||[];
+  document.getElementById('unknown-block').innerHTML = unk.length
+    ? '<table><tr><th>未识别名</th><th>行号</th><th>博主</th></tr>' +
+      unk.map(u => '<tr><td><code>'+u.raw+'</code></td><td>'+u.row+'</td><td>'+u.kol+'</td></tr>').join('') +
+      '</table><p>这些产品没匹配到主链 25 SKU 字典 → 业务方确认后补别名;笔记跑 /api/xhs-notes 时会因 pid 不存在被跳过。</p>'
+    : '<p>✅ 全部产品都命中字典</p>';
+
+  // 待抓数据
+  const seen2 = new Set();
+  const miss = PKG.noteRows.filter(r => r._needsRefresh && !seen2.has(r.link) && seen2.add(r.link));
+  document.getElementById('missing-block').innerHTML = miss.length
+    ? '<table><tr><th>博主</th><th>笔记链接</th></tr>' +
+      miss.map(m => '<tr><td>'+m._kolName+'</td><td><a href="'+m.link+'" target="_blank">打开</a></td></tr>').join('') +
+      '</table><p>这些笔记 exposure/reads/likes/saves/comments 都是 0,会被上传但数据为 0,需通过 kukutool 抓后编辑。</p>'
+    : '<p>无</p>';
+}
+
+async function uploadKols() {
+  log('🚀 开始上传 KOL...');
+  const bar = document.getElementById('p-kol');
+  const txt = document.getElementById('p-kol-text');
+  bar.style.width = '0%';
+  txt.textContent = '0/' + PKG.kols.length;
+
+  if (DRY_RUN) {
+    log('[DRY-RUN] 跳过实际 POST,共 ' + PKG.kols.length + ' 个 KOL');
+    bar.style.width = '100%';
+    txt.textContent = PKG.kols.length + '/' + PKG.kols.length + ' (dry)';
+    return { ok: 0, fail: 0 };
+  }
+
+  // 一次性 POST 整个数组
+  try {
+    const res = await fetch('/api/seeding/kol-webhook', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Source': '618-batch-' + new Date().toISOString().slice(0,10) },
+      body: JSON.stringify(PKG.kols),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      log('❌ KOL webhook HTTP ' + res.status + ': ' + t.slice(0,300));
+      bar.style.background = '#C62828';
+      if (res.status === 422) {
+        log('💡 服务端 Body 解析 bug 未修复。请先 deploy 已修复的 server.py(payload: Any = Body(...))。');
+      }
+      return { ok: 0, fail: PKG.kols.length };
+    }
+    const j = await res.json();
+    log('✅ KOL: accepted=' + j.accepted + ', skipped=' + j.skipped + ', errors=' + JSON.stringify(j.errors||[]).slice(0,200));
+    bar.style.width = '100%';
+    txt.textContent = j.accepted + '/' + PKG.kols.length;
+    return { ok: j.accepted, fail: j.skipped };
+  } catch (e) {
+    log('❌ KOL 网络/异常: ' + e.message);
+    return { ok: 0, fail: PKG.kols.length };
+  }
+}
+
+async function uploadNotes() {
+  log('🚀 开始上传笔记 × PID 共 ' + PKG.noteRows.length + ' 条...');
+  const u = getUser();
+  if (!u && !DRY_RUN) {
+    log('❌ 未登录(localStorage.hay_current_user 为空),笔记 API 需要 X-Username。先登录再试。');
+    return { ok: 0, fail: PKG.noteRows.length };
+  }
+
+  const bar = document.getElementById('p-note');
+  const txt = document.getElementById('p-note-text');
+  bar.style.width = '0%';
+  let ok = 0, fail = 0;
+
+  for (let i = 0; i < PKG.noteRows.length; i++) {
+    const r = PKG.noteRows[i];
+    const body = {
+      pid: r.pid, title: r.title, link: r.link, date: r.date,
+      author: r.author, likes: r.likes, collect: r.collect,
+      comments: r.comments, views: r.views,
+    };
+    if (DRY_RUN) {
+      log('[DRY-RUN] ' + r._kolName + ' / ' + r.pid + ' / ' + r.link.slice(0,40));
+      ok++;
+    } else {
+      try {
+        const res = await fetch('/api/xhs-notes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },  // 全局 fetch 拦截会自动注 X-Username
+          body: JSON.stringify(body),
+        });
+        if (res.ok || res.status === 201) {
+          ok++;
+          log('  ✅ [' + (i+1) + '/' + PKG.noteRows.length + '] ' + r._kolName + ' × ' + r.pid);
+        } else {
+          fail++;
+          const t = await res.text();
+          log('  ❌ [' + (i+1) + '/' + PKG.noteRows.length + '] HTTP ' + res.status + ' ' + r._kolName + ': ' + t.slice(0,150));
+        }
+      } catch (e) {
+        fail++;
+        log('  ❌ [' + (i+1) + '/' + PKG.noteRows.length + '] EXC ' + r._kolName + ': ' + e.message);
+      }
+    }
+    const pct = Math.round((i+1) / PKG.noteRows.length * 100);
+    bar.style.width = pct + '%';
+    txt.textContent = (i+1) + '/' + PKG.noteRows.length + ' (✅' + ok + ' ❌' + fail + ')';
+    // 节流 — 每条 80ms
+    if (!DRY_RUN) await new Promise(r => setTimeout(r, 80));
+  }
+  log('🏁 笔记上传完成: ✅' + ok + ' ❌' + fail);
+  return { ok, fail };
+}
+
+function writeLocalStorage() {
+  log('🚀 写 Campaign + Seeding 到 localStorage(seedingHub_v1)...');
+  const KEY = 'seedingHub_v1';
+  let data;
+  try {
+    data = JSON.parse(localStorage.getItem(KEY) || 'null');
+  } catch (e) {
+    log('❌ localStorage 解析失败: ' + e.message);
+    return false;
+  }
+  if (!data) {
+    log('⚠️ 当前 localStorage 没有 seedingHub_v1。请先打开过 seeding-hub.html。');
+    return false;
+  }
+  if (DRY_RUN) {
+    log('[DRY-RUN] 跳过 localStorage 写入');
+    return true;
+  }
+
+  // 备份
+  const backup = JSON.parse(JSON.stringify(data));
+  const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url;
+  a.download = 'seedingHub_backup_pre_618_' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  log('  ✅ 已备份当前 localStorage');
+
+  // Campaign
+  data.campaigns = data.campaigns || [];
+  const idx = data.campaigns.findIndex(c => c.id === PKG.campaign.id);
+  if (idx < 0) { data.campaigns.push(PKG.campaign); log('  ✅ Campaign 新增'); }
+  else { Object.assign(data.campaigns[idx], PKG.campaign); log('  ✅ Campaign 更新'); }
+
+  // Seeding
+  data.seedings = data.seedings || [];
+  const sIds = new Set(data.seedings.map(s => s.id));
+  let sAdd = 0;
+  for (const s of PKG.seedings) if (!sIds.has(s.id)) { data.seedings.push(s); sAdd++; }
+  log('  ✅ Seeding 新增 ' + sAdd + ' 条');
+
+  // KOL 也补一份(本地 + 服务端双写,seeding-hub.html 启动会合并)
+  data.kols = data.kols || [];
+  const kRed = new Set(data.kols.map(k => k.redId));
+  let kAdd = 0;
+  for (const k of PKG.kols) {
+    if (!kRed.has(k.redId)) {
+      data.kols.push({
+        id: 'k_618_' + k.redId.slice(0,8) + '_' + Math.random().toString(36).slice(2,8),
+        redId: k.redId, name: k.name, followers: k.followers, type: '',
+        tier: '', contact: '', wechat: '', city: '',
+        homepage: k.profileUrl, cooperationStatus: '已合作',
+        notes: k.bio, createdAt: Date.now(),
+      });
+      kAdd++;
+    }
+  }
+  log('  ✅ KOL 本地补 ' + kAdd + ' 条(服务端版会在重启时通过 /api/seeding/kols 合并)');
+
+  // 写回
+  try {
+    localStorage.setItem(KEY, JSON.stringify(data));
+    log('  ✅ localStorage 已更新');
+    return true;
+  } catch (e) {
+    log('  ❌ 写回失败: ' + e.message);
+    return false;
+  }
+}
+
+document.getElementById('btn-check').onclick = detectEnv;
+document.getElementById('btn-kol').onclick = uploadKols;
+document.getElementById('btn-note').onclick = uploadNotes;
+document.getElementById('btn-local').onclick = writeLocalStorage;
+document.getElementById('btn-all').onclick = async () => {
+  if (!confirm('确认开始全部上传？KOL + 笔记 + localStorage 都会跑。')) return;
+  DRY_RUN = false;
+  const k = await uploadKols();
+  const n = await uploadNotes();
+  writeLocalStorage();
+  alert('完成!\nKOL: ✅' + k.ok + ' ❌' + k.fail + '\n笔记: ✅' + n.ok + ' ❌' + n.fail);
+};
+document.getElementById('btn-dry').onclick = async () => {
+  DRY_RUN = true;
+  log('=== DRY RUN ===');
+  await uploadKols();
+  await uploadNotes();
+  writeLocalStorage();
+  DRY_RUN = false;
+  log('=== DRY RUN 结束 ===');
+};
+
+// init
+log('准备就绪。请先点 "重新检测" 确认环境。');
+detectEnv();
+renderPreview();
+</script>
+</body>
+</html>

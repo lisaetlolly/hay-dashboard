@@ -4974,6 +4974,20 @@ def serve_main_explicit():
     return FileResponse(path, media_type="text/html")
 
 
+# 通用 *.html 静态兜底：把 DASHBOARD_DIR 下任意 .html 文件直接返回
+# 用于 618-upload.html、apply-618.html 等批次工具页面；安全限制只允许 ASCII 字母数字-下划线-连字符的文件名
+@app.get("/{filename:path}.html")
+def serve_any_html(filename: str):
+    # 防越权：只允许文件名为 a-z0-9_- 的内容，禁路径分隔符
+    import re as _re
+    if not _re.fullmatch(r"[A-Za-z0-9_\-]+", filename):
+        raise HTTPException(404, "not found")
+    path = os.path.join(DASHBOARD_DIR, filename + ".html")
+    if not os.path.exists(path):
+        raise HTTPException(404, "html not found")
+    return FileResponse(path, media_type="text/html")
+
+
 @app.get("/dashboard.html")
 def serve_dashboard_explicit():
     path = os.path.join(DASHBOARD_DIR, "dashboard.html")
