@@ -11,7 +11,7 @@ from datetime import date
 
 import psycopg2
 import psycopg2.extras
-from fastapi import FastAPI, HTTPException, Query, Header, Depends, Request
+from fastapi import FastAPI, HTTPException, Query, Header, Depends, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -2910,17 +2910,86 @@ def register_user(body: UserRegister):
         return user
 
 
+def _xxhs_cookie_domain(request: Request) -> Optional[str]:
+    """生产环境（*.xxhs.cloud）下返回 .xxhs.cloud；本地/onrender 返回 None"""
+    host = (request.headers.get("host") or "").lower().split(":")[0]
+    if host.endswith(".xxhs.cloud") or host == "xxhs.cloud":
+        return ".xxhs.cloud"
+    return None
+
+
+def _set_xxhs_cookie(resp, username: str, request: Request):
+    """统一下发 xxhs_user cookie。只存 username，避免长 JSON value 引起的 escape 问题。"""
+    domain = _xxhs_cookie_domain(request)
+    kwargs = dict(
+        key="xxhs_user",
+        value=username,
+        max_age=30*24*3600,
+        path="/",
+        samesite="lax",
+        secure=(domain is not None),
+        httponly=False,
+    )
+    if domain:
+        kwargs["domain"] = domain
+    resp.set_cookie(**kwargs)
+
+
 @app.post("/api/users/verify")
-def verify_user(body: UserVerify):
+def verify_user(body: UserVerify, request: Request):
+    from fastapi.responses import JSONResponse
     pw_hash = hashlib.sha256(body.password.encode()).hexdigest()
+    try:
+        with db() as conn:
+            user = row(conn, """
+                SELECT id, username, display_name, role, permissions
+                FROM users WHERE username = %s AND password_hash = %s
+            """, (body.username, pw_hash))
+    except HTTPException:
+        raise
+    except Exception as e:
+        import logging, traceback
+        logging.error("verify_user db error: %s\n%s", e, traceback.format_exc())
+        raise HTTPException(500, "数据库连接异常：" + str(e)[:120])
+    if not user:
+        raise HTTPException(401, "用户名或密码错误")
+    # JSONResponse 会 json.dumps 一遍，手动转成纯 dict 防 RealDictRow 兼容问题
+    user_d = dict(user)
+    resp = JSONResponse(content=user_d)
+    try:
+        _set_xxhs_cookie(resp, user_d["username"], request)
+    except Exception as e:
+        import logging
+        logging.warning("set cookie failed: %s", e)
+    return resp
+
+
+@app.get("/api/users/me")
+def users_me(request: Request):
+    """按 cookie 里的 username 查库返回完整 user；没登录返回 401。"""
+    username = request.cookies.get("xxhs_user")
+    if not username:
+        raise HTTPException(401, "未登录")
     with db() as conn:
         user = row(conn, """
             SELECT id, username, display_name, role, permissions
-            FROM users WHERE username = %s AND password_hash = %s
-        """, (body.username, pw_hash))
-        if not user:
-            raise HTTPException(401, "用户名或密码错误")
-        return user
+            FROM users WHERE username = %s
+        """, (username,))
+    if not user:
+        raise HTTPException(401, "cookie 用户不存在")
+    return user
+
+
+@app.post("/api/users/logout")
+def users_logout(request: Request):
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse(content={"ok": True})
+    domain = _xxhs_cookie_domain(request)
+    kwargs = dict(key="xxhs_user", path="/")
+    if domain:
+        kwargs["domain"] = domain
+    resp.delete_cookie(**kwargs)
+    return resp
 
 
 @app.get("/api/users")
@@ -4113,6 +4182,11 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
         # 流量类
         if "无限店铺流量" in n or "流量报表" in n or "店铺流量" in n:
             return os.path.join(base_dir, "无限店铺流量")
+        # 店铺级指标（宏观监控/交易总览/访客分布 → 店铺数据概览/，由 load_shop_overview 处理）
+        # 注意：这一支必须在"生意参谋商品兜底"之前，且独立于"商品"判断，
+        # 否则文件名里有"商品"以外但包含店铺级关键字的也会被错塞到 生意参谋商品/。
+        if "宏观监控" in n or "核心指标监控" in n or "交易总览" in n or "访客分布" in n:
+            return os.path.join(base_dir, "店铺数据概览")
         # 万象台 推广报表 子类（按文件名优先匹配最具体的）
         if "人群推广商品报表" in n or "人群商品报表" in n:
             return os.path.join(base_dir, "推广报表", "商品报表", "人群推广商品报表")
@@ -4134,6 +4208,14 @@ async def refresh_data_upload(files: List[UploadFile] = File(...)):
         # 通用商品报表（兜底）
         if "推广" in n or "商品报表" in n:
             return os.path.join(base_dir, "推广报表", "商品报表")
+        # 生意参谋商品 — 多日跨度（周/月维度）：文件名里两个日期不同就是周维度
+        # 例：商品_全部_2026-05-04_2026-05-10.xls → 周维度
+        #     商品_全部_2026-05-10_2026-05-10.xls → 日维度
+        if "商品" in n:
+            import re as _re
+            ds = _re.findall(r"(\d{4}-\d{2}-\d{2})", n)
+            if len(ds) >= 2 and ds[0] != ds[-1]:
+                return os.path.join(base_dir, "生意参谋商品_周维度")
         # 生意参谋（默认 xls 文件）
         if ext in ("xls", "xlsx"):
             return os.path.join(base_dir, "生意参谋商品")
@@ -4717,7 +4799,7 @@ def _check_seeding_token(x_token: Optional[str] = Header(default=None, alias="X-
 
 @app.post("/api/seeding/kol-webhook")
 def seeding_kol_webhook(
-    payload: Any,
+    payload: Any = Body(...),
     request_source: Optional[str] = Header(default=None, alias="X-Source"),
     _ok: bool = Depends(_check_seeding_token),
 ):
@@ -4822,6 +4904,38 @@ _seeding_assets_dir = os.path.join(DASHBOARD_DIR, "3月博主素材")
 if os.path.isdir(_seeding_assets_dir):
     app.mount("/3月博主素材", StaticFiles(directory=_seeding_assets_dir), name="seeding_assets")
 
+# ── 25 个商品图片：main 商品管理 + seeding-hub 都能用 ──
+_product_imgs_dir = os.path.join(DASHBOARD_DIR, "25个商品图片")
+if os.path.isdir(_product_imgs_dir):
+    app.mount("/products/img", StaticFiles(directory=_product_imgs_dir), name="product_imgs")
+
+
+# ── 商品管理：products.json 持久化（CRUD 全量覆盖）──
+import json as _pjson
+_PRODUCTS_PATH = os.path.join(DASHBOARD_DIR, "products.json")
+
+@app.get("/api/products/full")
+def products_full():
+    if not os.path.exists(_PRODUCTS_PATH):
+        return {}
+    try:
+        with open(_PRODUCTS_PATH, "r", encoding="utf-8") as f:
+            return _pjson.load(f)
+    except Exception as e:
+        raise HTTPException(500, "读取 products.json 失败：" + str(e))
+
+
+@app.post("/api/products/full")
+def products_full_save(body: dict, _user=Depends(require_permission("product.manage"))):
+    if not isinstance(body, dict):
+        raise HTTPException(400, "body 必须是 {pid: {...}} 字典")
+    try:
+        with open(_PRODUCTS_PATH, "w", encoding="utf-8") as f:
+            _pjson.dump(body, f, ensure_ascii=False, indent=2)
+        return {"ok": True, "count": len(body)}
+    except Exception as e:
+        raise HTTPException(500, "保存 products.json 失败：" + str(e))
+
 
 # ── 入口路由：根据 Host header 返回不同首页 ──
 # seedinghub.xxhs.cloud → seeding-hub.html
@@ -4849,6 +4963,22 @@ def serve_seeding_hub_explicit():
     path = os.path.join(DASHBOARD_DIR, "seeding-hub.html")
     if not os.path.exists(path):
         raise HTTPException(404, "seeding-hub.html not found")
+    return FileResponse(path, media_type="text/html")
+
+
+@app.get("/main.html")
+def serve_main_explicit():
+    path = os.path.join(DASHBOARD_DIR, "main.html")
+    if not os.path.exists(path):
+        raise HTTPException(404, "main.html not found")
+    return FileResponse(path, media_type="text/html")
+
+
+@app.get("/dashboard.html")
+def serve_dashboard_explicit():
+    path = os.path.join(DASHBOARD_DIR, "dashboard.html")
+    if not os.path.exists(path):
+        raise HTTPException(404, "dashboard.html not found")
     return FileResponse(path, media_type="text/html")
 
 @app.get("/favicon.ico")
