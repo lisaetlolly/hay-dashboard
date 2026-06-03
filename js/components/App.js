@@ -3,7 +3,7 @@
 // createApp(App).mount('#app') 保留在 dashboard.html 内联脚本（依赖 DOM #app 节点存在）。
 
 const App = defineComponent({
-  components: { OverviewPage, ProductsPage, ComparePage, ActionEffectPage, 'ai-page': AIPage, AdsPage, SettingsPage },
+  components: { OverviewPage, ProductsPage, ComparePage, ActionEffectPage, 'ai-page': AIPage, AdsPage, SettingsPage, AnomalyPage },
   setup() {
     const page        = ref('overview')
     const timePreset  = ref('30d')
@@ -66,10 +66,12 @@ const App = defineComponent({
 
     const navItems = [
       { id: 'overview', label: '总览' },
+      { id: 'anomaly',  label: '异常预警' },
       { id: 'products', label: '单品视图' },
       { id: 'compare',  label: '多品对比' },
       { id: 'ai',       label: 'AI 分析' },
       { id: 'ads',      label: '投放面板' },
+      { id: 'seeding',  label: '种草中心' },
     ]
     const currentPageLabel = computed(
       () => navItems.find(n => n.id === page.value)?.label || '设置'
@@ -302,10 +304,13 @@ const App = defineComponent({
         </button>
       </div>
       <overview-page v-if="page==='overview'" :start="startDate" :end="endDate" :granularity="timePreset" />
+      <anomaly-page v-else-if="page==='anomaly'" :start="startDate" :end="endDate" />
       <products-page v-else-if="page==='products'" :start="startDate" :end="endDate" />
       <compare-page v-else-if="page==='compare'" :start="startDate" :end="endDate" />
       <ai-page v-else-if="page==='ai'" :start="startDate" :end="endDate" />
       <ads-page v-else-if="page==='ads'" :start="startDate" :end="endDate" />
+      <iframe v-else-if="page==='seeding'" src="seeding-hub.html"
+              style="width:100%;height:calc(100vh - 120px);border:none;border-radius:8px;background:#fff" />
       <settings-page v-else-if="page==='settings'" />
       <div v-else class="empty" style="padding:80px">{{ currentPageLabel }} — 开发中</div>
     </div>
