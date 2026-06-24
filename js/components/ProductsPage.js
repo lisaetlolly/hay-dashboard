@@ -181,8 +181,8 @@ const ProductsPage = defineComponent({
 
     // 标签颜色精简：3 类色系（暖/冷/灰），不和任务状态色（绿/橙/灰）打架。
     const EVENT_CATEGORIES = [
-      { k:'promo',    l:'大促',   color:'#dc2626' },  // 暖（红）
-      { k:'activity', l:'活动',   color:'#dc2626' },  // 暖（红，与大促同色系，仅文字区分）
+      { k:'promo',    l:'大促',   color:'#e5484d' },  // 暖（红）
+      { k:'activity', l:'活动',   color:'#e5484d' },  // 暖（红，与大促同色系，仅文字区分）
       { k:'launch',   l:'上新',   color:'#0ea5e9' },  // 冷（蓝）
       { k:'marketing',l:'营销',   color:'#0ea5e9' },  // 冷（蓝）
       { k:'other',    l:'其他',   color:'#64748b' },  // 灰
@@ -458,8 +458,8 @@ const ProductsPage = defineComponent({
             </div>
             <span style="font-size:10px;color:var(--muted);padding:2px 6px;border:1px solid var(--border);border-radius:99px">{{ p.cat }}</span>
             <span @click="setCardTab(p.pid, getCardTab(p.pid)==='xhs'?'daily':'xhs')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='xhs'?'#ff2442':'#ffccd5',background:getCardTab(p.pid)==='xhs'?'#ff2442':'#fff0f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='xhs'?'#fff':'#ff2442'}">小红书</span>
-            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='tasks'?'daily':'tasks')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='tasks'?'#d97706':'#fde68a',background:getCardTab(p.pid)==='tasks'?'#d97706':'#fffbeb',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='tasks'?'#fff':'#d97706'}">任务</span>
-            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='events'?'daily':'events')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='events'?'#dc2626':'#fecaca',background:getCardTab(p.pid)==='events'?'#dc2626':'#fef2f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='events'?'#fff':'#dc2626'}">事件</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='tasks'?'daily':'tasks')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='tasks'?'#c2790e':'#fde68a',background:getCardTab(p.pid)==='tasks'?'#c2790e':'#fffbeb',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='tasks'?'#fff':'#c2790e'}">任务</span>
+            <span @click="setCardTab(p.pid, getCardTab(p.pid)==='events'?'daily':'events')" :style="{fontSize:'10px',padding:'2px 8px',border:'1px solid',borderColor:getCardTab(p.pid)==='events'?'#e5484d':'#fecaca',background:getCardTab(p.pid)==='events'?'#e5484d':'#fef2f2',borderRadius:'99px',cursor:'pointer',color:getCardTab(p.pid)==='events'?'#fff':'#e5484d'}">事件</span>
           </div>
           <div :style="{display:'grid',gridTemplateColumns:'repeat('+Math.min(filteredSummaryMetrics.length,5)+',minmax(72px,1fr))',gap:'10px',marginBottom:'10px'}">
             <div v-for="m in filteredSummaryMetrics" :key="m.k">
@@ -473,8 +473,8 @@ const ProductsPage = defineComponent({
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <div style="font-size:12px;font-weight:700">{{ getCardTab(p.pid)==='xhs'?'小红书笔记':getCardTab(p.pid)==='tasks'?'本期任务':getCardTab(p.pid)==='events'?'事件标注':'日数据' }}</div>
             <span v-if="getCardTab(p.pid)!=='daily'" @click="setCardTab(p.pid,'daily')" style="font-size:10px;color:var(--muted);cursor:pointer;text-decoration:underline">返回日数据</span>
-            <button v-if="getCardTab(p.pid)==='events' && canEvent('event.create')" @click="openAddEvent(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #dc2626;background:#dc2626;color:#fff;border-radius:6px;cursor:pointer">+ 新增事件</button>
-            <button v-if="getCardTab(p.pid)==='tasks' && canEvent('task.create')" @click="openAddTask(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer">+ 新增任务</button>
+            <button v-if="getCardTab(p.pid)==='events' && canEvent('event.create')" @click="openAddEvent(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #e5484d;background:#e5484d;color:#fff;border-radius:6px;cursor:pointer">+ 新增事件</button>
+            <button v-if="getCardTab(p.pid)==='tasks' && canEvent('task.create')" @click="openAddTask(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer">+ 新增任务</button>
             <button v-if="getCardTab(p.pid)==='xhs' && canEvent('xhs.create')" @click="openAddXhs(p.pid)" style="margin-left:auto;padding:3px 8px;font-size:10px;border:1px solid #ff2442;background:#ff2442;color:#fff;border-radius:6px;cursor:pointer">+ 新增笔记</button>
           </div>
           <template v-if="getCardTab(p.pid)==='xhs'">
@@ -511,7 +511,7 @@ const ProductsPage = defineComponent({
                 <div v-if="ev.note" style="color:var(--text);font-size:10px;background:#fff;border-radius:4px;padding:3px 5px;margin-bottom:4px">{{ ev.note }}</div>
                 <div v-if="canEvent('event.edit')||canEvent('event.delete')" style="display:flex;gap:6px">
                   <button v-if="canEvent('event.edit')" @click="openEditEvent(p.pid, ev)" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">编辑</button>
-                  <button v-if="canEvent('event.delete')" @click="deleteEvent(ev.id)" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626">删除</button>
+                  <button v-if="canEvent('event.delete')" @click="deleteEvent(ev.id)" style="font-size:10px;padding:2px 8px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#e5484d">删除</button>
                 </div>
               </div>
             </div>
@@ -668,7 +668,7 @@ const ProductsPage = defineComponent({
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeTaskModal" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="saveTask" :disabled="taskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ taskModal.saving ? '...' : '保存' }}</button>
+        <button @click="saveTask" :disabled="taskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ taskModal.saving ? '...' : '保存' }}</button>
       </div>
     </div>
   </div>
@@ -703,7 +703,7 @@ const ProductsPage = defineComponent({
           <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">评论</div><input v-model.number="xhsModal.comments" type="number" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box"></div>
           <div><div style="font-size:11px;color:var(--muted);margin-bottom:3px">浏览</div><input v-model.number="xhsModal.views" type="number" style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;box-sizing:border-box"></div>
         </div>
-        <div style="font-size:10px;color:#16a34a;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:6px 8px;line-height:1.5">
+        <div style="font-size:10px;color:#138a52;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:6px 8px;line-height:1.5">
           ✓ 已接后端 API（fact_xhs_note 表），保存后所有人可见。链接重复会自动更新指标
         </div>
       </div>

@@ -58,7 +58,7 @@ const AdsPage = defineComponent({
 
     const fmtMoney = v => v>=10000 ? '¥'+(v/10000).toFixed(1)+'万' : '¥'+Number(v).toFixed(0)
     const fmtDelta = v => v == null ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(1) + '%'
-    const statusColor = s=>s==='已完成'?'#16a34a':s==='进行中'?'#d97706':s==='未确认'?'#dc2626':'#a1a1aa'
+    const statusColor = s=>s==='已完成'?'#138a52':s==='进行中'?'#c2790e':s==='未确认'?'#e5484d':'#a1a1aa'
     // 优先用设置页改过的图片链接覆盖；没覆盖再用 RAW.img_map（默认 25 个商品图片/）
     const imgSrc = pid => (APP_STATE.value.imageOverrides || {})[pid] || RAW.img_map?.[pid] || ''
 
@@ -779,7 +779,8 @@ const AdsPage = defineComponent({
 
     const loadTasksWithMetrics = async () => {
       try {
-        const res = await fetch('/api/tasks/with-metrics')
+        // 防缓存：带时间戳 + no-store，避免浏览器/CDN 缓存导致"改了状态刷新又回退"
+        const res = await fetch('/api/tasks/with-metrics?_=' + Date.now(), { cache: 'no-store' })
         if (res.ok) apiTasksData.value = await res.json()
       } catch {
         apiTasksData.value = { groups: [], period: null, prev_period: null, task_templates: [] }
@@ -894,7 +895,7 @@ const AdsPage = defineComponent({
       { id:'fb_4', category:'评价与问大家', detail:'优化问大家回复',                       default_owner:'Jas team（内容）', sort_order:4 },
       { id:'fb_5', category:'淘内内容宣发', detail:'光合内容制作、上线',                   default_owner:'Jas team（内容）', sort_order:5 },
       { id:'fb_6', category:'详情页优化',   detail:'迭代初版详情页',                       default_owner:'豆豆（设计）',     sort_order:6 },
-      { id:'fb_7', category:'竞品分析',     detail:'竞品动作关注、价格策略调整',           default_owner:'刘婷（商品）',     sort_order:7 },
+      { id:'fb_7', category:'竞品分析',     detail:'竞品动作关注、价格策略调整',           default_owner:'李越（商品）',     sort_order:7 },
       { id:'fb_8', category:'妈妈计划迭代', detail:'确认推广金额及提出素材需求',           default_owner:'晓东（运营）',     sort_order:8 },
       { id:'fb_9', category:'售卖复盘',     detail:'对流量、收藏加购情况做分析',           default_owner:'晓东（运营）',     sort_order:9 },
     ]
@@ -1707,7 +1708,7 @@ const AdsPage = defineComponent({
               values: trendRows.map(r => ({d:r.d, value:r.spend, label:fmtMoney(r.spend)})) },
             { key:'gmv',   name:'成交额', color:'#a78bfa', type:'bar',
               values: trendRows.map(r => ({d:r.d, value:r.gmv,   label:fmtMoney(r.gmv)})) },
-            { key:'roi',   name:'ROI', color:'#16a34a', type:'line',
+            { key:'roi',   name:'ROI', color:'#138a52', type:'line',
               values: trendRows.map(r => ({d:r.d, value:r.roi,   label:r.roi==null?'—':'×'+r.roi})) },
           ]" :height="220" :normalize="true" />
         <div v-else class="empty">当前周期暂无投放数据</div>
@@ -1889,7 +1890,7 @@ const AdsPage = defineComponent({
           </div>
           <div style="display:flex;gap:8px">
             <button v-if="isAdmin" @click="openNewTask('')"
-              style="padding:6px 14px;font-size:13px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)">+ 新增任务</button>
+              style="padding:6px 14px;font-size:13px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)">+ 新增任务</button>
           </div>
         </div>
         <div style="display:flex;flex-direction:column;gap:10px">
@@ -1914,7 +1915,7 @@ const AdsPage = defineComponent({
                     <button @click="openProductBatchTime(item)" title="批量改任务起止时间"
                       style="border:1px solid var(--border);background:#fff;color:var(--muted);border-radius:6px;padding:0 10px;height:26px;font-size:11px;cursor:pointer">📅 批量改时间</button>
                     <button @click="openCardAddTask(item.pid)" title="给该商品加一行任务"
-                      style="border:1px solid #d97706;background:#fff;color:#d97706;border-radius:50%;width:26px;height:26px;font-size:16px;font-weight:700;cursor:pointer;line-height:1">+</button>
+                      style="border:1px solid #c2790e;background:#fff;color:#c2790e;border-radius:50%;width:26px;height:26px;font-size:16px;font-weight:700;cursor:pointer;line-height:1">+</button>
                   </div>
                 </div>
                 <div>
@@ -1964,7 +1965,7 @@ const AdsPage = defineComponent({
                 <div :style="{padding:'8px 10px',display:'flex',alignItems:'center',gap:'6px',borderRight:'1px solid var(--border)',overflow:'hidden',cursor:isAdmin?'pointer':'default'}"
                      @click="!isEditing(task.id,'detail') && isAdmin && startCellEdit(task,'detail')">
                   <span v-if="isNewThisWeek(task)" title="本周新增任务"
-                        style="width:8px;height:8px;border-radius:50%;background:#dc2626;flex-shrink:0;box-shadow:0 0 0 2px #fee2e2"></span>
+                        style="width:8px;height:8px;border-radius:50%;background:#e5484d;flex-shrink:0;box-shadow:0 0 0 2px #fee2e2"></span>
                   <input v-if="isEditing(task.id,'detail')" v-model="cellDraft" :data-cell-edit="task.id+'-detail'"
                     @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
                     style="flex:1;font-size:12px;border:1px solid var(--accent);border-radius:5px;padding:3px 6px;outline:none;min-width:0">
@@ -2004,7 +2005,7 @@ const AdsPage = defineComponent({
                     <input v-if="isEditing(task.id,'completed_at')" type="date" v-model="cellDraft" :data-cell-edit="task.id+'-completed_at'"
                       @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
                       style="font-size:11px;border:1px solid var(--accent);border-radius:5px;padding:2px 4px;background:#fff;width:100%">
-                    <span v-else style="color:#16a34a;cursor:pointer"
+                    <span v-else style="color:#138a52;cursor:pointer"
                       :title="isAdmin ? '点击改完成时间' : '完成时间'"
                       @click="isAdmin && startCellEdit(task,'completed_at')">
                       ✓ {{ fmtCompletedSmart(task) }}
@@ -2017,7 +2018,7 @@ const AdsPage = defineComponent({
                       @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
                       style="font-size:11px;border:1px solid var(--accent);border-radius:4px;padding:1px 3px;background:#fff;width:48%">
                     <span v-else
-                      :style="{color: '#6b7280', cursor: isAdmin?'pointer':'default'}"
+                      :style="{color: '#64748b', cursor: isAdmin?'pointer':'default'}"
                       :title="isAdmin ? '点击改开始日期' : '开始日期'"
                       @click="isAdmin && startCellEdit(task,'start_date')">
                       {{ task.start_date ? fmtEtaDate(task.start_date) : '—' }}
@@ -2028,7 +2029,7 @@ const AdsPage = defineComponent({
                       @change="saveCellEdit(task)" @blur="saveCellEdit(task)" @keydown.enter="saveCellEdit(task)" @keydown.esc="cancelCellEdit"
                       style="font-size:11px;border:1px solid var(--accent);border-radius:4px;padding:1px 3px;background:#fff;width:48%">
                     <span v-else
-                      :style="{color: etaInCurrentWeek(task) ? '#f59e0b' : '#6b7280', fontWeight: etaInCurrentWeek(task) ? 700 : 400, cursor: isAdmin?'pointer':'default'}"
+                      :style="{color: etaInCurrentWeek(task) ? '#f59e0b' : '#64748b', fontWeight: etaInCurrentWeek(task) ? 700 : 400, cursor: isAdmin?'pointer':'default'}"
                       :title="isAdmin ? '点击改截止日期' : '截止日期'"
                       @click="isAdmin && startCellEdit(task,'eta_date')">
                       {{ task.eta_date ? fmtEtaDate(task.eta_date) : '—' }}
@@ -2053,7 +2054,7 @@ const AdsPage = defineComponent({
                       <span style="font-size:10px;color:var(--muted)">图片/附件 → 点右边 💬 反馈</span>
                       <span style="flex:1"></span>
                       <button @click="cancelNoteCell" style="font-size:10px;padding:2px 8px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted)">取消</button>
-                      <button @click="saveNoteCell" :disabled="noteCellDraft.saving" style="font-size:10px;padding:2px 10px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:4px;cursor:pointer;font-weight:600">{{ noteCellDraft.saving ? '...' : '保存' }}</button>
+                      <button @click="saveNoteCell" :disabled="noteCellDraft.saving" style="font-size:10px;padding:2px 10px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:4px;cursor:pointer;font-weight:600">{{ noteCellDraft.saving ? '...' : '保存' }}</button>
                     </div>
                   </div>
                   <!-- 展示态：紧凑文本 + 角标 -->
@@ -2068,7 +2069,7 @@ const AdsPage = defineComponent({
                   <button @click.stop="toggleTaskExpand(task.id)" :title="'评论 (' + (taskComments[task.id]||[]).length + ')'"
                     style="font-size:10px;padding:3px 6px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;color:var(--muted);flex-shrink:0">💬{{ (taskComments[task.id]||[]).length }}</button>
                   <button v-if="canDelete" @click.stop="deleteTaskRow(task)" title="删除"
-                    style="font-size:10px;padding:3px 7px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#dc2626;flex-shrink:0">×</button>
+                    style="font-size:10px;padding:3px 7px;border:1px solid #fecaca;background:#fff;border-radius:4px;cursor:pointer;color:#e5484d;flex-shrink:0">×</button>
                 </div>
               </div>
               <!-- 展开的评论区（支持拖拽图片到任意位置）-->
@@ -2087,7 +2088,7 @@ const AdsPage = defineComponent({
                         <span style="font-size:10px;color:var(--muted)">{{ fmtCommentTime(c.created_at) }}</span>
                         <span style="flex:1"></span>
                         <button @click="deleteComment(task.id, c.id)"
-                          style="font-size:10px;color:#dc2626;background:none;border:none;cursor:pointer;padding:0">删除</button>
+                          style="font-size:10px;color:#e5484d;background:none;border:none;cursor:pointer;padding:0">删除</button>
                       </div>
                       <div v-if="c.content" style="font-size:12px;color:var(--text);line-height:1.5;white-space:pre-wrap;word-break:break-word">{{ c.content }}</div>
                       <!-- 多图缩略（兼容旧 image_data 单字符串 + 新 images 数组）-->
@@ -2127,7 +2128,7 @@ const AdsPage = defineComponent({
                   <div v-for="(img, idx) in (commentDraft[task.id]||{}).images" :key="idx" style="position:relative">
                     <img :src="img" style="width:60px;height:60px;object-fit:cover;border-radius:6px;border:1px solid var(--border);display:block">
                     <button @click="removeCommentImage(task.id, idx)"
-                      style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;border:1px solid #fecaca;background:#fff;color:#dc2626;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
+                      style="position:absolute;top:-4px;right:-4px;width:18px;height:18px;border-radius:50%;border:1px solid #fecaca;background:#fff;color:#e5484d;font-size:11px;cursor:pointer;line-height:1;padding:0">×</button>
                   </div>
                 </div>
               </div>
@@ -2187,7 +2188,7 @@ const AdsPage = defineComponent({
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeCardAddTask" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="saveCardAddTask" :disabled="cardAddTaskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ cardAddTaskModal.saving ? '...' : '保存' }}</button>
+        <button @click="saveCardAddTask" :disabled="cardAddTaskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ cardAddTaskModal.saving ? '...' : '保存' }}</button>
       </div>
     </div>
   </div>
@@ -2212,7 +2213,7 @@ const AdsPage = defineComponent({
         <div v-if="settingsModal.tab==='config'">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
             <div style="font-size:12px;color:var(--muted)">已配置 {{ taskTemplates.length }} 个任务（标签/名称/负责人）</div>
-            <button @click="openTplCreate" style="padding:5px 12px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">+ 新增任务配置</button>
+            <button @click="openTplCreate" style="padding:5px 12px;font-size:12px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">+ 新增任务配置</button>
           </div>
           <div style="display:flex;flex-direction:column;gap:6px">
             <div v-for="t in taskTemplates" :key="t.id" style="display:flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:#fafaf9">
@@ -2231,7 +2232,7 @@ const AdsPage = defineComponent({
           <div style="display:flex;flex-direction:column;gap:8px">
             <div v-for="g in taskGroupsList" :key="g.id" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:#fafaf9">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-                <div style="font-size:13px;font-weight:700">{{ g.name }} <span v-if="g.is_default" style="font-size:10px;color:#16a34a;font-weight:500">（默认）</span></div>
+                <div style="font-size:13px;font-weight:700">{{ g.name }} <span v-if="g.is_default" style="font-size:10px;color:#138a52;font-weight:500">（默认）</span></div>
                 <span style="font-size:11px;color:var(--muted)">{{ g.templates ? g.templates.length : 0 }} 个任务</span>
               </div>
               <div style="display:flex;gap:6px;flex-wrap:wrap">
@@ -2280,9 +2281,9 @@ const AdsPage = defineComponent({
             </div>
             <div style="font-size:10px;color:var(--muted)">⚠ 同 product+标签+任务名 重复时会**覆盖**：时间/状态更新，旧备注/图片/附件会自动归档为评论</div>
             <div style="font-size:10px;color:var(--muted)">新建任务默认状态：待开始</div>
-            <div v-if="publishModal.lastResult" style="font-size:11px;color:#16a34a;font-weight:600">{{ publishModal.lastResult }}</div>
+            <div v-if="publishModal.lastResult" style="font-size:11px;color:#138a52;font-weight:600">{{ publishModal.lastResult }}</div>
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
-              <button @click="savePublish" :disabled="publishModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ publishModal.saving ? '...' : '发布任务' }}</button>
+              <button @click="savePublish" :disabled="publishModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ publishModal.saving ? '...' : '发布任务' }}</button>
             </div>
           </div>
         </div>
@@ -2321,7 +2322,7 @@ const AdsPage = defineComponent({
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeTplCreate" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="saveTplCreate" :disabled="tplCreateModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ tplCreateModal.saving ? '...' : '保存' }}</button>
+        <button @click="saveTplCreate" :disabled="tplCreateModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ tplCreateModal.saving ? '...' : '保存' }}</button>
       </div>
     </div>
   </div>
@@ -2410,7 +2411,7 @@ const AdsPage = defineComponent({
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;padding-top:10px;border-top:1px solid var(--border)">
         <button @click="closeProductBatchTime" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
         <button @click="saveProductBatchTime" :disabled="productBatchTimeModal.saving"
-          style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ productBatchTimeModal.saving ? '保存中…' : '保存' }}</button>
+          style="padding:6px 14px;font-size:12px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ productBatchTimeModal.saving ? '保存中…' : '保存' }}</button>
       </div>
     </div>
   </div>
@@ -2439,7 +2440,7 @@ const AdsPage = defineComponent({
           <datalist id="new-task-names">
             <option v-for="t in newTaskTemplatesInCat" :key="t.id" :value="t.detail"></option>
           </datalist>
-          <div style="font-size:10px;color:#dc2626;margin-top:3px" v-if="newTaskModal.category && newTaskModal.detail && !taskTemplates.find(t=>t.category===newTaskModal.category.trim()&&t.detail===newTaskModal.detail.trim())">
+          <div style="font-size:10px;color:#e5484d;margin-top:3px" v-if="newTaskModal.category && newTaskModal.detail && !taskTemplates.find(t=>t.category===newTaskModal.category.trim()&&t.detail===newTaskModal.detail.trim())">
             ⚠ 全新任务（不在 9 个固定任务里），本周会标红点
           </div>
         </div>
@@ -2454,7 +2455,7 @@ const AdsPage = defineComponent({
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
         <button @click="closeNewTask" style="padding:6px 14px;font-size:12px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;color:var(--muted)">取消</button>
-        <button @click="saveNewTask" :disabled="newTaskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #d97706;background:#d97706;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ newTaskModal.saving ? '...' : '保存' }}</button>
+        <button @click="saveNewTask" :disabled="newTaskModal.saving" style="padding:6px 14px;font-size:12px;border:1px solid #c2790e;background:#c2790e;color:#fff;border-radius:6px;cursor:pointer;font-weight:600">{{ newTaskModal.saving ? '...' : '保存' }}</button>
       </div>
     </div>
   </div>

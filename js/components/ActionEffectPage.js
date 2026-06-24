@@ -9,7 +9,7 @@ const ActionEffectPage = defineComponent({
     const selectedType = ref('')
     const nDays = ref(7)
     const selectedMetric = ref('pay')
-    const COLORS = ['#2563eb','#16a34a','#d97706','#9333ea','#e11d48','#0891b2','#65a30d','#7c3aed']
+    const COLORS = ['#2563eb','#138a52','#c2790e','#9333ea','#e11d48','#0891b2','#65a30d','#7c3aed']
     const metricOptions = [
       { key:'pay', label:'成交额' }, { key:'vis', label:'进店UV' },
       { key:'cart', label:'加购' }, { key:'collect', label:'收藏加购' }, { key:'cart_rate', label:'加购率' },
@@ -182,7 +182,7 @@ const ActionEffectPage = defineComponent({
       a.status = newStatus
       persistAppState()
     }
-    const statusColor = s => ({ '待开始':'#6b7280', '进行中':'#2563eb', '已完成':'#16a34a', '已暂停':'#d97706' }[s] || '#6b7280')
+    const statusColor = s => ({ '待开始':'#64748b', '进行中':'#2563eb', '已完成':'#138a52', '已暂停':'#c2790e' }[s] || '#64748b')
     const statusBg   = s => ({ '待开始':'#f3f4f6', '进行中':'#dbeafe', '已完成':'#dcfce7', '已暂停':'#fef3c7' }[s] || '#f3f4f6')
 
     return {allActions,actionTypes,selectedType,nDays,selectedMetric,metricOptions,metricLabel,
@@ -230,7 +230,7 @@ const ActionEffectPage = defineComponent({
           :style="{display:'grid',gridTemplateColumns:'80px minmax(0,2fr) 90px 100px 90px minmax(0,1.5fr) 120px',padding:'9px 14px',
             borderBottom:ai<filteredTasks.length-1?'1px solid var(--border)':'none',alignItems:'center',background:'#fff'}">
           <div>
-            <span :style="{padding:'2px 7px',borderRadius:'99px',fontSize:'10px',fontWeight:'600',background:'#f0fdf4',color:'#16a34a'}">{{ a.action_type }}</span>
+            <span :style="{padding:'2px 7px',borderRadius:'99px',fontSize:'10px',fontWeight:'600',background:'#f0fdf4',color:'#138a52'}">{{ a.action_type }}</span>
           </div>
           <div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px">{{ a.title || a.note || '—' }}</div>
           <div style="font-size:11px;color:var(--muted)">{{ a.action_date }}</div>
@@ -246,7 +246,7 @@ const ActionEffectPage = defineComponent({
               <option v-for="s in TASK_STATUS" :key="s" :value="s">{{ s }}</option>
             </select>
             <button @click="openEditTask(a)" style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:2px 7px;font-size:10px;cursor:pointer">编辑</button>
-            <button @click="deleteTask(a)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:2px 7px;font-size:10px;cursor:pointer">删除</button>
+            <button @click="deleteTask(a)" style="border:1px solid #fecaca;background:#fff;color:#e5484d;border-radius:6px;padding:2px 7px;font-size:10px;cursor:pointer">删除</button>
           </div>
         </div>
       </div>

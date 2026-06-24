@@ -804,7 +804,7 @@ const SettingsPage = defineComponent({
       </button>
     </div>
     <div v-if="pwForm.msg" style="margin-top:8px;font-size:12px"
-         :style="{color: pwForm.msg.startsWith('✓') ? '#16a34a' : '#dc2626'}">{{ pwForm.msg }}</div>
+         :style="{color: pwForm.msg.startsWith('✓') ? '#138a52' : '#e5484d'}">{{ pwForm.msg }}</div>
   </div>
 
   <!-- 非管理员到此为止 -->
@@ -819,7 +819,7 @@ const SettingsPage = defineComponent({
       <select :value="me?.id" @change="setMe($event.target.value)" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;background:#fff">
         <option v-for="u in (users || [])" :key="u.id" :value="u.id">{{ u.display_name }}（{{ u.role }}）</option>
       </select>
-      <span style="font-size:11px;color:#16a34a;font-weight:600">当前：{{ me?.display_name }} · {{ me?.role }} · {{ (me?.permissions||[]).includes('*') ? '全部权限' : ((me?.permissions||[]).length + ' 项权限') }}</span>
+      <span style="font-size:11px;color:#138a52;font-weight:600">当前：{{ me?.display_name }} · {{ me?.role }} · {{ (me?.permissions||[]).includes('*') ? '全部权限' : ((me?.permissions||[]).length + ' 项权限') }}</span>
       <span id="role-switch-toast" style="font-size:11px;background:#dcfce7;color:#166534;padding:4px 10px;border-radius:99px;opacity:0;transition:opacity 0.3s"></span>
     </div>
   </div>
@@ -852,16 +852,16 @@ const SettingsPage = defineComponent({
               </span>
             </div>
             <div style="font-size:11px;color:var(--muted)">
-              <span v-if="(u.permissions||[]).includes('*')" style="color:#16a34a;font-weight:600">全部权限</span>
+              <span v-if="(u.permissions||[]).includes('*')" style="color:#138a52;font-weight:600">全部权限</span>
               <span v-else>{{ (u.permissions||[]).length }} 项权限已开启</span>
             </div>
             <div style="display:flex;justify-content:flex-end;gap:6px" @click.stop>
               <button @click="openEditUser(u)" style="border:1px solid var(--border);background:#fff;border-radius:7px;padding:4px 10px;font-size:11px;cursor:pointer">修改</button>
-              <button @click="deleteUser(u)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:7px;padding:4px 10px;font-size:11px;cursor:pointer">删除</button>
+              <button @click="deleteUser(u)" style="border:1px solid #fecaca;background:#fff;color:#e5484d;border-radius:7px;padding:4px 10px;font-size:11px;cursor:pointer">删除</button>
             </div>
           </div>
           <div v-if="expandedUserId===u.id" style="padding:14px;background:#fafaf9;border-bottom:1px solid var(--border)">
-            <div v-if="(u.permissions||[]).includes('*')" style="font-size:12px;color:#16a34a;font-weight:600;padding:4px 0">
+            <div v-if="(u.permissions||[]).includes('*')" style="font-size:12px;color:#138a52;font-weight:600;padding:4px 0">
               ✓ 管理员 — 拥有全部权限，无需单独配置
             </div>
             <div v-else>
@@ -902,7 +902,7 @@ const SettingsPage = defineComponent({
       <div v-for="(a, ai) in (actions || [])" :key="a.id" @click="openEditAction(a)"
         :style="{display:'grid',gridTemplateColumns:'90px 96px minmax(0,1fr) minmax(0,2fr) 60px',padding:'8px 14px',borderBottom:ai<actions.length-1?'1px solid var(--border)':'none',alignItems:'center',cursor:'pointer'}">
         <div>
-          <span style="padding:2px 7px;border-radius:99px;font-size:11px;font-weight:600;background:#f0fdf4;color:#16a34a">{{ a.action_type }}</span>
+          <span style="padding:2px 7px;border-radius:99px;font-size:11px;font-weight:600;background:#f0fdf4;color:#138a52">{{ a.action_type }}</span>
         </div>
         <div style="font-size:12px;color:var(--muted)">{{ a.action_date }}</div>
         <div style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px">
@@ -910,7 +910,7 @@ const SettingsPage = defineComponent({
         </div>
         <div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px">{{ a.note || a.content || '—' }}</div>
         <div style="display:flex;justify-content:flex-end" @click.stop>
-          <button @click="deleteAction(a)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">删除</button>
+          <button @click="deleteAction(a)" style="border:1px solid #fecaca;background:#fff;color:#e5484d;border-radius:6px;padding:3px 7px;font-size:11px;cursor:pointer">删除</button>
         </div>
       </div>
     </div>
@@ -948,7 +948,7 @@ const SettingsPage = defineComponent({
         </div>
         <div style="display:flex;justify-content:flex-end;gap:4px" @click.stop>
           <button @click="toggleHideProduct(p.pid)" style="border:1px solid var(--border);background:#fff;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer">{{ p.hidden ? '显示' : '隐藏' }}</button>
-          <button v-if="p.isCustom" @click="deleteCustomProduct(p.pid)" style="border:1px solid #fecaca;background:#fff;color:#dc2626;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer">删除</button>
+          <button v-if="p.isCustom" @click="deleteCustomProduct(p.pid)" style="border:1px solid #fecaca;background:#fff;color:#e5484d;border-radius:6px;padding:3px 6px;font-size:11px;cursor:pointer">删除</button>
         </div>
       </div>
     </div>
@@ -1079,7 +1079,7 @@ const SettingsPage = defineComponent({
       <input v-model="cart618Form.note" placeholder="备注（可选，比如"sycm 5/6 截图"）"
         style="width:100%;margin-top:8px;border:1px solid var(--border);border-radius:6px;padding:6px;font-size:12px;box-sizing:border-box">
       <div v-if="cart618Msg" style="margin-top:6px;font-size:12px"
-        :style="{color: cart618Msg.startsWith('✓') ? '#16a34a' : '#dc2626'}">{{ cart618Msg }}</div>
+        :style="{color: cart618Msg.startsWith('✓') ? '#138a52' : '#e5484d'}">{{ cart618Msg }}</div>
       <div style="margin-top:8px;font-size:11px;color:var(--muted);line-height:1.6">
         <strong>类型说明：</strong>
         <br>· <strong>5/1-5/N 累计去重</strong> — sycm 后台选 5/1-5/N 自定义区间得到的"商品加购人数"。每天 T+1 加一行（看板 KPI 主用）
@@ -1117,7 +1117,7 @@ const SettingsPage = defineComponent({
               <td style="padding:5px 8px;color:var(--muted)">{{ it.updated_by || '—' }}<br><span style="font-size:10px">{{ it.updated_at }}</span></td>
               <td style="padding:5px 8px;text-align:right">
                 <button @click="cart618Delete(it.id)"
-                  style="border:1px solid var(--border);background:#fff;color:#dc2626;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">删</button>
+                  style="border:1px solid var(--border);background:#fff;color:#e5484d;border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer">删</button>
               </td>
             </tr>
           </tbody>
@@ -1142,7 +1142,7 @@ const SettingsPage = defineComponent({
         <input v-model="aiConfig.apiBase" placeholder="https://api.openai.com/v1" style="border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;box-sizing:border-box">
       </label>
       <label style="display:flex;flex-direction:column;gap:6px;font-size:12px;grid-column:1/-1">
-        <span style="color:var(--muted)">API Key <span style="color:#dc2626">*</span></span>
+        <span style="color:var(--muted)">API Key <span style="color:#e5484d">*</span></span>
         <div style="display:flex;gap:8px;align-items:center">
           <input :type="aiShowKey ? 'text' : 'password'" v-model="aiConfig.apiKey" placeholder="sk-..." style="flex:1;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;box-sizing:border-box">
           <button @click="aiShowKey=!aiShowKey" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 10px;font-size:11px;cursor:pointer;white-space:nowrap">{{ aiShowKey ? '隐藏' : '显示' }}</button>
@@ -1187,7 +1187,7 @@ const SettingsPage = defineComponent({
       </div>
       <div v-for="f in importFiles" :key="f.name" style="font-size:12px;color:var(--text);padding:2px 0;display:flex;align-items:center;gap:6px">
         📄 <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ f.name }}</span>
-        <button @click="removeImportFile(f.name)" style="font-size:10px;border:none;background:none;cursor:pointer;color:#dc2626">×</button>
+        <button @click="removeImportFile(f.name)" style="font-size:10px;border:none;background:none;cursor:pointer;color:#e5484d">×</button>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-top:12px">
@@ -1195,7 +1195,7 @@ const SettingsPage = defineComponent({
         :style="{border:'1px solid var(--accent)',background:importLoading||!importFiles.length?'#d4d4d8':'var(--accent)',color:'#fff',borderRadius:'8px',padding:'8px 20px',fontSize:'12px',cursor:importLoading||!importFiles.length?'default':'pointer',fontWeight:'600'}">
         {{ importLoading ? '处理中…' : '开始导入' }}
       </button>
-      <pre v-if="importStatus" :style="{fontSize:'11px',color:importStatus.startsWith('✓')?'#16a34a':importStatus.startsWith('⚠')?'#d97706':'#dc2626',whiteSpace:'pre-wrap',margin:0,fontFamily:'inherit',background:'#fafaf9',padding:'8px 10px',borderRadius:'6px',maxHeight:'240px',overflow:'auto',width:'100%'}">{{ importStatus }}</pre>
+      <pre v-if="importStatus" :style="{fontSize:'11px',color:importStatus.startsWith('✓')?'#138a52':importStatus.startsWith('⚠')?'#c2790e':'#e5484d',whiteSpace:'pre-wrap',margin:0,fontFamily:'inherit',background:'#fafaf9',padding:'8px 10px',borderRadius:'6px',maxHeight:'240px',overflow:'auto',width:'100%'}">{{ importStatus }}</pre>
     </div>
   </div>
 

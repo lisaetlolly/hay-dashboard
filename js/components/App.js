@@ -3,7 +3,7 @@
 // createApp(App).mount('#app') 保留在 dashboard.html 内联脚本（依赖 DOM #app 节点存在）。
 
 const App = defineComponent({
-  components: { OverviewPage, ProductsPage, ComparePage, ActionEffectPage, 'ai-page': AIPage, AdsPage, SettingsPage, AnomalyPage },
+  components: { OverviewPage, ProductsPage, ComparePage, ActionEffectPage, 'ai-page': AIPage, AdsPage, TaskCenterPage, SettingsPage, AnomalyPage },
   setup() {
     const page        = ref('overview')
     const timePreset  = ref('30d')
@@ -71,6 +71,7 @@ const App = defineComponent({
       { id: 'compare',  label: '多品对比' },
       { id: 'ai',       label: 'AI 分析' },
       { id: 'ads',      label: '投放面板' },
+      { id: 'tasks',    label: '爆款孵化' },
       { id: 'seeding',  label: '种草中心' },
     ]
     const currentPageLabel = computed(
@@ -250,7 +251,7 @@ const App = defineComponent({
   <div id="main">
     <div id="topbar" style="flex-wrap:nowrap">
       <div class="page-title" style="flex-shrink:0">{{ currentPageLabel }}</div>
-      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
+      <div v-if="page!=='tasks'" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
         <div style="display:flex;align-items:center;gap:0;border:1px solid var(--border);border-radius:6px;overflow:hidden;flex-shrink:0">
           <button v-for="p in presets" :key="p.k"
                   @click="setPreset(p.k)"
@@ -309,6 +310,7 @@ const App = defineComponent({
       <compare-page v-else-if="page==='compare'" :start="startDate" :end="endDate" />
       <ai-page v-else-if="page==='ai'" :start="startDate" :end="endDate" />
       <ads-page v-else-if="page==='ads'" :start="startDate" :end="endDate" />
+      <task-center-page v-else-if="page==='tasks'" />
       <iframe v-else-if="page==='seeding'" src="seeding-hub.html"
               style="width:100%;height:calc(100vh - 120px);border:none;border-radius:8px;background:#fff" />
       <settings-page v-else-if="page==='settings'" />

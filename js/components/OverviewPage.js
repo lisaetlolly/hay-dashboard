@@ -54,7 +54,7 @@ const OverviewPage = defineComponent({
       if (rankMetric.value === 'gmv') return '¥' + (Number(v)/10000).toFixed(1) + '万'
       return Number(v) >= 10000 ? (Number(v)/10000).toFixed(1) + '万UV' : Number(v).toFixed(0) + 'UV'
     }
-    const dotColor = s => s === '已完成' ? '#16a34a' : s === '进行中' ? '#d97706' : '#a1a1aa'
+    const dotColor = s => s === '已完成' ? '#138a52' : s === '进行中' ? '#c2790e' : '#a1a1aa'
     const statusLabel = s => ({ normal:'正常', warning:'关注', danger:'需调整' })[s] || s
     const totalActualWan = computed(() => {
       const v = planData.value.total_actual || 0
@@ -557,7 +557,8 @@ const OverviewPage = defineComponent({
   </div>
 
   <!-- 618 加购看板（默认 T-1 单日；可选任意单日 / 任意区间） -->
-  <div class="card" style="padding:16px">
+  <!-- 暂时隐藏（按需可改回 v-if=true 放出来）-->
+  <div v-if="false" class="card" style="padding:16px">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px">
       <div>
         <span class="card-title">618 加购看板</span>
@@ -721,7 +722,7 @@ const OverviewPage = defineComponent({
         </label>
       </div>
     </div>
-    <InteractiveTrendChart :series="trendSeries" :height="220" :normalize="true" />
+    <InteractiveTrendChart :series="trendSeries" :height="180" :normalize="true" />
   </div>
 
   <!-- Category + Ranking -->
@@ -891,7 +892,7 @@ const OverviewPage = defineComponent({
                  style="width:28px;height:28px;object-fit:cover;border-radius:4px;flex-shrink:0;border:1px solid var(--border)">
             <div style="min-width:0;overflow:hidden">
               <div style="display:flex;align-items:center;gap:4px;overflow:hidden">
-                <span v-if="r.unofficial" style="color:#d97706;font-size:10px;font-weight:700;flex-shrink:0;background:#fef3c7;padding:0 3px;border-radius:3px;line-height:1.4">*</span>
+                <span v-if="r.unofficial" style="color:#c2790e;font-size:10px;font-weight:700;flex-shrink:0;background:#fef3c7;padding:0 3px;border-radius:3px;line-height:1.4">*</span>
                 <span style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="r.title">{{ r.title }}</span>
                 <span v-if="r.prev_rank" style="flex-shrink:0;font-size:10px;font-weight:700;padding:1px 4px;border-radius:3px"
                       :style="{background:r.rank<r.prev_rank?'#dcfce7':r.rank>r.prev_rank?'#fee2e2':'#f4f4f5',

@@ -115,7 +115,7 @@ const AIPage = defineComponent({
 
       if (top3.length) {
         results.push({
-          tag: '明星品', color: '#16a34a',
+          tag: '明星品', color: '#138a52',
           title: '成交额 TOP3：' + (top3[0]?.name.split(' ').slice(0, 2).join(' ') || '') + '、' + (top3[1]?.name.split(' ')[0] || '') + '、' + (top3[2]?.name.split(' ')[0] || ''),
           text: top3.map((r, i) => '#' + (i + 1) + ' ' + r.name.split(' ').slice(0, 2).join(' ') + ' — ' + fmtM(r.gmv) + (r.roi ? '，ROI ' + r.roi.toFixed(2) : '')).join('\n')
         })
@@ -125,7 +125,7 @@ const AIPage = defineComponent({
       if (spendRows.length) {
         const worst = spendRows[0]
         results.push({
-          tag: 'ROI预警', color: '#dc2626',
+          tag: 'ROI预警', color: '#e5484d',
           title: 'ROI偏低：' + worst.name.split(' ').slice(0, 2).join(' ') + ' ROI ' + worst.roi.toFixed(2),
           text: '花费 ' + fmtM(worst.spend) + '，成交 ' + fmtM(worst.gmv) + '，ROI ' + worst.roi.toFixed(2) + '。建议检查词包匹配度与素材点击率，或暂时降低预算测试效果。'
         })
@@ -135,7 +135,7 @@ const AIPage = defineComponent({
       if (cartRows.length >= 2) {
         const best = cartRows[0], worstCart = cartRows[cartRows.length - 1]
         results.push({
-          tag: '加购率', color: '#d97706',
+          tag: '加购率', color: '#c2790e',
           title: '加购率差异：' + best.name.split(' ')[0] + ' ' + pct(best.cartRate) + ' vs ' + worstCart.name.split(' ')[0] + ' ' + pct(worstCart.cartRate),
           text: '最高：' + best.name.split(' ').slice(0, 2).join(' ') + ' ' + pct(best.cartRate) + '，访客 ' + best.vis.toLocaleString() + ' 人。最低：' + worstCart.name.split(' ').slice(0, 2).join(' ') + ' ' + pct(worstCart.cartRate) + '，可检查详情页卖点与价格锚点。'
         })
@@ -167,11 +167,11 @@ const AIPage = defineComponent({
     const ANALYSIS_TEMPLATES = [
       { key: 'focus_products', label: '今日重点品', color: '#1e40af', icon: '🎯',
         getPrompt: (s, e) => '基于当前周期（' + s + ' ~ ' + e + '）的数据，请分析本周期应重点关注的商品：\n1. 哪些商品成交额突出或正在增长，值得加大投放？\n2. 哪些商品ROI偏低但有潜力，需要策略调整？\n3. 哪些商品已连续下滑需要警觉？\n请列出3-5个重点品，每个给出1-2条具体行动建议。' },
-      { key: 'best_actions', label: '最有效运营动作', color: '#16a34a', icon: '⚡',
+      { key: 'best_actions', label: '最有效运营动作', color: '#138a52', icon: '⚡',
         getPrompt: (s, e) => '根据 ' + s + ' ~ ' + e + ' 期间的运营动作记录和对应指标变化，请分析：\n1. 哪类运营动作（如主图更新、价格调整、词包优化等）带来了最显著的正向效果？\n2. 有没有某些动作执行后反而造成了下滑？\n3. 给出未来2周最值得复制的运营动作优先级排序。\n请结合具体商品案例说明。' },
       { key: 'task_dispatch', label: '任务派发建议', color: '#7c3aed', icon: '📋',
         getPrompt: (s, e) => '请基于 ' + s + ' ~ ' + e + ' 的数据表现，为运营团队生成本周任务派发建议：\n1. 紧急任务（需3天内完成）：ROI预警商品的投放调整\n2. 常规任务（本周完成）：低CTR商品的素材更新计划\n3. 优化任务（本周规划）：自然流表现好的商品扩量测试\n请以清单格式输出，每条任务包含：商品名、任务内容、预期目标、建议执行人角色。' },
-      { key: 'competitor', label: '竞品分析', color: '#d97706', icon: '🔍',
+      { key: 'competitor', label: '竞品分析', color: '#c2790e', icon: '🔍',
         getPrompt: (s, e) => '请基于 ' + s + ' ~ ' + e + ' 的商品数据帮助分析竞争态势：\n1. 从我们的CTR和加购率数据推断，哪些品类可能面临较激烈竞争（流量成本高但转化低）？\n2. 哪些品类我们可能具有竞争优势（高ROI、高自然流）？\n3. 建议针对哪些品类加强竞争布局，针对哪些品类采取差异化策略？\n请给出具体的竞争应对策略建议。' },
       { key: 'strategy', label: '竞争策略', color: '#e11d48', icon: '🏆',
         getPrompt: (s, e) => '请根据 ' + s + ' ~ ' + e + ' 的整体数据，制定下一阶段的竞争策略：\n1. 资源聚焦：建议将80%预算集中在哪几个商品/类目，理由是什么？\n2. 防守策略：哪些商品需要维持现状、防止份额流失？\n3. 进攻机会：有没有低成本高回报的放量机会？\n4. 退出建议：哪些商品应该减少投放甚至暂停，释放预算？\n请给出优先级排序和可执行的策略路线图。' },
@@ -308,7 +308,7 @@ const AIPage = defineComponent({
   },
   template: `
 <div style="display:flex;flex-direction:column;gap:16px">
-  <div v-if="setupError" style="padding:20px;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;color:#dc2626;font-size:13px">
+  <div v-if="setupError" style="padding:20px;background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;color:#e5484d;font-size:13px">
     AI 页面初始化失败：{{ setupError }}
   </div>
   <template v-else>
@@ -330,9 +330,6 @@ const AIPage = defineComponent({
         <div :style="{fontSize:'13px',fontWeight:'700',marginBottom:'3px',color:tpl.color}">{{ tpl.label }}</div>
         <div style="font-size:10px;color:#94a3b8;line-height:1.4">AI 智能分析</div>
       </button>
-    </div>
-    <div v-if="!aiConfig.apiKey" style="margin-top:10px;padding:10px 14px;background:#fef3c7;border-radius:8px;font-size:12px;color:#92400e">
-      请先填写 API Key 并保存，然后才能使用一键分析功能。
     </div>
   </div>
 

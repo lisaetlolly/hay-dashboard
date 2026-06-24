@@ -144,7 +144,7 @@ const InteractiveTrendChart = defineComponent({
         <line v-if="ev.isRange" :x1="ev.x1" :y1="pad.T" :x2="ev.x1" :y2="H-pad.B" :stroke="ev.color || '#f59e0b'" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.55"/>
         <line v-if="ev.isRange" :x1="ev.x2" :y1="pad.T" :x2="ev.x2" :y2="H-pad.B" :stroke="ev.color || '#f59e0b'" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.55"/>
         <line v-if="!ev.isRange" :x1="ev.x1" :y1="pad.T" :x2="ev.x1" :y2="H-pad.B" :stroke="ev.color || '#f59e0b'" stroke-width="1.5" stroke-dasharray="3,3" opacity="0.65"/>
-        <text :x="ev.x1+3" :y="pad.T+9" :fill="ev.color || '#d97706'" font-size="9" font-weight="700">{{ ev.title }}</text>
+        <text :x="ev.x1+3" :y="pad.T+9" :fill="ev.color || '#c2790e'" font-size="9" font-weight="700">{{ ev.title }}</text>
       </g>
       <g v-for="(s,sidx) in plotted" :key="s.key" @mouseenter="onLegend(s.key)" @mouseleave="onLeave" style="cursor:pointer">
         <template v-if="s.type==='bar'">
