@@ -242,13 +242,79 @@ const AnomalyPage = defineComponent({
     const fmtKpi = k => k.v==null ? '—' : (k.rate ? k.v.toFixed(1)+'%' : (k.money ? yuan(k.v) : Math.round(k.v).toLocaleString()))
     const fmtCh  = k => k.ch==null ? '—' : (k.ch>=0?'+':'') + k.ch.toFixed(1) + (k.rate?'pct':'%')
 
+    // ── 主 Tab（数据指标 / 客服）+ AI 接入（复用「设置 → AI 配置」）──
+    const mainTab   = ref('data')
+    const aiResult  = ref(''); const aiLoading = ref(false); const aiError = ref('')
+    const csText    = ref(''); const csFileName = ref('')
+    const csResult  = ref(''); const csLoading = ref(false); const csError = ref('')
+    const _getAiCfg = () => {
+      try { const d = JSON.parse(localStorage.getItem('hay_ai_presets_v2') || 'null')
+        if (d && Array.isArray(d.presets)) return d.presets.find(p => p.id === d.activeId) || d.presets[0] || null } catch(e) {}
+      try { const l = JSON.parse(localStorage.getItem('hay_ai_settings_v1') || 'null'); if (l && l.apiKey) return l } catch(e) {}
+      return null
+    }
+    const _callAI = async (systemPrompt, userText) => {
+      const cfg = _getAiCfg()
+      if (!cfg || !cfg.apiKey) throw new Error('请先到「设置 → AI 配置」填写 API Key')
+      const base = (cfg.apiBase || 'https://api.openai.com/v1').replace(/\/$/, '')
+      const resp = await fetch(base + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + cfg.apiKey },
+        body: JSON.stringify({ model: cfg.model || 'gpt-4.1-mini', messages: [
+          { role: 'system', content: systemPrompt }, { role: 'user', content: userText }], stream: false }),
+      })
+      if (!resp.ok) throw new Error('AI 调用失败 HTTP ' + resp.status)
+      const j = await resp.json()
+      return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '(AI 无返回)'
+    }
+    const runDataAI = async () => {
+      aiError.value = ''; aiResult.value = ''; aiLoading.value = true
+      try {
+        const lines = cards.value.slice(0, 40).map(c =>
+          `[${SEV[c.sev].label}] ${c.title} | 主因:${c.primary} | 今日成交¥${Math.round(c.cp)} 近7天日均¥${Math.round(c.base)} | 负责人:${c.owner || '-'}`).join('\n')
+        const sys = '你是 HAY 家居运营分析助手。下面是当日异常预警清单（已按严重度分级）。请输出：①今天最该先处理的 3-5 个商品及理由；②按负责人汇总今天各自要做什么；③一句话风险提示。中文、简明、可执行。'
+        aiResult.value = await _callAI(sys, `数据日 ${anomalyDate.value}，共 ${cards.value.length} 条异常：\n${lines}`)
+      } catch(e) { aiError.value = String(e.message || e) } finally { aiLoading.value = false }
+    }
+    const onCsFile = (ev) => {
+      const f = ev.target.files && ev.target.files[0]; if (!f) return
+      csFileName.value = f.name
+      const r = new FileReader(); r.onload = () => { csText.value = String(r.result || '') }; r.readAsText(f)
+    }
+    const runCsAI = async () => {
+      csError.value = ''; csResult.value = ''
+      if (!csText.value.trim()) { csError.value = '请先上传或粘贴聊天记录'; return }
+      csLoading.value = true
+      try {
+        const sys = '你是 HAY 天猫客服质量分析助手。下面是客服聊天记录。请输出：①主要问题分类与频次；②挽单/催付话术是否到位（举例）；③高频问题对应的标准话术建议；④给客服的 3 条改进点。中文、条理清晰。'
+        csResult.value = await _callAI(sys, csText.value.slice(0, 12000))
+      } catch(e) { csError.value = String(e.message || e) } finally { csLoading.value = false }
+    }
+
     return { SEV, LIGHT, ORDER, loading, kpi, cards, tab, anomalyDate, visibleCards, redCount, yellowCount, sevCounts, groups, pendingCount,
-             addOne, addAllVisible, existingRef, yuan, fmtKpi, fmtCh, toast, CS, csView }
+             addOne, addAllVisible, existingRef, yuan, fmtKpi, fmtCh, toast, CS, csView,
+             mainTab, aiResult, aiLoading, aiError, runDataAI,
+             csText, csFileName, csResult, csLoading, csError, onCsFile, runCsAI }
   },
   template: `
 <div style="padding:2px 2px 60px">
   <div v-if="loading" style="padding:60px;text-align:center;color:var(--muted)">正在计算异常…</div>
   <template v-else>
+    <!-- 主 Tab：数据指标 / 客服 -->
+    <div style="display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--border)">
+      <div @click="mainTab='data'" :style="mainTabStyle('data')">数据指标</div>
+      <div @click="mainTab='cs'" :style="mainTabStyle('cs')">客服</div>
+    </div>
+
+  <div v-show="mainTab==='data'">
+    <!-- AI 解读 -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+      <button @click="runDataAI" :disabled="aiLoading" :style="{background:aiLoading?'var(--border)':'var(--accent)',color:'#fff',border:'none',borderRadius:'8px',padding:'8px 16px',fontSize:'13px',cursor:aiLoading?'default':'pointer'}">{{ aiLoading ? 'AI 分析中…' : '🧠 AI 解读异常' }}</button>
+      <span style="font-size:12px;color:var(--muted)">把当日异常清单发给 AI：今天最该处理哪些商品、各负责人分工</span>
+    </div>
+    <div v-if="aiError" style="margin-bottom:12px;font-size:12px;color:var(--red)">{{ aiError }}</div>
+    <div v-if="aiResult" style="margin-bottom:16px;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;font-size:13px;line-height:1.7;color:var(--text);white-space:pre-wrap">{{ aiResult }}</div>
+
     <!-- 大盘 KPI -->
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
       <div v-for="k in kpi" :key="k.n" style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 16px">
@@ -308,9 +374,26 @@ const AnomalyPage = defineComponent({
       </div>
     </div>
     <div v-if="!visibleCards.length" style="padding:50px;text-align:center;color:var(--muted)">本类暂无异常 🎉</div>
+  </div>
+
+  <!-- 客服 Tab -->
+  <div v-show="mainTab==='cs'">
+    <!-- 上传聊天记录 → AI 分析 -->
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px">
+      <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:10px">客服聊天记录分析</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <label style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:7px 13px;font-size:12.5px;color:var(--text);cursor:pointer;background:#fff">📎 选择文件<input type="file" accept=".txt,.csv,.log,text/plain" @change="onCsFile" style="display:none"></label>
+        <span style="font-size:12px;color:var(--muted)">{{ csFileName || '支持 txt / csv 聊天记录；也可直接粘贴到下方' }}</span>
+        <div style="flex:1"></div>
+        <button @click="runCsAI" :disabled="csLoading" :style="{background:csLoading?'var(--border)':'var(--accent)',color:'#fff',border:'none',borderRadius:'8px',padding:'8px 16px',fontSize:'13px',cursor:csLoading?'default':'pointer'}">{{ csLoading ? 'AI 分析中…' : '🧠 AI 分析' }}</button>
+      </div>
+      <textarea v-model="csText" placeholder="粘贴客服聊天记录（客服名 × 客户名 × 时间 × 内容）…" style="width:100%;box-sizing:border-box;margin-top:10px;min-height:120px;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12.5px;font-family:inherit;resize:vertical"></textarea>
+      <div v-if="csError" style="margin-top:8px;font-size:12px;color:var(--red)">{{ csError }}</div>
+      <div v-if="csResult" style="margin-top:12px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.7;color:var(--text);white-space:pre-wrap">{{ csResult }}</div>
+    </div>
 
     <!-- ── 客服异常（本周）── -->
-    <div v-if="CS" style="margin-top:24px">
+    <div v-if="CS" style="margin-top:0">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
         <div style="font-size:15px;font-weight:600;color:var(--text)">客服异常 · {{ CS.period }}</div>
         <div style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden">
@@ -362,11 +445,18 @@ const AnomalyPage = defineComponent({
         </div>
       </div>
     </div>
+  </div>
   </template>
 
   <div v-if="toast" style="position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:#1f2933;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.2)">{{ toast }}</div>
 </div>`,
   methods: {
+    mainTabStyle(id) {
+      const active = this.mainTab === id
+      return { cursor:'pointer', padding:'8px 16px', fontSize:'14px', fontWeight: active ? '700' : '500',
+               color: active ? 'var(--text)' : 'var(--muted)',
+               borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent', marginBottom:'-1px' }
+    },
     chipStyle(id) {
       const active = this.tab === id
       const acc = id==='ALL' ? 'var(--accent)' : (this.SEV[id] ? this.SEV[id].color : 'var(--accent)')
